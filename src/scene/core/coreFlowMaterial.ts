@@ -10,7 +10,13 @@ import {
 } from 'three/tsl';
 
 import type { CoreVisualInput } from './coreTypes';
-
+/**
+ * Boundary: this factory owns synchronous NodeMaterial allocation, graph setup,
+ * and cleanup when those steps fail. It intentionally does not build renderer
+ * programs. WebGPU shader compilation/link and WebGL2 program/link failures are
+ * owned by the existing renderer/scene integration and must be verified when
+ * this material is mounted in the later visual/browser integration gate.
+ */
 export type CoreFlowMaterialConfig = {
   readonly color: string;
   readonly pointSize: number;

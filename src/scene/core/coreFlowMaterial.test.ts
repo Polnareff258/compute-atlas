@@ -59,6 +59,24 @@ describe('createCoreFlowMaterial', () => {
     handle.dispose();
   });
 
+  it('attaches a concrete positionNode graph ready for renderer build', () => {
+    const handle = createCoreFlowMaterial({
+      color: '#718c86',
+      pointSize: 1.75,
+      webgpuPreferred: true,
+    });
+    const material = handle.material as {
+      readonly isNodeMaterial?: boolean;
+      readonly positionNode?: { readonly traverse?: unknown } | null;
+    };
+
+    expect(handle.backend).toBe('node');
+    expect(material.isNodeMaterial).toBe(true);
+    expect(material.positionNode).toBeDefined();
+    expect(typeof material.positionNode?.traverse).toBe('function');
+
+    handle.dispose();
+  });
   it('creates a standard material fallback when WebGPU is not preferred', () => {
     const handle = createCoreFlowMaterial({
       color: '#718c86',
@@ -191,6 +209,7 @@ describe('createCoreFlowMaterial', () => {
   it('disposes an allocated node material when setup fails before falling back', () => {
     const dispose = vi.spyOn(PointsNodeMaterial.prototype, 'dispose');
     let pointSizeReads = 0;
+    let handle: ReturnType<typeof createCoreFlowMaterial> | null = null;
     const config = {
       color: '#718c86',
       webgpuPreferred: true,
@@ -205,13 +224,15 @@ describe('createCoreFlowMaterial', () => {
       },
     };
 
-    const handle = createCoreFlowMaterial(config);
+    try {
+      handle = createCoreFlowMaterial(config);
 
-    expect(handle.backend).toBe('standard');
-    expect(dispose).toHaveBeenCalledTimes(1);
-
-    handle.dispose();
-    dispose.mockRestore();
+      expect(handle.backend).toBe('standard');
+      expect(dispose).toHaveBeenCalledTimes(1);
+    } finally {
+      handle?.dispose();
+      dispose.mockRestore();
+    }
   });
   it('disposes its material exactly once', () => {
     const handle = createCoreFlowMaterial({
