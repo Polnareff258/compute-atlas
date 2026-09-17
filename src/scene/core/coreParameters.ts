@@ -18,5 +18,8 @@ export function getCoreParameters(profile: QualityProfile): CoreParameters {
     trajectoryBudget: Math.max(1, Math.round(12 * quality.graphDensity)),
     fieldResolution: quality.coreFieldResolution,
     allowBloom: quality.allowBloom,
+    shellRadius: 2.18,
+    cageSegments: quality.coreCageSegments,
+    orbitalCount: quality.coreOrbitalCount,
   };
 }

@@ -40,4 +40,10 @@ export type CoreParameters = {
   readonly trajectoryBudget: number;
   readonly fieldResolution: number;
   readonly allowBloom: boolean;
+  /** @deprecated Retained until Task 9 removes the V1 Core consumers. */
+  readonly shellRadius: number;
+  /** @deprecated Retained until Task 9 removes the V1 Core consumers. */
+  readonly cageSegments: number;
+  /** @deprecated Retained until Task 9 removes the V1 Core consumers. */
+  readonly orbitalCount: number;
 };

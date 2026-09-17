@@ -57,11 +57,15 @@ describe('getCoreParameters', () => {
     expect(safe.fieldResolution).toBeGreaterThan(0);
   });
 
-  it('does not expose the removed V1 shape budgets', () => {
-    const parameters = getCoreParameters('safe');
+  it('retains deterministic V1 fields during the staged migration', () => {
+    const ultra = getCoreParameters('ultra');
+    const safe = getCoreParameters('safe');
 
-    expect('shellRadius' in parameters).toBe(false);
-    expect('cageSegments' in parameters).toBe(false);
-    expect('orbitalCount' in parameters).toBe(false);
+    expect(ultra.shellRadius).toBe(2.18);
+    expect(safe.shellRadius).toBe(2.18);
+    expect(ultra.cageSegments).toBe(3);
+    expect(safe.cageSegments).toBe(1);
+    expect(ultra.orbitalCount).toBe(3);
+    expect(safe.orbitalCount).toBe(1);
   });
 });
