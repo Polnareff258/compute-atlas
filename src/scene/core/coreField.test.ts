@@ -113,4 +113,45 @@ describe('deriveCoreField', () => {
     expect(Number.isInteger(field.streamCount)).toBe(true);
     expect(field.streamCount).toBeGreaterThan(0);
   });
+
+  it('keeps streamCount positive and arrays valid for edge inputs', () => {
+    const inputs = [
+      { particleBudget: 0, fieldResolution: 0 },
+      { particleBudget: -4, fieldResolution: -8 },
+      { particleBudget: Number.NaN, fieldResolution: Number.NaN },
+      { particleBudget: Number.POSITIVE_INFINITY, fieldResolution: Number.POSITIVE_INFINITY },
+      { particleBudget: 3, fieldResolution: 0 },
+      { particleBudget: 3, fieldResolution: -8 },
+      { particleBudget: 3, fieldResolution: Number.NaN },
+      { particleBudget: 3, fieldResolution: Number.POSITIVE_INFINITY },
+    ];
+
+    for (const input of inputs) {
+      const field = deriveCoreField(input, 17);
+
+      expect(field.streamCount).toBeGreaterThan(0);
+      expect(field.attributes.positions.every(Number.isFinite)).toBe(true);
+      expect(field.attributes.drift.every(Number.isFinite)).toBe(true);
+      expect(field.attributes.phase.every(Number.isFinite)).toBe(true);
+      expect(field.attributes.region.every(Number.isFinite)).toBe(true);
+      expect(field.attributes.weight.every(Number.isFinite)).toBe(true);
+      expect(field.bounds.every(Number.isFinite)).toBe(true);
+    }
+  });
+
+  it('keeps a positive particle budget non-empty with invalid field resolution', () => {
+    for (const fieldResolution of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const field = deriveCoreField({ particleBudget: 3, fieldResolution }, 17);
+
+      expect(field.attributes.phase.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('reserves a void sample for every non-empty field, including a tiny field', () => {
+    const tiny = deriveCoreField({ particleBudget: 1, fieldResolution: 1 }, 17);
+    const medium = deriveCoreField({ particleBudget: 2, fieldResolution: 1 }, 17);
+
+    expect(Array.from(tiny.attributes.weight)).toContain(0);
+    expect(Array.from(medium.attributes.weight)).toContain(0);
+  });
 });

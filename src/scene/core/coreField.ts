@@ -32,9 +32,14 @@ function safePositive(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+function safeResolution(value: number): number {
+  const finiteResolution = safePositive(value);
+  return Math.max(1, Math.floor(finiteResolution));
+}
+
 function sampleCount(parameters: Pick<CoreParameters, 'particleBudget' | 'fieldResolution'>): number {
   const particleBudget = Math.floor(safePositive(parameters.particleBudget));
-  const resolution = Math.floor(safePositive(parameters.fieldResolution));
+  const resolution = safeResolution(parameters.fieldResolution);
 
   return Math.min(particleBudget, resolution * resolution * 4);
 }
@@ -56,13 +61,14 @@ export function deriveCoreField(
   seed = 17,
 ): CoreFieldDescriptor {
   const count = sampleCount(parameters);
-  const resolution = Math.floor(safePositive(parameters.fieldResolution));
-  const streamCount = resolution > 0 ? Math.max(1, Math.min(8, Math.floor(resolution / 8))) : 0;
+  const resolution = safeResolution(parameters.fieldResolution);
+  const streamCount = Math.max(1, Math.min(8, Math.floor(resolution / 8)));
   const positions = new Float32Array(count * 3);
   const drift = new Float32Array(count * 3);
   const phase = new Float32Array(count);
   const region = new Float32Array(count);
   const weight = new Float32Array(count);
+  let hasVoidSample = false;
 
   for (let index = 0; index < count; index += 1) {
     const stream = streamCount === 0 ? 0 : index % streamCount;
@@ -95,9 +101,13 @@ export function deriveCoreField(
     const firstVoid = stream % 2 === 0 && streamT > 0.34 && streamT < 0.43;
     const secondVoid = stream % 3 === 1 && streamT > 0.72 && streamT < 0.79;
     const clusterEnvelope = 0.48 + 0.52 * Math.sin(streamT * Math.PI);
-    weight[index] = firstVoid || secondVoid
-      ? 0
-      : (0.42 + noise * 0.58) * clusterEnvelope;
+    const isVoid = firstVoid || secondVoid;
+    weight[index] = isVoid ? 0 : (0.42 + noise * 0.58) * clusterEnvelope;
+    hasVoidSample ||= isVoid;
+  }
+
+  if (count > 0 && !hasVoidSample) {
+    weight[count - 1] = 0;
   }
 
   return {
