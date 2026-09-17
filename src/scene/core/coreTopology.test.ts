@@ -117,6 +117,36 @@ describe('deriveCoreTopology', () => {
     expect(topology.edges.length).toBeLessThanOrEqual(24);
   });
 
+  it('does not arrange non-anchor positions as mirrored opposite pairs', () => {
+    const tolerance = 0.08;
+    const mirroredPairs: string[] = [];
+
+    for (const seed of [17, 91, 401]) {
+      const nonAnchorNodes = deriveCoreTopology(parameters, seed).nodes.filter(
+        (node) => node.region !== 'anchor',
+      );
+
+      for (let firstIndex = 0; firstIndex < nonAnchorNodes.length; firstIndex += 1) {
+        for (let secondIndex = firstIndex + 1; secondIndex < nonAnchorNodes.length; secondIndex += 1) {
+          const first = nonAnchorNodes[firstIndex]?.position;
+          const second = nonAnchorNodes[secondIndex]?.position;
+
+          if (
+            first &&
+            second &&
+            first.every((value, axis) => Math.abs(value + (second[axis] ?? 0)) < tolerance)
+          ) {
+            mirroredPairs.push(
+              seed + ':' + nonAnchorNodes[firstIndex]?.id + '/' + nonAnchorNodes[secondIndex]?.id,
+            );
+          }
+        }
+      }
+    }
+
+    expect(mirroredPairs).toEqual([]);
+  });
+
   it('keeps spatial structure measurably asymmetric across elevation and depth', () => {
     const topology = deriveCoreTopology(parameters, 17);
     const elevations = new Set(topology.nodes.map((node) => node.position[1].toFixed(3)));
