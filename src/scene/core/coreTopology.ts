@@ -24,16 +24,15 @@ type Region = CoreTopologyNode['region'];
 
 const ANCHOR_POSITIONS: readonly (readonly [number, number, number])[] = [
   [0, 0, 0],
-  [0.52, 0.16, -0.12],
 ];
 
 const SATELLITE_POSITIONS: readonly (readonly [number, number, number])[] = [
   [-0.82, 0.3, 0.28],
   [1.28, -0.68, -0.56],
-  [-1.54, -0.5, 0.78],
 ];
 
 const ROUTE_POSITIONS: readonly (readonly [number, number, number])[] = [
+  [-1.54, -0.5, 0.78],
   [0.74, 1.12, 0.62],
   [-0.34, -1.24, -0.9],
   [1.68, 0.74, 0.18],
@@ -52,15 +51,13 @@ const EDGE_CANDIDATES: readonly {
   { source: 0, target: 1, route: 'local', activationRank: 0 },
   { source: 0, target: 2, route: 'directional', activationRank: 1 },
   { source: 1, target: 3, route: 'directional', activationRank: 2 },
-  { source: 0, target: 5, route: 'signal', activationRank: 3 },
-  { source: 2, target: 4, route: 'local', activationRank: 4 },
+  { source: 0, target: 4, route: 'signal', activationRank: 3 },
+  { source: 2, target: 5, route: 'local', activationRank: 4 },
   { source: 3, target: 6, route: 'signal', activationRank: 5 },
-  { source: 1, target: 5, route: 'directional', activationRank: 6 },
-  { source: 4, target: 7, route: 'signal', activationRank: 7 },
-  { source: 5, target: 8, route: 'directional', activationRank: 8 },
+  { source: 1, target: 4, route: 'directional', activationRank: 6 },
+  { source: 5, target: 7, route: 'signal', activationRank: 7 },
+  { source: 4, target: 8, route: 'directional', activationRank: 8 },
   { source: 3, target: 9, route: 'local', activationRank: 9 },
-  { source: 6, target: 10, route: 'signal', activationRank: 10 },
-  { source: 2, target: 11, route: 'directional', activationRank: 11 },
 ];
 
 function hash(seed: number, index: number): number {
@@ -72,6 +69,10 @@ function hash(seed: number, index: number): number {
 
 function unitInterval(seed: number, index: number): number {
   return hash(seed, index) / 0x100000000;
+}
+
+function safeBudget(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 function regionFor(index: number): Region {
@@ -94,7 +95,20 @@ function positionFor(index: number, seed: number): readonly [number, number, num
   ][index];
 
   if (fixedPosition) {
-    return fixedPosition;
+    if (index === 0) {
+      return [0, 0, 0];
+    }
+
+    const scale = 0.97 + unitInterval(seed, index + 121) * 0.06;
+    const offsetX = (unitInterval(seed, index + 151) - 0.5) * 0.14;
+    const offsetY = (unitInterval(seed, index + 181) - 0.5) * 0.18;
+    const offsetZ = (unitInterval(seed, index + 211) - 0.5) * 0.14;
+
+    return [
+      fixedPosition[0] * scale + offsetX,
+      fixedPosition[1] * scale + offsetY,
+      fixedPosition[2] * scale + offsetZ,
+    ];
   }
 
   const angle = (index + 1) * 2.399963229728653 + unitInterval(seed, index) * 0.38;
@@ -113,11 +127,41 @@ function weightFor(index: number, seed: number, region: Region): number {
   return baseWeight + unitInterval(seed, index + 91) * (region === 'anchor' ? 0.28 : 0.22);
 }
 
+function routeFor(seed: number, index: number): CoreTopologyEdge['route'] {
+  const routeIndex = Math.floor(unitInterval(seed, index + 271) * 3);
+  return routeIndex === 0 ? 'local' : routeIndex === 1 ? 'directional' : 'signal';
+}
+
+function deriveEdgeCandidates(nodeCount: number, seed: number): readonly {
+  readonly source: number;
+  readonly target: number;
+  readonly route: CoreTopologyEdge['route'];
+  readonly activationRank: number;
+}[] {
+  const fixedNodeCount =
+    ANCHOR_POSITIONS.length + SATELLITE_POSITIONS.length + ROUTE_POSITIONS.length;
+  const candidates = EDGE_CANDIDATES.filter(
+    ({ source, target }) => source < nodeCount && target < nodeCount,
+  ).map((candidate) => ({ ...candidate }));
+
+  for (let target = fixedNodeCount; target < nodeCount; target += 1) {
+    const source = Math.floor(unitInterval(seed, target + 301) * target);
+    candidates.push({
+      source,
+      target,
+      route: routeFor(seed, target),
+      activationRank: candidates.length,
+    });
+  }
+
+  return candidates;
+}
+
 export function deriveCoreTopology(
   parameters: Pick<CoreParameters, 'topologyNodeBudget' | 'topologyEdgeBudget'>,
   seed = 17,
 ): CoreTopology {
-  const nodeCount = Math.max(1, Math.floor(parameters.topologyNodeBudget));
+  const nodeCount = safeBudget(parameters.topologyNodeBudget);
   const nodes = Array.from({ length: nodeCount }, (_, id): CoreTopologyNode => {
     const region = regionFor(id);
     const position = positionFor(id, seed);
@@ -130,10 +174,8 @@ export function deriveCoreTopology(
     };
   });
 
-  const edges = EDGE_CANDIDATES.filter(
-    ({ source, target }) => source < nodeCount && target < nodeCount,
-  )
-    .slice(0, Math.max(0, Math.floor(parameters.topologyEdgeBudget)))
+  const edges = deriveEdgeCandidates(nodeCount, seed)
+    .slice(0, safeBudget(parameters.topologyEdgeBudget))
     .map(({ source, target, route, activationRank }, id): CoreTopologyEdge => ({
       id,
       source,

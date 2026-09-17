@@ -10,7 +10,8 @@ describe('deriveCoreTopology', () => {
     const first = deriveCoreTopology(parameters, 17);
     const second = deriveCoreTopology(parameters, 17);
 
-    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+    expect(first).toEqual(second);
+    expect(first.nodes[0]?.position).not.toBe(second.nodes[0]?.position);
   });
 
   it('keeps positions and weights finite', () => {
@@ -30,8 +31,10 @@ describe('deriveCoreTopology', () => {
   it('uses unique node ids and valid, non-self edge indices', () => {
     const topology = deriveCoreTopology(parameters, 17);
     const nodeIds = topology.nodes.map((node) => node.id);
+    const edgeIds = topology.edges.map((edge) => edge.id);
 
     expect(new Set(nodeIds).size).toBe(nodeIds.length);
+    expect(new Set(edgeIds).size).toBe(edgeIds.length);
 
     for (const edge of topology.edges) {
       expect(nodeIds).toContain(edge.source);
@@ -74,6 +77,56 @@ describe('deriveCoreTopology', () => {
 
     expect(safe.nodes.some((node) => node.region === 'anchor')).toBe(true);
     expect(safe.nodes.some((node) => node.region === 'satellite')).toBe(true);
+    expect(safe.nodes.some((node) => node.region === 'route')).toBe(true);
     expect(safe.edges.length).toBeGreaterThan(0);
+  });
+
+  it('does not exceed zero or low node and edge budgets', () => {
+    const zero = deriveCoreTopology({ topologyNodeBudget: 0, topologyEdgeBudget: 0 }, 17);
+    const low = deriveCoreTopology({ topologyNodeBudget: 2, topologyEdgeBudget: 1 }, 17);
+
+    expect(zero.nodes).toEqual([]);
+    expect(zero.edges).toEqual([]);
+    expect(low.nodes.length).toBeLessThanOrEqual(2);
+    expect(low.edges.length).toBeLessThanOrEqual(1);
+    expect(low.edges.every((edge) => edge.source !== edge.target)).toBe(true);
+  });
+
+  it('changes non-core fixed positions for different seeds', () => {
+    const first = deriveCoreTopology(parameters, 17);
+    const second = deriveCoreTopology(parameters, 91);
+
+    expect(first.nodes[0]?.position).toEqual([0, 0, 0]);
+    expect(second.nodes[0]?.position).toEqual([0, 0, 0]);
+    expect(first.nodes[1]?.position).not.toEqual(second.nodes[1]?.position);
+  });
+
+  it('connects nodes beyond the fixed catalog when budgets allow them', () => {
+    const topology = deriveCoreTopology({ topologyNodeBudget: 16, topologyEdgeBudget: 24 }, 17);
+    const extendedNodeIds = new Set(topology.nodes.filter((node) => node.id >= 10).map((node) => node.id));
+    const connectedExtendedIds = new Set(
+      topology.edges.flatMap((edge) =>
+        extendedNodeIds.has(edge.source) || extendedNodeIds.has(edge.target)
+          ? [edge.source, edge.target]
+          : [],
+      ),
+    );
+
+    expect(topology.nodes.length).toBe(16);
+    expect(connectedExtendedIds.size).toBeGreaterThan(0);
+    expect(topology.edges.length).toBeLessThanOrEqual(24);
+  });
+
+  it('keeps spatial structure measurably asymmetric across elevation and depth', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const elevations = new Set(topology.nodes.map((node) => node.position[1].toFixed(3)));
+    const depths = new Set(topology.nodes.map((node) => node.position[2].toFixed(3)));
+
+    expect(elevations.size).toBeGreaterThan(2);
+    expect(depths.size).toBeGreaterThan(2);
+    expect(topology.nodes.some((node) => node.position[1] > 0.5)).toBe(true);
+    expect(topology.nodes.some((node) => node.position[1] < -0.5)).toBe(true);
+    expect(topology.nodes.some((node) => node.position[2] > 0.5)).toBe(true);
+    expect(topology.nodes.some((node) => node.position[2] < -0.5)).toBe(true);
   });
 });
