@@ -20,12 +20,24 @@ export type ComputeCoreInteraction = {
   readonly visualState: ComputeCoreVisualState;
 };
 
+export type CoreVisualInput = {
+  readonly pointerX: number;
+  readonly pointerY: number;
+  readonly focusX: number;
+  readonly focusY: number;
+  readonly focusZ: number;
+  readonly intensity: number;
+  readonly visualState: ComputeCoreVisualState;
+  readonly reducedMotion: boolean;
+};
+
 export type CoreParameters = {
   readonly profile: QualityProfile;
   readonly particleBudget: number;
-  readonly shellRadius: number;
-  readonly cageSegments: number;
-  readonly orbitalCount: number;
+  readonly topologyNodeBudget: number;
+  readonly topologyEdgeBudget: number;
+  readonly fragmentBudget: number;
+  readonly trajectoryBudget: number;
   readonly fieldResolution: number;
   readonly allowBloom: boolean;
 };
