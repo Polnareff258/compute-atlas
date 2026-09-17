@@ -1,14 +1,30 @@
 'use client';
 
 import { extend } from '@react-three/fiber';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ComponentProps } from 'react';
 import * as THREE from 'three';
 
+import { getQualityProfile } from '../config/quality';
+import {
+  createInitialGraphInteractionState,
+  reduceGraphInteraction,
+  type GraphInteractionAction,
+  type GraphInteractionState,
+} from '../graph/interaction';
+import { GRAPH_MANIFEST } from '../graph/graphManifest';
+import { deriveGraphLayout } from '../graph/layout';
 import type {
   QualityProfile,
   RendererBackend,
 } from '../renderer/types';
+import {
+  createCameraController,
+  deriveCameraFocusTarget,
+} from './camera/cameraController';
+import type { ComputeCoreVisualState } from './core/coreTypes';
 import { ComputeCore } from './core/ComputeCore';
+import { KnowledgeGraph } from './graph/KnowledgeGraph';
 
 extend({
   BufferAttribute: THREE.BufferAttribute,
@@ -21,6 +37,7 @@ extend({
   MeshBasicMaterial: THREE.MeshBasicMaterial,
   Points: THREE.Points,
   PointsMaterial: THREE.PointsMaterial,
+  SphereGeometry: THREE.SphereGeometry,
   TorusGeometry: THREE.TorusGeometry,
 });
 
@@ -37,24 +54,82 @@ export function SceneHost({
   reducedMotion = false,
   onTelemetry,
 }: SceneHostProps) {
+  const graphLayout = useMemo(() => deriveGraphLayout(GRAPH_MANIFEST), []);
+  const cameraController = useMemo(
+    () => createCameraController({ reducedMotion }),
+    [reducedMotion],
+  );
+  const [graphInteraction, setGraphInteraction] = useState<GraphInteractionState>(
+    createInitialGraphInteractionState,
+  );
+  const handleGraphAction = useCallback((action: GraphInteractionAction) => {
+    setGraphInteraction((state) => reduceGraphInteraction(state, action));
+  }, []);
+
+  useEffect(() => {
+    const focusedNodeId = graphInteraction.focusedNodeId;
+    const position =
+      focusedNodeId === null ? ([0, 0, 0] as const) : graphLayout[focusedNodeId];
+    const target = deriveCameraFocusTarget(position);
+    cameraController.setFocusTarget(target[0], target[1], target[2]);
+  }, [cameraController, graphInteraction.focusedNodeId, graphLayout]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+
+      setGraphInteraction((state) =>
+        reduceGraphInteraction(state, { type: 'CLEAR_FOCUS' }),
+      );
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const coreVisualState: ComputeCoreVisualState | null =
+    graphInteraction.focusedNodeId !== null
+      ? 'focusing'
+      : graphInteraction.hoveredNodeId !== null
+        ? 'hover_response'
+        : null;
+
+  const coreProps = {
+    quality,
+    backend,
+    cameraController,
+    reducedMotion,
+    visualState: coreVisualState,
+  } as const;
+
   return (
     <>
       <color attach="background" args={['#050609']} />
       <fogExp2 attach="fog" args={['#050609', 0.035]} />
       {onTelemetry ? (
-        <ComputeCore
-          quality={quality}
-          backend={backend}
-          reducedMotion={reducedMotion}
-          onTelemetry={onTelemetry}
-        />
+        <ComputeCore {...coreProps} onTelemetry={onTelemetry} />
       ) : (
-        <ComputeCore
-          quality={quality}
-          backend={backend}
-          reducedMotion={reducedMotion}
-        />
+        <ComputeCore {...coreProps} />
       )}
+      <KnowledgeGraph
+        graphDensity={getQualityProfile(quality).graphDensity}
+        interaction={graphInteraction}
+        layout={graphLayout}
+        manifest={GRAPH_MANIFEST}
+        onAction={handleGraphAction}
+      />
     </>
   );
 }

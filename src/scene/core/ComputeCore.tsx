@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 
 import { createCameraController } from '../camera/cameraController';
+import type { CameraController } from '../camera/cameraController';
 import { sampleRendererTelemetry } from '../../telemetry/rendererTelemetry';
 import type { RendererTelemetrySnapshot } from '../../telemetry/rendererTelemetry';
 import type {
@@ -24,6 +25,8 @@ export type ComputeCoreProps = {
   readonly backend: RendererBackend;
   readonly reducedMotion?: boolean;
   readonly onTelemetry?: (snapshot: RendererTelemetrySnapshot) => void;
+  readonly cameraController?: CameraController;
+  readonly visualState?: ComputeCoreVisualState | null;
 };
 
 export function ComputeCore({
@@ -31,12 +34,15 @@ export function ComputeCore({
   backend,
   reducedMotion = false,
   onTelemetry,
+  cameraController,
+  visualState,
 }: ComputeCoreProps) {
   const parameters = useMemo(() => getCoreParameters(quality), [quality]);
-  const controller = useMemo(
+  const localController = useMemo(
     () => createCameraController({ reducedMotion }),
     [reducedMotion],
   );
+  const activeController = cameraController ?? localController;
   const groupRef = useRef<THREE.Group>(null);
   const elapsedRef = useRef(0);
   const lastTelemetryRef = useRef(0);
@@ -50,12 +56,12 @@ export function ComputeCore({
       const height = Math.max(window.innerHeight, 1);
       const x = (event.clientX / width) * 2 - 1;
       const y = 1 - (event.clientY / height) * 2;
-      controller.setPointerTarget(x, y);
+      activeController.setPointerTarget(x, y);
     };
 
     window.addEventListener('pointermove', handlePointerMove, { passive: true });
     return () => window.removeEventListener('pointermove', handlePointerMove);
-  }, [controller]);
+  }, [activeController]);
 
   useFrame((_, delta) => {
     const safeDelta = Math.min(Math.max(delta, 0), 0.1);
@@ -64,26 +70,39 @@ export function ComputeCore({
     if (elapsedRef.current > 2.2) {
       visualStateRef.current = 'idle';
     }
-    controller.setVisualState(visualStateRef.current);
-    controller.update(safeDelta);
+    visualStateRef.current =
+      visualState ?? (elapsedRef.current > 2.2 ? 'idle' : 'awakening');
+    activeController.setVisualState(visualStateRef.current);
+    activeController.update(safeDelta);
 
-    const response = controller.getResponseStrength();
-    const pointerX = controller.getPointerX();
-    const pointerY = controller.getPointerY();
+    const response = activeController.getResponseStrength();
+    const pointerX = activeController.getPointerX();
+    const pointerY = activeController.getPointerY();
+    const focusX = activeController.getFocusX();
+    const focusY = activeController.getFocusY();
+    const focusZ = activeController.getFocusZ();
+    const focusMagnitude = Math.min(Math.hypot(focusX, focusY, focusZ), 1);
 
     const camera = cameraRef.current;
-    camera.position.x = pointerX * 0.13 * response;
-    camera.position.y = pointerY * 0.1 * response;
-    camera.rotation.y = -pointerX * 0.018 * response;
-    camera.rotation.x = pointerY * 0.014 * response;
+    camera.position.x = pointerX * 0.13 * response + focusX * 0.08;
+    camera.position.y = pointerY * 0.1 * response + focusY * 0.05;
+    camera.position.z = 6 + focusZ * 0.08;
+    camera.rotation.y = -pointerX * 0.018 * response - focusX * 0.32;
+    camera.rotation.x = pointerY * 0.014 * response + focusY * 0.16;
 
     if (groupRef.current) {
       const awakeningProgress = reducedMotion
         ? 1
         : Math.min(elapsedRef.current / 1.8, 1);
-      const targetScale = 0.84 + awakeningProgress * 0.16;
+      const interactionLift =
+        visualStateRef.current === 'hover_response' ? 0.012 : 0;
+      const targetScale =
+        (0.84 + awakeningProgress * 0.16 + interactionLift) *
+        (1 - focusMagnitude * 0.035);
       groupRef.current.scale.setScalar(targetScale);
-      groupRef.current.rotation.y += safeDelta * (0.018 + Math.abs(pointerX) * 0.012);
+      groupRef.current.position.set(-focusX * 0.06, -focusY * 0.04, -focusZ * 0.04);
+      groupRef.current.rotation.y +=
+        safeDelta * (0.018 + Math.abs(pointerX) * 0.012 + focusMagnitude * 0.008);
       groupRef.current.rotation.x = Math.sin(elapsedRef.current * 0.24) * 0.025;
       groupRef.current.rotation.z = pointerX * 0.012;
     }

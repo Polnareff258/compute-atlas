@@ -1,5 +1,7 @@
 import type { ComputeCoreVisualState } from '../core/coreTypes';
 
+export type CameraFocusTarget = readonly [x: number, y: number, z: number];
+
 export type CameraControllerOptions = {
   readonly pointerDamping?: number;
   readonly focusDamping?: number;
@@ -8,6 +10,21 @@ export type CameraControllerOptions = {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
+}
+
+export function deriveCameraFocusTarget(
+  position: readonly [number, number, number],
+): CameraFocusTarget {
+  const length = Math.hypot(position[0], position[1], position[2]);
+  if (length === 0 || !Number.isFinite(length)) {
+    return [0, 0, 0];
+  }
+
+  return [
+    position[0] / length,
+    position[1] / length,
+    position[2] / length,
+  ];
 }
 
 function approach(

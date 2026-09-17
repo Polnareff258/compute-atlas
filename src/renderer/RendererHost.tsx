@@ -1,6 +1,6 @@
 'use client';
 
-import { createRoot, type ReconcilerRoot } from '@react-three/fiber';
+import { events, createRoot, type ReconcilerRoot } from '@react-three/fiber';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { createBootCoordinator } from '../boot/bootCoordinator';
@@ -95,6 +95,15 @@ export function RendererHost() {
         root = createRoot(canvas);
         await root.configure({
           camera: { fov: 48, position: [0, 0, 6] },
+          events: (store) => {
+            const manager = events(store);
+            return {
+              ...manager,
+              connect: (target) => {
+                manager.connect?.(canvas.parentElement ?? target);
+              },
+            };
+          },
           dpr: [1, getQualityProfile(nextState.quality).maxDpr],
           gl: rendererRef.current,
         });

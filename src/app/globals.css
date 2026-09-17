@@ -539,3 +539,73 @@ input {
     transition: none;
   }
 }
+.graph-node-label-wrapper {
+  position: relative !important;
+  display: inline-block !important;
+  width: max-content;
+  height: max-content;
+}
+
+.graph-node-label {
+  position: relative;
+  display: inline-grid;
+  gap: 0.28rem;
+  width: max-content;
+  min-width: 8rem;
+  max-width: 12rem;
+  padding: 0.42rem 0.58rem 0.48rem;
+  border-left: 1px solid rgba(150, 177, 184, 0.4);
+  background: linear-gradient(90deg, rgba(5, 8, 10, 0.76), rgba(5, 8, 10, 0));
+  color: rgba(202, 220, 223, 0.72);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.14em;
+  line-height: 1.25;
+  text-transform: uppercase;
+  transition: color 220ms ease, opacity 220ms ease, border-color 220ms ease;
+  white-space: nowrap;
+}
+
+.graph-node-label--idle {
+  opacity: 0.64;
+}
+
+.graph-node-label--hovered,
+.graph-node-label--focused {
+  border-color: rgba(205, 226, 226, 0.78);
+  color: rgba(226, 237, 235, 0.94);
+  opacity: 1;
+}
+
+.graph-node-label--dimmed {
+  border-color: rgba(93, 109, 116, 0.16);
+  color: rgba(124, 142, 148, 0.3);
+  opacity: 0.36;
+}
+
+.graph-node-label__name {
+  font-weight: 600;
+}
+
+.graph-node-label__description {
+  max-width: 12rem;
+  color: rgba(163, 181, 185, 0.62);
+  font-size: 0.46rem;
+  letter-spacing: 0.045em;
+  line-height: 1.45;
+  text-transform: none;
+  white-space: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-node-label-wrapper {
+  position: relative !important;
+  display: inline-block !important;
+  width: max-content;
+  height: max-content;
+}
+
+.graph-node-label {
+    transition: none;
+  }
+}
