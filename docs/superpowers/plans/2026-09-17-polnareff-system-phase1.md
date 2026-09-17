@@ -440,3 +440,33 @@ Each future stage must produce its own evidence and update `docs/PROJECT_STATUS.
 - [x] Browser console collection found no uncaught exceptions or app/R3F errors. Known environment warnings remain documented in `docs/PROJECT_STATUS.md`; no unavailable GPU metrics were fabricated.
 
 **Handoff:** Stage 4 is complete. The next isolated slice is Stage 5 — Command Bus; do not start it as part of this record.
+
+
+### Stage 5: Command Bus
+
+**Outcome:** Add a typed, synchronous, framework-neutral Command Bus and semantic adapters. This stage stops before Command Palette UI, natural-language parsing, Ollama, Agent Gateway, Agent tool calling, Agent Trace, Developer Overlay, Stage 11 performance work and Stage 12 polish.
+
+**Implementation record:**
+
+- [x] Read the design spec, Phase 1 plan, project status, current branch/history and the actual Stage 4 Command/Graph/Scene/Camera/Renderer/Quality interfaces before editing.
+- [x] Kept the existing strict `CommandSource` and `Command` union, making command fields readonly and serializable.
+- [x] Added `CommandExecutionResult` and public `CommandExecutionEvent` contracts with `executed`, `rejected`, `unavailable` and `failed` statuses.
+- [x] Added `CommandRegistry` with typed handler lookup and explicit duplicate-registration failure. No `any`, silent overwrite or giant switch was introduced.
+- [x] Added synchronous `createCommandBus`. Unregistered commands return `unavailable`; handler exceptions become `failed`; subscriber exceptions cannot alter execution results.
+- [x] Added injected graph and renderer capability contracts. Graph handlers call only `focusNode` / `clearFocus`; quality handlers call only `setQuality`.
+- [x] Added `src/graph/graphController.ts` as the semantic seam between command adapters and the existing GraphInteraction reducer. Pointer and Command Bus focus share the same graph state contract.
+- [x] Integrated the bus lifecycle into SceneHost and RendererHost without a global singleton, DOM access or direct Three.js/camera/Core control.
+- [x] Left `OPEN_SECTION`, `SYSTEM_STATUS`, `SET_DEV_OVERLAY` and `SURPRISE_ME` unregistered until their owning stages provide truthful behavior.
+
+**Verification record:**
+
+- [x] Wrote focused tests first and observed the expected red state before implementing production modules.
+- [x] Focused command tests: 3 files, 14 tests passed.
+- [x] Full test suite: 17 files, 59 tests passed.
+- [x] `npm run lint` passed.
+- [x] `npm run typecheck` passed.
+- [x] `NEXT_TELEMETRY_DISABLED=1 npm run build` passed on Next 16.3.5.
+- [x] Browser regression passed on WebGPU at actual 1898×926 and WebGL2 fallback at actual 2538×1342; Compute Core, five Graph labels, hover, focus and Escape unfocus remained functional with no uncaught exceptions or console error events.
+- [x] Import audit confirmed commands core has no Three.js/React/Agent dependency and Graph/Core have no Command dependency.
+
+**Handoff:** Stage 5 is complete. The next isolated slice is Stage 6 — Command Palette; do not start it as part of this record.

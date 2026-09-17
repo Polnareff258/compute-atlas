@@ -3,7 +3,7 @@
 **As of:** 2026-09-17
 **Repository:** initialized from an empty directory
 **Current phase:** Phase 1
-**Current stage:** Stage 4 complete; Stage 5 Command Bus pending
+**Current stage:** Stage 5 complete; Stage 6 Command Palette pending
 
 ## Confirmed architecture
 
@@ -25,7 +25,7 @@
 | Stage 2 — boot experience | Complete | Commit 36abdda; reducer, health seam, manifest, coordinator, visual bootstrap overlay, degraded path and skip path verified. |
 | Stage 3 — Compute Core | Complete | Layered Core, quality budgets, inertial pointer response, WebGPU-compatible materials, telemetry seam and desktop browser evidence are complete. |
 | Stage 4 — Knowledge Graph | Complete | Data-driven schema, deterministic spatial layout, graph interaction, camera focus and browser evidence are complete. |
-| Stage 5 — Command Bus | Not started | No command routing has been added to the Core slice. |
+| Stage 5 — Command Bus | Complete | Typed synchronous dispatch, graph/quality adapters, structured results and unavailable future commands are verified. |
 | Stage 6 — Command Palette | Not started | No palette UI has been added. |
 | Stage 7 — backend/Ollama health | Not started | Browser gateway intentionally remains NOT INITIALIZED until this stage. |
 | Stage 8 — Agent tool calling | Not started | No model or tool call is made from the browser. |
@@ -65,7 +65,7 @@ An agent must read the spec, project status and phase plan before editing. Work 
 
 ## Immediate next action
 
-Begin Stage 5 from the future plan map: define the Command Bus contract and deterministic command routing. Keep the Stage 4 graph and camera seam intact, and do not add Agent Gateway behavior in the Command Bus slice.
+Begin Stage 6 from the future plan map: build the deterministic Command Palette UI over the existing Command Bus. Keep natural-language parsing and Agent Gateway work out of that slice.
 
 ## Stage 4 implementation
 
@@ -89,3 +89,29 @@ Stage 4 adds the first spatial Knowledge Graph without widening the existing ren
 - WebGL2 fallback run at 2560×1440 (`--disable-gpu`) — actual viewport 2538×1342, `Three.js WebGLRenderer`, all five labels visible and GRAPHICS focus verified. Screenshot: `artifacts/stage4-graph-fallback.png`.
 - Browser runs reported no uncaught exceptions or app/R3F errors. Remaining messages are known environment/library warnings: React DevTools/HMR, Three.Clock deprecation, WebGPU PCFSoftShadowMap remapping, Windows `powerPreference` handling, and headless adapter/zero-vertex warnings. No fabricated GPU utilization or hardware telemetry was introduced.
 - Sustained FPS/GPU utilization claims remain intentionally out of scope for Stage 4; Stage 11 owns that measurement.
+
+
+## Stage 5 implementation
+
+Stage 5 establishes the typed command boundary without adding a palette, parser, Agent or overlay:
+
+- `src/commands/types.ts` retains the strict serializable command union and source union as readonly contracts.
+- `src/commands/result.ts` defines structured `executed`, `rejected`, `unavailable` and `failed` execution results plus the public dispatch event seam.
+- `src/commands/registry.ts` provides a typed registry with duplicate registration rejection. It uses no `any`, no stringly-typed handler table and no silent overwrite.
+- `src/commands/bus.ts` provides synchronous deterministic dispatch. Missing handlers return `unavailable`; handler exceptions become `failed`; subscriber exceptions are isolated from command execution.
+- `src/commands/commandEnvironment.ts` defines injected semantic capabilities only. The command core imports no Three.js, React, R3F, Agent or Ollama module.
+- `src/commands/adapters/graphCommands.ts` maps `FOCUS_NODE` and `NAVIGATE_HOME` to `focusNode` and `clearFocus`. `src/graph/graphController.ts` converts those capabilities into the existing Stage 4 interaction actions, preserving one graph state source of truth.
+- `src/commands/adapters/rendererCommands.ts` maps `SET_QUALITY` to the existing renderer quality seam. SceneHost applies the quality override to Core/Graph, while RendererHost forwards the same semantic setter to the runtime boundary.
+- `SceneHost` constructs the bus through dependency injection and exposes a lifecycle callback for future palette/Agent sources. No global service locator or DOM/Three.js mutation was added.
+- `OPEN_SECTION`, `SYSTEM_STATUS`, `SET_DEV_OVERLAY` and `SURPRISE_ME` remain unregistered and truthfully return `unavailable` until their owning stages exist. No random or fake system behavior was introduced.
+
+### Stage 5 verification evidence
+
+- `npm test`: 17 test files and 59 tests passed, including 14 focused registry/bus/adapter tests.
+- `npm run lint` — pass.
+- `npm run typecheck` — pass.
+- `NEXT_TELEMETRY_DISABLED=1 npm run build` — pass with Next 16.3.5.
+- WebGPU browser regression at actual viewport 1898×926: Compute Core and five Graph labels rendered; hover, focus, and Escape unfocus passed; no uncaught exceptions or console error events.
+- WebGL2 fallback browser regression at actual viewport 2538×1342: same Graph interactions passed; no uncaught exceptions or console error events.
+- Dependency audit confirmed commands core has no Three.js/React/Agent imports; Graph and ComputeCore have no Command imports.
+- Stage 6 Command Palette, natural-language parsing, Ollama and Agent work remain untouched.
