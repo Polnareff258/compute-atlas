@@ -3,7 +3,6 @@ import { PointsNodeMaterial } from 'three/webgpu';
 import {
   attribute,
   float,
-  Fn,
   positionLocal,
   time,
   uniform,
@@ -42,6 +41,9 @@ type CoreFlowInputState = {
 };
 
 
+const POINTER_COORDINATE_LIMIT = 1;
+const FOCUS_COORDINATE_LIMIT = 4;
+const ELAPSED_SECONDS_PERIOD = 120;
 const EMPTY_INPUT_STATE: CoreFlowInputState = {
   pointerX: 0,
   pointerY: 0,
@@ -57,8 +59,16 @@ function finite(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+function normalizedSignedCoordinate(value: number, limit: number): number {
+  return THREE.MathUtils.clamp(finite(value), -limit, limit);
+}
+
 function normalizedIntensity(value: number): number {
   return THREE.MathUtils.clamp(finite(value), 0, 1);
+}
+
+function normalizedElapsedSeconds(value: number): number {
+  return Math.max(0, finite(value)) % ELAPSED_SECONDS_PERIOD;
 }
 
 function activityForState(input: CoreVisualInput): number {
@@ -91,26 +101,26 @@ function applyInput(
   input: CoreVisualInput,
   elapsedSeconds: number,
 ): void {
-  state.pointerX = finite(input.pointerX);
-  state.pointerY = finite(input.pointerY);
-  state.focusX = finite(input.focusX);
-  state.focusY = finite(input.focusY);
-  state.focusZ = finite(input.focusZ);
+  state.pointerX = normalizedSignedCoordinate(input.pointerX, POINTER_COORDINATE_LIMIT);
+  state.pointerY = normalizedSignedCoordinate(input.pointerY, POINTER_COORDINATE_LIMIT);
+  state.focusX = normalizedSignedCoordinate(input.focusX, FOCUS_COORDINATE_LIMIT);
+  state.focusY = normalizedSignedCoordinate(input.focusY, FOCUS_COORDINATE_LIMIT);
+  state.focusZ = normalizedSignedCoordinate(input.focusZ, FOCUS_COORDINATE_LIMIT);
   state.intensity = normalizedIntensity(input.intensity);
   state.activity = activityForState(input);
-  state.elapsedSeconds = Math.max(0, finite(elapsedSeconds));
+  state.elapsedSeconds = normalizedElapsedSeconds(elapsedSeconds);
 }
 
 function createInputUniforms() {
   return {
-    pointerX: uniform(0, 'float'),
-    pointerY: uniform(0, 'float'),
-    focusX: uniform(0, 'float'),
-    focusY: uniform(0, 'float'),
-    focusZ: uniform(0, 'float'),
-    intensity: uniform(0, 'float'),
-    activity: uniform(0, 'float'),
-    elapsedSeconds: uniform(0, 'float'),
+    pointerX: uniform(0, 'float').setName('coreFlowPointerX'),
+    pointerY: uniform(0, 'float').setName('coreFlowPointerY'),
+    focusX: uniform(0, 'float').setName('coreFlowFocusX'),
+    focusY: uniform(0, 'float').setName('coreFlowFocusY'),
+    focusZ: uniform(0, 'float').setName('coreFlowFocusZ'),
+    intensity: uniform(0, 'float').setName('coreFlowIntensity'),
+    activity: uniform(0, 'float').setName('coreFlowActivity'),
+    elapsedSeconds: uniform(0, 'float').setName('coreFlowElapsedSeconds'),
   };
 }
 
@@ -128,46 +138,52 @@ function applyUniforms(uniforms: CoreFlowUniforms, state: CoreFlowInputState): v
 }
 
 function createFlowPositionNode(uniforms: CoreFlowUniforms) {
-  return Fn(() => {
-    const drift = attribute('coreDrift', 'vec3');
-    const phase = attribute('corePhase', 'float');
-    const weight = attribute('coreWeight', 'float');
-    const temporalWave = time
-      .add(uniforms.elapsedSeconds)
-      .mul(float(0.72))
-      .add(phase)
-      .sin();
-    const amplitude = uniforms.intensity
-      .add(uniforms.activity.mul(float(0.6)))
-      .mul(weight)
-      .mul(float(0.055));
-    const pointerBias = vec3(uniforms.pointerX, uniforms.pointerY, float(0))
-      .mul(uniforms.activity)
-      .mul(float(0.012));
-    const focusBias = vec3(uniforms.focusX, uniforms.focusY, uniforms.focusZ)
-      .mul(uniforms.activity)
-      .mul(float(0.008));
+  const drift = attribute('coreDrift', 'vec3');
+  const phase = attribute('corePhase', 'float');
+  const weight = attribute('coreWeight', 'float');
+  const temporalWave = time
+    .add(uniforms.elapsedSeconds)
+    .mul(float(0.72))
+    .add(phase)
+    .sin();
+  const amplitude = uniforms.intensity
+    .add(uniforms.activity.mul(float(0.6)))
+    .mul(weight)
+    .mul(float(0.055));
+  const pointerBias = vec3(uniforms.pointerX, uniforms.pointerY, float(0))
+    .mul(uniforms.activity)
+    .mul(float(0.012));
+  const focusBias = vec3(uniforms.focusX, uniforms.focusY, uniforms.focusZ)
+    .mul(uniforms.activity)
+    .mul(float(0.008));
 
-    return positionLocal.add(drift.mul(temporalWave.mul(amplitude))).add(pointerBias).add(focusBias);
-  })();
+  return positionLocal.add(drift.mul(temporalWave.mul(amplitude))).add(pointerBias).add(focusBias);
 }
 
 function createNodeHandle(config: CoreFlowMaterialConfig): CoreFlowMaterialHandle {
   const inputState = createInputState();
   const uniforms = createInputUniforms();
-  const material = new PointsNodeMaterial({
-    color: new THREE.Color(config.color),
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
+  let material: PointsNodeMaterial | null = null;
+
+  try {
+    material = new PointsNodeMaterial({
+      color: new THREE.Color(config.color),
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    material.positionNode = createFlowPositionNode(uniforms);
+    material.size = Math.max(0.01, finite(config.pointSize));
+  } catch (error) {
+    material?.dispose();
+    throw error;
+  }
+
+  const nodeMaterial = material;
   let disposed = false;
 
-  material.positionNode = createFlowPositionNode(uniforms);
-  material.size = Math.max(0.01, finite(config.pointSize));
-
   return {
-    material,
+    material: nodeMaterial,
     backend: 'node',
     updateInput: (input, elapsedSeconds) => {
       if (disposed) {
@@ -183,7 +199,7 @@ function createNodeHandle(config: CoreFlowMaterialConfig): CoreFlowMaterialHandl
       }
 
       disposed = true;
-      material.dispose();
+      nodeMaterial.dispose();
     },
   };
 }
