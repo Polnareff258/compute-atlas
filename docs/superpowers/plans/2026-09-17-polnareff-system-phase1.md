@@ -209,27 +209,27 @@ git commit -m "feat: add renderer runtime boundary"
 - Produces a client-only scene host with a truthful backend label, quality label, and degraded fallback message.
 - Does not implement graph navigation, Agent UI or fake hardware metrics.
 
-- [ ] **Step 1: Add a browser-only renderer host**
+- [x] **Step 1: Add a browser-only renderer host**
 
 Mount the canvas only from a client component. Keep server-rendered layout and page metadata safe. The host should tolerate a failed renderer initialization and retain the dark shell.
 
-- [ ] **Step 2: Add a restrained atmospheric scene**
+- [x] **Step 2: Add a restrained atmospheric scene**
 
 Use a low-frequency gradient/noise-like shader or simple procedural material with no character rain, binary filler or excessive cyan glow. Keep the first scene sparse and leave negative space for the future Compute Core.
 
-- [ ] **Step 3: Add real status copy**
+- [x] **Step 3: Add real status copy**
 
 Display `WEBGPU READY`, `WEBGL2 FALLBACK`, or `GRAPHICS DEGRADED` based on runtime state. Show the quality profile from configuration. Do not show unavailable metrics.
 
-- [ ] **Step 4: Add resize and reduced-motion handling**
+- [x] **Step 4: Add resize and reduced-motion handling**
 
 Use R3F's canvas sizing and a CSS media query for reduced motion. The desktop layout is primary; ensure the shell remains legible at narrower widths without attempting a complete mobile design.
 
-- [ ] **Step 5: Verify visually and statically**
+- [x] **Step 5: Verify visually and statically**
 
 Run `npm run dev`, open the local page, inspect the browser console, confirm the status reflects the actual backend, and capture a screenshot for review. Then run `npm run lint`, `npm run typecheck`, `npm test` and `npm run build`.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 ```text
 git add src/renderer/RendererHost.tsx src/scene src/ui src/app/page.tsx src/app/globals.css
@@ -242,19 +242,19 @@ git commit -m "feat: add gpu-first renderer bootstrap shell"
 - Modify: `docs/PROJECT_STATUS.md`
 - Modify: `docs/superpowers/plans/2026-09-17-polnareff-system-phase1.md`
 
-- [ ] **Step 1: Record completed work**
+- [x] **Step 1: Record completed work**
 
 Mark Tasks 1–4 complete only with command output and browser evidence. Record the detected backend on the current machine, noting that another machine may choose WebGL2 or degraded mode.
 
-- [ ] **Step 2: Record known gaps**
+- [x] **Step 2: Record known gaps**
 
 Explicitly list Boot Scene, Compute Core, Graph, Command Bus implementation, Agent Gateway and Developer Overlay as not implemented until their stages are executed.
 
-- [ ] **Step 3: Run the full Stage 1 verification**
+- [x] **Step 3: Run the full Stage 1 verification**
 
 Run `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, then repeat the browser check after a clean dev-server restart.
 
-- [ ] **Step 4: Commit the handoff**
+- [x] **Step 4: Commit the handoff**
 
 ```text
 git add docs/PROJECT_STATUS.md docs/superpowers/plans/2026-09-17-polnareff-system-phase1.md

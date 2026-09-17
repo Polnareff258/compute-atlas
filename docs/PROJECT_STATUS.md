@@ -3,7 +3,7 @@
 **As of:** 2026-09-17  
 **Repository:** newly initialized from an empty directory  
 **Current phase:** Phase 1  
-**Current stage:** Stage 1 runtime boundary complete; visual renderer host pending
+**Current stage:** Stage 1 complete; Stage 2 boot experience pending
 
 ## Confirmed architecture
 
@@ -19,7 +19,7 @@
 | Stage | Status | Evidence |
 |---|---|---|
 | Stage 0 — repository/architecture setup | Complete | Commit `f633032` after verification; project shell, strict TypeScript, quality profiles and test harness are present. |
-| Stage 1 — renderer bootstrap | In progress | Capability detection and serializable runtime/store are complete; visual host remains. |
+| Stage 1 — renderer bootstrap | Complete | WebGPU-first/WebGL2 adapter host, R3F scene shell, status UI and headless browser verification are complete. |
 | Stage 2 — boot experience | Not started | None yet |
 | Stage 3 — Compute Core | Not started | None yet |
 | Stage 4 — Knowledge Graph | Not started | None yet |
@@ -36,10 +36,11 @@
 
 - `npm run lint` — pass.
 - `npm run typecheck` — pass.
-- `npm test` — 3 files, 14 tests passed.
+- `npm test` — 4 files, 17 tests passed.
 - `NEXT_TELEMETRY_DISABLED=1 npm run build` — pass; plain build is blocked by the managed environment's Next telemetry `EXDEV` config rename before compilation.
 - Installed renderer baseline: Next 16.3.5, React 19.2.0, Three 0.186.0, R3F 9.7.0.
-- Capability tests: 4 focused cases; runtime tests: 7 focused cases; full suite: 3 files, 14 tests passed.
+- Headless Chrome: `GET /` returned 200 at 1920×1080; screenshot `artifacts/stage1-gpu-shell-fixed.png` generated; after catalog registration, dev-server logs contained no uncaught R3F error.
+- Capability tests: 4 focused cases; runtime tests: 7 focused cases; status-copy tests: 3 focused cases; full suite: 4 files, 17 tests passed.
 
 ## Handoff rule
 
@@ -47,4 +48,4 @@ An agent must read the spec and plan before editing. Work one task at a time, ru
 
 ## Immediate next action
 
-Start Task 4 in `docs/superpowers/plans/2026-09-17-polnareff-system-phase1.md`: build the browser-only R3F renderer host and restrained atmospheric scene.
+Start Stage 2 in `docs/superpowers/plans/2026-09-17-polnareff-system-phase1.md`: add the truthful bootstrap state machine and real backend/manifest/Agent health aggregation.
