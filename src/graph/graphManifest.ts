@@ -1,0 +1,93 @@
+import type { GraphManifest } from './types';
+
+export const GRAPH_MANIFEST = {
+  id: 'phase-1-knowledge-graph',
+  version: 1,
+  nodes: [
+    {
+      id: 'core',
+      label: 'CORE',
+      description: 'Central compute field and shared system state.',
+      kind: 'core',
+      parentId: null,
+      importance: 1,
+    },
+    {
+      id: 'ai',
+      label: 'AI',
+      description: 'Local intelligence, agents and model experiments.',
+      kind: 'domain',
+      parentId: 'core',
+      importance: 0.92,
+    },
+    {
+      id: 'graphics',
+      label: 'GRAPHICS',
+      description: 'Rendering systems, shaders and GPU experiments.',
+      kind: 'domain',
+      parentId: 'core',
+      importance: 1,
+    },
+    {
+      id: 'game-analysis',
+      label: 'GAME ANALYSIS',
+      description: 'Player models, decisions and counterfactual systems.',
+      kind: 'domain',
+      parentId: 'core',
+      importance: 0.84,
+    },
+    {
+      id: 'systems',
+      label: 'SYSTEMS',
+      description: 'Runtime architecture, tooling and resilient workflows.',
+      kind: 'domain',
+      parentId: 'core',
+      importance: 0.88,
+    },
+    {
+      id: 'research',
+      label: 'RESEARCH',
+      description: 'Questions, prototypes and technical investigations.',
+      kind: 'domain',
+      parentId: 'core',
+      importance: 0.8,
+    },
+  ],
+  edges: [
+    {
+      id: 'core-ai',
+      source: 'core',
+      target: 'ai',
+      kind: 'primary',
+      strength: 0.82,
+    },
+    {
+      id: 'core-graphics',
+      source: 'core',
+      target: 'graphics',
+      kind: 'primary',
+      strength: 1,
+    },
+    {
+      id: 'core-game-analysis',
+      source: 'core',
+      target: 'game-analysis',
+      kind: 'primary',
+      strength: 0.74,
+    },
+    {
+      id: 'core-systems',
+      source: 'core',
+      target: 'systems',
+      kind: 'primary',
+      strength: 0.78,
+    },
+    {
+      id: 'core-research',
+      source: 'core',
+      target: 'research',
+      kind: 'primary',
+      strength: 0.7,
+    },
+  ],
+} as const satisfies GraphManifest;
