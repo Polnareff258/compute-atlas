@@ -7,7 +7,10 @@ import { deriveCoreTopology, deriveCoreTopologyActivation } from './coreTopology
 describe('deriveCoreTopology', () => {
   const parameters = getCoreParameters('ultra');
 
-  function inputFor(visualState: CoreVisualInput['visualState']): CoreVisualInput {
+  function inputFor(
+    visualState: CoreVisualInput['visualState'],
+    overrides: Omit<Partial<CoreVisualInput>, 'visualState'> = {},
+  ): CoreVisualInput {
     return {
       pointerX: 0.35,
       pointerY: -0.2,
@@ -15,8 +18,9 @@ describe('deriveCoreTopology', () => {
       focusY: 0.1,
       focusZ: -0.4,
       intensity: 0.72,
-      visualState,
       reducedMotion: false,
+      ...overrides,
+      visualState,
     };
   }
 
@@ -214,5 +218,56 @@ describe('deriveCoreTopology', () => {
     expect(activation.activeEdgeIds).not.toEqual(
       deriveCoreTopologyActivation(topology, inputFor('focusing')).activeEdgeIds,
     );
+  });
+  it('changes active node membership when the active route changes', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const idle = deriveCoreTopologyActivation(topology, inputFor('idle'));
+    const hover = deriveCoreTopologyActivation(
+      topology,
+      inputFor('hover_response', { pointerX: 1, pointerY: 0 }),
+    );
+
+    expect(hover.activeNodeIds).not.toEqual(idle.activeNodeIds);
+    expect(new Set(hover.activeEdgeIds).size).toBe(hover.activeEdgeIds.length);
+  });
+
+  it('selects different local edges for materially different pointer vectors', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const left = deriveCoreTopologyActivation(
+      topology,
+      inputFor('hover_response', { pointerX: -1, pointerY: 0 }),
+    );
+    const right = deriveCoreTopologyActivation(
+      topology,
+      inputFor('hover_response', { pointerX: 1, pointerY: 0 }),
+    );
+
+    expect(left.activeEdgeIds).not.toEqual(right.activeEdgeIds);
+    expect(
+      topology.edges.find((edge) => edge.id === left.activeEdgeIds[0])?.route,
+    ).toBe('local');
+    expect(
+      topology.edges.find((edge) => edge.id === right.activeEdgeIds[0])?.route,
+    ).toBe('local');
+  });
+
+  it('selects different directional edges for materially different focus vectors', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const left = deriveCoreTopologyActivation(
+      topology,
+      inputFor('focusing', { focusX: -1, focusY: 0, focusZ: 0 }),
+    );
+    const right = deriveCoreTopologyActivation(
+      topology,
+      inputFor('focusing', { focusX: 1, focusY: 0, focusZ: 0 }),
+    );
+
+    expect(left.activeEdgeIds).not.toEqual(right.activeEdgeIds);
+    expect(
+      topology.edges.find((edge) => edge.id === left.activeEdgeIds[0])?.route,
+    ).toBe('directional');
+    expect(
+      topology.edges.find((edge) => edge.id === right.activeEdgeIds[0])?.route,
+    ).toBe('directional');
   });
 });

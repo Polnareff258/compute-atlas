@@ -192,25 +192,58 @@ export type CoreTopologyActivation = {
   readonly activeNodeIds: readonly number[];
 };
 
-function finiteSignal(value: number): number {
-  return Number.isFinite(value) ? value : 0;
-}
+type SpatialVector = readonly [number, number, number];
 
-function selectRouteEdge(
-  edges: readonly CoreTopologyEdge[],
-  route: CoreTopologyEdge['route'],
-  signal: number,
-): CoreTopologyEdge | undefined {
-  const candidates = edges.filter((edge) => edge.route === route);
-
-  if (candidates.length === 0) {
-    return undefined;
+function spatialEdgeScore(
+  edge: CoreTopologyEdge,
+  topology: CoreTopology,
+  vector: SpatialVector,
+): number {
+  const source = topology.nodes.find((node) => node.id === edge.source);
+  const target = topology.nodes.find((node) => node.id === edge.target);
+  if (!source || !target) {
+    return Number.NEGATIVE_INFINITY;
   }
 
-  const index = Math.abs(Math.trunc(finiteSignal(signal) * 997)) % candidates.length;
-  return candidates[index];
+  const midpointX = (source.position[0] + target.position[0]) * 0.5;
+  const midpointY = (source.position[1] + target.position[1]) * 0.5;
+  const midpointZ = (source.position[2] + target.position[2]) * 0.5;
+  const midpointLength = Math.hypot(midpointX, midpointY, midpointZ);
+  const vectorLength = Math.hypot(vector[0], vector[1], vector[2]);
+
+  if (midpointLength === 0 || vectorLength === 0) {
+    return -edge.activationRank * 0.001;
+  }
+
+  const alignment =
+    (midpointX * vector[0] + midpointY * vector[1] + midpointZ * vector[2]) /
+    (midpointLength * vectorLength);
+
+  return alignment * 4 - midpointLength * 0.025 - edge.activationRank * 0.0001;
 }
 
+function selectSpatialEdge(
+  topology: CoreTopology,
+  route: CoreTopologyEdge['route'],
+  vector: SpatialVector,
+): CoreTopologyEdge | undefined {
+  let selected: CoreTopologyEdge | undefined;
+  let selectedScore = Number.NEGATIVE_INFINITY;
+
+  for (const edge of topology.edges) {
+    if (edge.route !== route) {
+      continue;
+    }
+
+    const score = spatialEdgeScore(edge, topology, vector);
+    if (score > selectedScore) {
+      selected = edge;
+      selectedScore = score;
+    }
+  }
+
+  return selected;
+}
 function nodeIdsFor(edges: readonly CoreTopologyEdge[]): readonly number[] {
   const nodeIds = new Set<number>();
 
@@ -242,28 +275,28 @@ export function deriveCoreTopologyActivation(
       activeEdges = edges.slice(0, 2);
       break;
     case 'hover_response': {
-      const localEdge = selectRouteEdge(
-        edges,
+      const localEdge = selectSpatialEdge(
+        topology,
         'local',
-        visualInput.pointerX * 31 + visualInput.pointerY * 17,
+        [visualInput.pointerX, visualInput.pointerY, 0],
       );
       activeEdges = localEdge ? [localEdge] : edges.slice(0, 1);
       break;
     }
     case 'focusing': {
-      const directionalEdge = selectRouteEdge(
-        edges,
+      const directionalEdge = selectSpatialEdge(
+        topology,
         'directional',
-        visualInput.focusX * 19 + visualInput.focusY * 29 + visualInput.focusZ * 37,
+        [visualInput.focusX, visualInput.focusY, visualInput.focusZ],
       );
       activeEdges = directionalEdge ? [directionalEdge] : edges.slice(0, 1);
       break;
     }
     case 'agent_activity': {
       const representativeEdges = [
-        selectRouteEdge(edges, 'local', visualInput.intensity),
-        selectRouteEdge(edges, 'directional', visualInput.focusX + visualInput.focusZ),
-        selectRouteEdge(edges, 'signal', visualInput.pointerY),
+        selectSpatialEdge(topology, 'local', [visualInput.pointerX, visualInput.pointerY, 0]),
+        selectSpatialEdge(topology, 'directional', [visualInput.focusX, visualInput.focusY, visualInput.focusZ]),
+        selectSpatialEdge(topology, 'signal', [visualInput.focusZ, visualInput.pointerX, visualInput.pointerY]),
       ].filter((edge): edge is CoreTopologyEdge => edge !== undefined);
       activeEdges = representativeEdges.length > 0 ? representativeEdges : edges.slice(0, 1);
       break;
