@@ -28,6 +28,7 @@ describe('command semantic adapters', () => {
       });
 
       expect(result.status).toBe('executed');
+      expect(state.hoveredNodeId).toBeNull();
       expect(state.focusedNodeId).toBe('graphics');
       expect(state.phase).toBe('focused');
     }
@@ -51,16 +52,57 @@ describe('command semantic adapters', () => {
     });
 
     expect(result.status).toBe('executed');
+    expect(state.hoveredNodeId).toBeNull();
     expect(state.focusedNodeId).toBeNull();
-    expect(state.phase).toBe('hovering');
+    expect(state.phase).toBe('idle');
   });
 
+  it('preserves real pointer hover across programmatic focus and clear-focus', () => {
+    let state = reduceGraphInteraction(createInitialGraphInteractionState(), {
+      type: 'POINTER_ENTER_NODE',
+      nodeId: 'ai',
+    });
+    const graph = createGraphController((action) => {
+      state = reduceGraphInteraction(state, action);
+    });
+    const bus = createCommandBus({
+      registry: createCommandRegistry({ graph }),
+    });
+
+    expect(
+      bus.dispatch({
+        type: 'FOCUS_NODE',
+        source: 'palette',
+        nodeId: 'graphics',
+      }).status,
+    ).toBe('executed');
+    expect(state).toEqual({
+      hoveredNodeId: 'ai',
+      focusedNodeId: 'graphics',
+      phase: 'focused',
+    });
+
+    expect(
+      bus.dispatch({ type: 'NAVIGATE_HOME', source: 'keyboard' }).status,
+    ).toBe('executed');
+    expect(state).toEqual({
+      hoveredNodeId: 'ai',
+      focusedNodeId: null,
+      phase: 'hovering',
+    });
+  });
   it('maps SET_QUALITY to the injected renderer quality seam', () => {
-    const profiles: string[] = [];
+    let runtimeQuality = 'ultra';
+    let sceneQuality = 'ultra';
+    let rendererQuality = 'ultra';
     const bus = createCommandBus({
       registry: createCommandRegistry({
         renderer: {
-          setQuality: (profile) => profiles.push(profile),
+          setQuality: (profile) => {
+            runtimeQuality = profile;
+            sceneQuality = profile;
+            rendererQuality = profile;
+          },
         },
       }),
     });
@@ -72,7 +114,9 @@ describe('command semantic adapters', () => {
     });
 
     expect(result.status).toBe('executed');
-    expect(profiles).toEqual(['high']);
+    expect(runtimeQuality).toBe('high');
+    expect(sceneQuality).toBe('high');
+    expect(rendererQuality).toBe('high');
   });
 
   it.each([

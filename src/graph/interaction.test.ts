@@ -25,6 +25,18 @@ describe('graph interaction reducer', () => {
     expect(left).toEqual(initial);
   });
 
+  it('does not synthesize hover when focus is set programmatically', () => {
+    const focused = reduceGraphInteraction(
+      createInitialGraphInteractionState(),
+      { type: 'FOCUS_NODE', nodeId: 'graphics' },
+    );
+
+    expect(focused).toEqual({
+      hoveredNodeId: null,
+      focusedNodeId: 'graphics',
+      phase: 'focused',
+    });
+  });
   it('preserves focus while hover moves between nodes', () => {
     const initial = createInitialGraphInteractionState();
     const focused = reduceGraphInteraction(initial, {
@@ -74,5 +86,22 @@ describe('graph interaction reducer', () => {
       phase: 'hovering',
     });
     expect(JSON.parse(JSON.stringify(state))).toEqual(state);
+  });
+  it('keeps pointer hover independent from programmatic focus', () => {
+    let state = reduceGraphInteraction(createInitialGraphInteractionState(), {
+      type: 'POINTER_ENTER_NODE',
+      nodeId: 'ai',
+    });
+    state = reduceGraphInteraction(state, {
+      type: 'FOCUS_NODE',
+      nodeId: 'graphics',
+    });
+    state = reduceGraphInteraction(state, { type: 'CLEAR_FOCUS' });
+
+    expect(state).toEqual({
+      hoveredNodeId: 'ai',
+      focusedNodeId: null,
+      phase: 'hovering',
+    });
   });
 });

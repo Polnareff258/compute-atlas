@@ -55,7 +55,7 @@ export function reduceGraphInteraction(
     }
     case 'FOCUS_NODE':
       return {
-        hoveredNodeId: action.nodeId,
+        hoveredNodeId: state.hoveredNodeId,
         focusedNodeId: action.nodeId,
         phase: 'focused',
       };
