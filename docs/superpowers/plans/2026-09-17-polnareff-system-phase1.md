@@ -130,23 +130,23 @@ git commit -m "chore: bootstrap polnareff system foundation"
 - Consumes browser capability probes through injected functions so tests do not require a GPU.
 - Produces `RendererCapabilityReport` with `webgpu`, `webgl2`, `preferredBackend`, `adapterName?`, `reason?`.
 
-- [ ] **Step 1: Write failing capability tests**
+- [x] **Step 1: Write failing capability tests**
 
 Cover: WebGPU and WebGL2 available chooses WebGPU; WebGPU absent with WebGL2 available chooses WebGL2; WebGPU adapter request failure falls back to WebGL2; both unavailable returns `unavailable`; adapter names are optional and never invented.
 
-- [ ] **Step 2: Implement injected probes**
+- [x] **Step 2: Implement injected probes**
 
 Use a `CapabilityProbe` interface with `requestWebGpuAdapter(): Promise<{ name?: string } | null>` and `createWebGl2Context(): WebGL2RenderingContext | null`. The production adapter may access `navigator.gpu` and a temporary canvas; the pure decision function must only consume probe results.
 
-- [ ] **Step 3: Add safe browser guards**
+- [x] **Step 3: Add safe browser guards**
 
 Return `unavailable` when `window`, `document`, `navigator.gpu` or canvas context APIs are missing. Catch capability exceptions and preserve a human-readable `reason` for diagnostics.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 Run `npm test -- src/renderer/capability.test.ts` and `npm run typecheck`. Expected: all capability cases pass without requiring a browser.
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```text
 git add src/renderer/capability.ts src/renderer/capability.test.ts src/renderer/types.ts

@@ -3,7 +3,7 @@
 **As of:** 2026-09-17  
 **Repository:** newly initialized from an empty directory  
 **Current phase:** Phase 1  
-**Current stage:** Stage 0 implementation complete; Stage 1 not started
+**Current stage:** Stage 1 capability detection complete; renderer runtime pending
 
 ## Confirmed architecture
 
@@ -18,8 +18,8 @@
 
 | Stage | Status | Evidence |
 |---|---|---|
-| Stage 0 — repository/architecture setup | Complete | Commit `pending-task1` after verification; project shell, strict TypeScript, quality profiles and test harness are present. |
-| Stage 1 — renderer bootstrap | Not started | None yet |
+| Stage 0 — repository/architecture setup | Complete | Commit `f633032` after verification; project shell, strict TypeScript, quality profiles and test harness are present. |
+| Stage 1 — renderer bootstrap | In progress | Capability detection is complete; runtime initialization and visual host remain. |
 | Stage 2 — boot experience | Not started | None yet |
 | Stage 3 — Compute Core | Not started | None yet |
 | Stage 4 — Knowledge Graph | Not started | None yet |
@@ -36,9 +36,10 @@
 
 - `npm run lint` — pass.
 - `npm run typecheck` — pass.
-- `npm test` — 1 file, 3 tests passed.
+- `npm test` — 2 files, 7 tests passed.
 - `NEXT_TELEMETRY_DISABLED=1 npm run build` — pass; plain build is blocked by the managed environment's Next telemetry `EXDEV` config rename before compilation.
 - Installed renderer baseline: Next 16.3.5, React 19.2.0, Three 0.186.0, R3F 9.7.0.
+- Capability tests: 4 focused cases; full suite: 2 files, 7 tests passed.
 
 ## Handoff rule
 
@@ -46,4 +47,4 @@ An agent must read the spec and plan before editing. Work one task at a time, ru
 
 ## Immediate next action
 
-Start Task 2 in `docs/superpowers/plans/2026-09-17-polnareff-system-phase1.md`: implement injected WebGPU/WebGL2 capability detection and its tests.
+Start Task 3 in `docs/superpowers/plans/2026-09-17-polnareff-system-phase1.md`: implement renderer runtime state transitions and the Zustand serializable store.
