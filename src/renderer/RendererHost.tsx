@@ -7,6 +7,7 @@ import { createBootCoordinator } from '../boot/bootCoordinator';
 import { BootExperience } from '../boot/BootExperience';
 import { createInitialBootState } from '../boot/bootMachine';
 import type { BootState } from '../boot/types';
+import type { CommandBus } from '../commands/bus';
 import { getQualityProfile } from '../config/quality';
 import { createBrowserCapabilityProbe } from './capability';
 import {
@@ -38,6 +39,7 @@ export function RendererHost() {
   const coordinatorRef = useRef<ReturnType<typeof createBootCoordinator> | null>(
     null,
   );
+  const commandBusRef = useRef<CommandBus | null>(null);
   const latestTelemetryRef = useRef<RendererTelemetrySnapshot | null>(null);
   const lastTelemetryLogRef = useRef(0);
   const [runtimeState, setRuntimeState] = useState(INITIAL_RUNTIME_STATE);
@@ -112,6 +114,13 @@ export function RendererHost() {
             quality={nextState.quality}
             backend={nextState.backend}
             onTelemetry={handleTelemetry}
+            onCommandBusReady={(bus) => {
+              commandBusRef.current = bus;
+            }}
+            onQualityChange={(profile) => {
+              runtime.setQuality(profile);
+              setRuntimeState(runtime.getState());
+            }}
           />,
         );
       },
@@ -141,6 +150,7 @@ export function RendererHost() {
       disposed = true;
       coordinator.dispose();
       coordinatorRef.current = null;
+      commandBusRef.current = null;
       root?.unmount();
       runtime.stop();
     };

@@ -5,6 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ComponentProps } from 'react';
 import * as THREE from 'three';
 
+import { createCommandBus, type CommandBus } from '../commands/bus';
+import { createCommandRegistry } from '../commands/registry';
+
 import { getQualityProfile } from '../config/quality';
 import {
   createInitialGraphInteractionState,
@@ -12,6 +15,7 @@ import {
   type GraphInteractionAction,
   type GraphInteractionState,
 } from '../graph/interaction';
+import { createGraphController } from '../graph/graphController';
 import { GRAPH_MANIFEST } from '../graph/graphManifest';
 import { deriveGraphLayout } from '../graph/layout';
 import type {
@@ -46,6 +50,8 @@ export type SceneHostProps = {
   readonly backend: RendererBackend;
   readonly reducedMotion?: boolean;
   readonly onTelemetry?: ComponentProps<typeof ComputeCore>['onTelemetry'];
+  readonly onQualityChange?: (profile: QualityProfile) => void;
+  readonly onCommandBusReady?: (bus: CommandBus | null) => void;
 };
 
 export function SceneHost({
@@ -53,7 +59,11 @@ export function SceneHost({
   backend,
   reducedMotion = false,
   onTelemetry,
+  onQualityChange,
+  onCommandBusReady,
 }: SceneHostProps) {
+  const [commandQuality, setCommandQuality] = useState<QualityProfile | null>(null);
+  const sceneQuality = commandQuality ?? quality;
   const graphLayout = useMemo(() => deriveGraphLayout(GRAPH_MANIFEST), []);
   const cameraController = useMemo(
     () => createCameraController({ reducedMotion }),
@@ -65,6 +75,33 @@ export function SceneHost({
   const handleGraphAction = useCallback((action: GraphInteractionAction) => {
     setGraphInteraction((state) => reduceGraphInteraction(state, action));
   }, []);
+  const graphController = useMemo(
+    () => createGraphController(handleGraphAction),
+    [handleGraphAction],
+  );
+  const handleQualityChange = useCallback(
+    (profile: QualityProfile) => {
+      setCommandQuality(profile);
+      onQualityChange?.(profile);
+    },
+    [onQualityChange],
+  );
+  const commandBus = useMemo(
+    () =>
+      createCommandBus({
+        registry: createCommandRegistry({
+          graph: graphController,
+          renderer: { setQuality: handleQualityChange },
+        }),
+      }),
+    [graphController, handleQualityChange],
+  );
+
+
+  useEffect(() => {
+    onCommandBusReady?.(commandBus);
+    return () => onCommandBusReady?.(null);
+  }, [commandBus, onCommandBusReady]);
 
   useEffect(() => {
     const focusedNodeId = graphInteraction.focusedNodeId;
@@ -107,7 +144,7 @@ export function SceneHost({
         : null;
 
   const coreProps = {
-    quality,
+    quality: sceneQuality,
     backend,
     cameraController,
     reducedMotion,
@@ -124,7 +161,7 @@ export function SceneHost({
         <ComputeCore {...coreProps} />
       )}
       <KnowledgeGraph
-        graphDensity={getQualityProfile(quality).graphDensity}
+        graphDensity={getQualityProfile(sceneQuality).graphDensity}
         interaction={graphInteraction}
         layout={graphLayout}
         manifest={GRAPH_MANIFEST}
