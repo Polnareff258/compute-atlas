@@ -410,3 +410,33 @@ The following stages are intentionally separate implementation slices and should
 - Stage 12: visual polish, browser verification and regression pass.
 
 Each future stage must produce its own evidence and update `docs/PROJECT_STATUS.md` before moving on.
+
+### Stage 4: Knowledge Graph
+
+**Outcome:** Add a data-driven, serializable spatial Knowledge Graph around the existing Compute Core. This stage stops before Command Bus, Command Palette, Ollama, Agent Gateway, Agent Trace, Developer Overlay, Stage 11 performance tuning and Stage 12 final polish.
+
+**Implementation record:**
+
+- [x] Read the design spec, Phase 1 plan, project status, current git history and the existing renderer, boot, scene, camera, quality and Core modules before editing.
+- [x] Extended `src/graph/types.ts` with serializable node, edge, manifest, position and layout contracts. Stable ids remain `core`, `ai`, `graphics`, `game-analysis`, `systems` and `research`.
+- [x] Added `src/graph/graphManifest.ts` as the single source of truth. The initial topology is a minimal five-edge star from `core`; there are no speculative ontology or content pages.
+- [x] Added `src/graph/layout.ts` with deterministic finite positions, elevation/depth separation, and density-controlled edge subdivision. Core remains at the origin and no semantic node is duplicated by quality profile.
+- [x] Added `src/graph/interaction.ts` with a serializable reducer for pointer enter/leave, focus, focus switching and clear focus. Graph state remains local to SceneHost; no unnecessary Zustand state was introduced.
+- [x] Added manifest-driven `KnowledgeGraph`, `GraphNode` and `GraphEdges` R3F views. Node states are idle, hovered, focused and dimmed; labels use the existing Drei dependency and edges use standard Three materials compatible with both renderers.
+- [x] Kept `ComputeCore.tsx` independent from Graph. SceneHost maps graph hover/focus to `hover_response` / `focusing` and shares the existing camera controller instance.
+- [x] Added `deriveCameraFocusTarget()` and camera focus tests. Focus uses the existing damped controller seam; Escape clears focus and restores the overview target. Reduced motion remains functional with shortened interpolation behavior.
+- [x] Configured the custom R3F root event manager against the canvas parent so Html labels retain measurable layout while the graph interaction boundary listens to real canvas pointer events.
+- [x] Added schema, layout, interaction and camera focus tests without introducing Command or Agent contracts.
+
+**Verification record:**
+
+- [x] `npm test`: 14 test files and 45 tests passed.
+- [x] `npm run lint` passed.
+- [x] `npm run typecheck` passed.
+- [x] `NEXT_TELEMETRY_DISABLED=1 npm run build` passed on Next 16.3.5.
+- [x] WebGPU browser evidence at 1920×1080 (`boot=skip`): actual viewport 1898×926, WebGPU renderer ready, five domain labels visible, hover on GRAPHICS, focus on GRAPHICS and Escape unfocus verified.
+- [x] WebGL2 fallback evidence at 2560×1440 with GPU disabled: actual viewport 2538×1342, WebGL renderer ready, five domain labels visible and GRAPHICS focus verified.
+- [x] Saved `artifacts/stage4-graph-overview-webgpu.png`, `artifacts/stage4-graph-hover-webgpu.png`, `artifacts/stage4-graph-focused-webgpu.png` and `artifacts/stage4-graph-fallback.png`.
+- [x] Browser console collection found no uncaught exceptions or app/R3F errors. Known environment warnings remain documented in `docs/PROJECT_STATUS.md`; no unavailable GPU metrics were fabricated.
+
+**Handoff:** Stage 4 is complete. The next isolated slice is Stage 5 — Command Bus; do not start it as part of this record.

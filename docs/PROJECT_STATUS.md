@@ -3,7 +3,7 @@
 **As of:** 2026-09-17
 **Repository:** initialized from an empty directory
 **Current phase:** Phase 1
-**Current stage:** Stage 3 complete; Stage 4 Knowledge Graph pending
+**Current stage:** Stage 4 complete; Stage 5 Command Bus pending
 
 ## Confirmed architecture
 
@@ -24,7 +24,7 @@
 | Stage 1 — renderer bootstrap | Complete | Commit 2700f3b; WebGPU-first/WebGL2 adapter host, R3F scene shell, status UI and headless browser verification are complete. |
 | Stage 2 — boot experience | Complete | Commit 36abdda; reducer, health seam, manifest, coordinator, visual bootstrap overlay, degraded path and skip path verified. |
 | Stage 3 — Compute Core | Complete | Layered Core, quality budgets, inertial pointer response, WebGPU-compatible materials, telemetry seam and desktop browser evidence are complete. |
-| Stage 4 — Knowledge Graph | Not started | Schema and spatial interaction remain isolated for the next stage. |
+| Stage 4 — Knowledge Graph | Complete | Data-driven schema, deterministic spatial layout, graph interaction, camera focus and browser evidence are complete. |
 | Stage 5 — Command Bus | Not started | No command routing has been added to the Core slice. |
 | Stage 6 — Command Palette | Not started | No palette UI has been added. |
 | Stage 7 — backend/Ollama health | Not started | Browser gateway intentionally remains NOT INITIALIZED until this stage. |
@@ -65,4 +65,27 @@ An agent must read the spec, project status and phase plan before editing. Work 
 
 ## Immediate next action
 
-Begin Stage 4 from the future plan map: create the data-driven Knowledge Graph schema and spatial node interaction boundary. Keep Compute Core visual states and camera controller independent from Command Bus and Agent Gateway implementation.
+Begin Stage 5 from the future plan map: define the Command Bus contract and deterministic command routing. Keep the Stage 4 graph and camera seam intact, and do not add Agent Gateway behavior in the Command Bus slice.
+
+## Stage 4 implementation
+
+Stage 4 adds the first spatial Knowledge Graph without widening the existing renderer or Compute Core boundaries:
+
+- `src/graph/types.ts` defines the serializable `GraphNode`, `GraphEdge`, `GraphManifest`, `GraphPosition` and `GraphLayout` contracts. The graph schema contains no Three.js, DOM, command or Agent objects.
+- `src/graph/graphManifest.ts` is the single source of truth for the six stable node ids: `core`, `ai`, `graphics`, `game-analysis`, `systems` and `research`. The initial topology is the five-edge star rooted at `core`.
+- `src/graph/layout.ts` derives a deterministic, finite, depth-separated layout. `graphDensity` changes only deterministic edge subdivision detail; it never duplicates or removes semantic nodes.
+- `src/graph/interaction.ts` provides a serializable reducer for pointer enter/leave, focus, focus switching and clear-focus actions. Scene-local React state is used because Stage 4 does not require a global graph store.
+- `src/scene/graph/KnowledgeGraph.tsx`, `GraphNode.tsx` and `GraphEdges.tsx` render the manifest-driven domain nodes and edges. The graph remains a visual interaction surface and does not import Command or Agent modules.
+- `SceneHost` is the integration boundary: it maps graph hover/focus to the existing `CameraController` and to `ComputeCoreVisualState` (`hover_response` / `focusing`). `ComputeCore` remains graph-independent.
+- `deriveCameraFocusTarget()` converts a graph position to a bounded normalized focus direction consumed by the existing damped camera controller. Escape clears focus and returns the camera target to the overview.
+
+### Stage 4 verification evidence
+
+- `npm test` — pass: 14 test files, 45 tests.
+- `npm run lint` — pass.
+- `npm run typecheck` — pass.
+- `NEXT_TELEMETRY_DISABLED=1 npm run build` — pass with Next 16.3.5.
+- WebGPU browser run at 1920×1080 (`boot=skip`) — actual viewport 1898×926, `Three.js WebGPURenderer`, five semantic domain labels, hover response, GRAPHICS focus, and Escape unfocus verified. Screenshots: `artifacts/stage4-graph-overview-webgpu.png`, `artifacts/stage4-graph-hover-webgpu.png`, `artifacts/stage4-graph-focused-webgpu.png`.
+- WebGL2 fallback run at 2560×1440 (`--disable-gpu`) — actual viewport 2538×1342, `Three.js WebGLRenderer`, all five labels visible and GRAPHICS focus verified. Screenshot: `artifacts/stage4-graph-fallback.png`.
+- Browser runs reported no uncaught exceptions or app/R3F errors. Remaining messages are known environment/library warnings: React DevTools/HMR, Three.Clock deprecation, WebGPU PCFSoftShadowMap remapping, Windows `powerPreference` handling, and headless adapter/zero-vertex warnings. No fabricated GPU utilization or hardware telemetry was introduced.
+- Sustained FPS/GPU utilization claims remain intentionally out of scope for Stage 4; Stage 11 owns that measurement.
