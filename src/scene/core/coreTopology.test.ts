@@ -1,10 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
 import { getCoreParameters } from './coreParameters';
-import { deriveCoreTopology } from './coreTopology';
+import type { CoreVisualInput } from './coreTypes';
+import { deriveCoreTopology, deriveCoreTopologyActivation } from './coreTopology';
 
 describe('deriveCoreTopology', () => {
   const parameters = getCoreParameters('ultra');
+
+  function inputFor(visualState: CoreVisualInput['visualState']): CoreVisualInput {
+    return {
+      pointerX: 0.35,
+      pointerY: -0.2,
+      focusX: 0.8,
+      focusY: 0.1,
+      focusZ: -0.4,
+      intensity: 0.72,
+      visualState,
+      reducedMotion: false,
+    };
+  }
 
   it('produces the same topology for equal inputs', () => {
     const first = deriveCoreTopology(parameters, 17);
@@ -158,5 +172,47 @@ describe('deriveCoreTopology', () => {
     expect(topology.nodes.some((node) => node.position[1] < -0.5)).toBe(true);
     expect(topology.nodes.some((node) => node.position[2] > 0.5)).toBe(true);
     expect(topology.nodes.some((node) => node.position[2] < -0.5)).toBe(true);
+  });
+  it('activates a sparse baseline while idle', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const activation = deriveCoreTopologyActivation(topology, inputFor('idle'));
+
+    expect(activation.activeEdgeIds).toEqual([0]);
+    expect(activation.activeNodeIds).toEqual([0, 1]);
+  });
+
+  it('activates a local branch for hover response', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const activation = deriveCoreTopologyActivation(topology, inputFor('hover_response'));
+    const activeEdges = topology.edges.filter((edge) => activation.activeEdgeIds.includes(edge.id));
+
+    expect(activeEdges.length).toBeGreaterThan(0);
+    expect(activeEdges.every((edge) => edge.route === 'local')).toBe(true);
+    expect(activation.activeEdgeIds).not.toEqual(
+      deriveCoreTopologyActivation(topology, inputFor('idle')).activeEdgeIds,
+    );
+  });
+
+  it('activates a directional route while focusing', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const activation = deriveCoreTopologyActivation(topology, inputFor('focusing'));
+    const activeEdges = topology.edges.filter((edge) => activation.activeEdgeIds.includes(edge.id));
+
+    expect(activeEdges.length).toBeGreaterThan(0);
+    expect(activeEdges.every((edge) => edge.route === 'directional')).toBe(true);
+    expect(activation.activeEdgeIds).not.toEqual(
+      deriveCoreTopologyActivation(topology, inputFor('hover_response')).activeEdgeIds,
+    );
+  });
+
+  it('activates more than one route during agent activity', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const activation = deriveCoreTopologyActivation(topology, inputFor('agent_activity'));
+    const activeEdges = topology.edges.filter((edge) => activation.activeEdgeIds.includes(edge.id));
+
+    expect(new Set(activeEdges.map((edge) => edge.route)).size).toBeGreaterThan(1);
+    expect(activation.activeEdgeIds).not.toEqual(
+      deriveCoreTopologyActivation(topology, inputFor('focusing')).activeEdgeIds,
+    );
   });
 });

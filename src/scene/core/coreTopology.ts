@@ -1,4 +1,4 @@
-import type { CoreParameters } from './coreTypes';
+import type { CoreParameters, CoreVisualInput } from './coreTypes';
 
 export type CoreTopologyNode = {
   readonly id: number;
@@ -185,4 +185,97 @@ export function deriveCoreTopology(
     }));
 
   return { nodes, edges };
+}
+
+export type CoreTopologyActivation = {
+  readonly activeEdgeIds: readonly number[];
+  readonly activeNodeIds: readonly number[];
+};
+
+function finiteSignal(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function selectRouteEdge(
+  edges: readonly CoreTopologyEdge[],
+  route: CoreTopologyEdge['route'],
+  signal: number,
+): CoreTopologyEdge | undefined {
+  const candidates = edges.filter((edge) => edge.route === route);
+
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  const index = Math.abs(Math.trunc(finiteSignal(signal) * 997)) % candidates.length;
+  return candidates[index];
+}
+
+function nodeIdsFor(edges: readonly CoreTopologyEdge[]): readonly number[] {
+  const nodeIds = new Set<number>();
+
+  for (const edge of edges) {
+    nodeIds.add(edge.source);
+    nodeIds.add(edge.target);
+  }
+
+  return [...nodeIds];
+}
+
+/**
+ * Selects a serializable structural subset for the Compute Core visual state.
+ * It deliberately changes graph relationships between states rather than only
+ * changing material properties in the view layer.
+ */
+export function deriveCoreTopologyActivation(
+  topology: CoreTopology,
+  visualInput: CoreVisualInput,
+): CoreTopologyActivation {
+  const edges = topology.edges;
+  let activeEdges: readonly CoreTopologyEdge[];
+
+  switch (visualInput.visualState) {
+    case 'dormant':
+      activeEdges = [];
+      break;
+    case 'awakening':
+      activeEdges = edges.slice(0, 2);
+      break;
+    case 'hover_response': {
+      const localEdge = selectRouteEdge(
+        edges,
+        'local',
+        visualInput.pointerX * 31 + visualInput.pointerY * 17,
+      );
+      activeEdges = localEdge ? [localEdge] : edges.slice(0, 1);
+      break;
+    }
+    case 'focusing': {
+      const directionalEdge = selectRouteEdge(
+        edges,
+        'directional',
+        visualInput.focusX * 19 + visualInput.focusY * 29 + visualInput.focusZ * 37,
+      );
+      activeEdges = directionalEdge ? [directionalEdge] : edges.slice(0, 1);
+      break;
+    }
+    case 'agent_activity': {
+      const representativeEdges = [
+        selectRouteEdge(edges, 'local', visualInput.intensity),
+        selectRouteEdge(edges, 'directional', visualInput.focusX + visualInput.focusZ),
+        selectRouteEdge(edges, 'signal', visualInput.pointerY),
+      ].filter((edge): edge is CoreTopologyEdge => edge !== undefined);
+      activeEdges = representativeEdges.length > 0 ? representativeEdges : edges.slice(0, 1);
+      break;
+    }
+    case 'idle':
+    default:
+      activeEdges = edges.slice(0, 1);
+      break;
+  }
+
+  return {
+    activeEdgeIds: activeEdges.map((edge) => edge.id),
+    activeNodeIds: nodeIdsFor(activeEdges),
+  };
 }

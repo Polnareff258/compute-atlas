@@ -6,4 +6,10 @@ export const CORE_COLORS = Object.freeze({
   shell: '#9bb7ae',
   orbit: '#839b96',
   quiet: '#5c716d',
+  nucleus: '#c8d9d1',
+  nucleusAccent: '#8eaaa0',
+  topology: '#59776f',
+  topologyActive: '#b6d2c6',
+  topologyNode: '#78958b',
+  fragment: '#91ada3',
 });
