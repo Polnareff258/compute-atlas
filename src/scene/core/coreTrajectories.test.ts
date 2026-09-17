@@ -14,6 +14,20 @@ function distanceSquared(
   return deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
 }
 
+function expectFiniteOpenPaths(
+  trajectories: ReturnType<typeof deriveCoreTrajectories>,
+): void {
+  for (const trajectory of trajectories) {
+    const start = trajectory.points[0];
+    const end = trajectory.points.at(-1);
+
+    expect(trajectory.points.every((point) => point.every(Number.isFinite))).toBe(true);
+    expect(start).toBeDefined();
+    expect(end).toBeDefined();
+    expect(distanceSquared(start!, end!)).toBeGreaterThan(0.04);
+  }
+}
+
 describe('deriveCoreTrajectories', () => {
   const parameters = getCoreParameters('ultra');
 
@@ -65,5 +79,38 @@ describe('deriveCoreTrajectories', () => {
 
     expect(safe.length).toBeGreaterThanOrEqual(1);
     expect(safe.length).toBeLessThan(ultra.length);
+  });
+
+  it('normalizes boundary budgets without creating invalid or excess paths', () => {
+    const cases = [
+      { budget: 0, maximumPathCount: 0 },
+      { budget: -3, maximumPathCount: 0 },
+      { budget: 2.75, maximumPathCount: 2 },
+      { budget: Number.NaN, maximumPathCount: 0 },
+      { budget: Number.POSITIVE_INFINITY, maximumPathCount: 0 },
+    ];
+
+    for (const { budget, maximumPathCount } of cases) {
+      const first = deriveCoreTrajectories({ trajectoryBudget: budget }, 17);
+      const second = deriveCoreTrajectories({ trajectoryBudget: budget }, 17);
+
+      expect(first).toEqual(second);
+      expect(first.length).toBeLessThanOrEqual(maximumPathCount);
+      expectFiniteOpenPaths(first);
+    }
+
+    expect(deriveCoreTrajectories(getCoreParameters('safe'), 17).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('varies routes and uses unique ordered activation ranks for normal paths', () => {
+    const trajectories = deriveCoreTrajectories({ trajectoryBudget: 8 }, 17);
+    const routes = new Set(trajectories.map((trajectory) => trajectory.route));
+    const activationRanks = trajectories.map((trajectory) => trajectory.activationRank);
+
+    expect(routes.size).toBeGreaterThan(1);
+    expect(activationRanks.every(Number.isFinite)).toBe(true);
+    expect(new Set(activationRanks).size).toBe(activationRanks.length);
+    expect(activationRanks).toEqual([...activationRanks].sort((first, second) => first - second));
+    expectFiniteOpenPaths(trajectories);
   });
 });
