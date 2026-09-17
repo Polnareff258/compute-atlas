@@ -50,3 +50,26 @@ export const QUALITY_PROFILES: Readonly<Record<QualityProfile, QualitySettings>>
 export function getQualityProfile(profile: QualityProfile): QualitySettings {
   return QUALITY_PROFILES[profile];
 }
+/**
+ * Applies the profile's pixel ratio scale and ceiling to the browser DPR.
+ * Keeping this policy pure makes the canvas and R3F owners use the same value.
+ */
+export function deriveEffectiveDpr(
+  devicePixelRatio: number,
+  settings: QualitySettings,
+): number {
+  const safeDevicePixelRatio =
+    Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
+      ? devicePixelRatio
+      : 1;
+  const safePixelRatioScale =
+    Number.isFinite(settings.pixelRatioScale) && settings.pixelRatioScale > 0
+      ? settings.pixelRatioScale
+      : 1;
+  const safeMaxDpr =
+    Number.isFinite(settings.maxDpr) && settings.maxDpr > 0
+      ? settings.maxDpr
+      : 1;
+
+  return Math.min(safeDevicePixelRatio * safePixelRatioScale, safeMaxDpr);
+}

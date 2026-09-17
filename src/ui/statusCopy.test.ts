@@ -36,6 +36,21 @@ describe('getRendererStatusCopy', () => {
     });
   });
 
+  it('describes a ready WebGL2 renderer when it is the available backend', () => {
+    expect(
+      getRendererStatusCopy(
+        createState({
+          status: 'ready',
+          backend: 'webgl2',
+          rendererName: 'Three.js WebGLRenderer',
+        }),
+      ),
+    ).toEqual({
+      label: 'WEBGL2 READY',
+      detail: 'Three.js WebGLRenderer',
+      tone: 'ready',
+    });
+  });
   it('makes a WebGL2 fallback explicit', () => {
     expect(
       getRendererStatusCopy(

@@ -4,6 +4,7 @@ import type {
   CapabilityProbe,
   RendererCapabilityReport,
 } from './capability';
+import type { QualitySettings } from './types';
 import {
   createRendererRuntime,
   type RendererAdapter,
@@ -33,6 +34,7 @@ function createAdapter(
         backend,
         rendererName: backend === 'webgpu' ? 'Test WebGPU' : 'Test WebGL2',
         adapterName: backend === 'webgpu' ? 'Test Adapter' : null,
+        setQuality: () => undefined,
         dispose: options.onDispose ?? (() => undefined),
       };
     },
@@ -138,6 +140,34 @@ describe('createRendererRuntime', () => {
     expect(runtime.getState().quality).toBe('medium');
   });
 
+  it('applies quality settings to the active renderer handle', async () => {
+    const applied: QualitySettings[] = [];
+    const runtime = createRendererRuntime({
+      capabilityProbe: createProbe({
+        webgpu: false,
+        webgl2: true,
+        preferredBackend: 'webgl2',
+      }),
+      adapters: {
+        webgl2: {
+          initialize: async () => ({
+            backend: 'webgl2' as const,
+            rendererName: 'Test WebGL2',
+            adapterName: null,
+            setQuality: (quality: QualitySettings) => applied.push(quality),
+            dispose: () => undefined,
+          }),
+        },
+      },
+    });
+
+    await runtime.start();
+    runtime.setQuality('safe');
+
+    expect(applied).toHaveLength(1);
+    expect(applied[0]?.maxDpr).toBe(1);
+    expect(runtime.getState().quality).toBe('safe');
+  });
   it('disposes an initialized adapter once when stop is called repeatedly', async () => {
     let disposeCount = 0;
     const runtime = createRendererRuntime({

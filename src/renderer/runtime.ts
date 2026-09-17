@@ -17,6 +17,7 @@ export type RendererHandle = {
   readonly backend: RendererAdapterBackend;
   readonly rendererName: string;
   readonly adapterName: string | null;
+  readonly setQuality: (quality: QualitySettings) => void;
   dispose: () => void;
 };
 
@@ -100,7 +101,12 @@ export function createRendererRuntime(
   }
 
   function setQuality(profile: QualityProfile): void {
-    getQualityProfile(profile);
+    const settings = getQualityProfile(profile);
+
+    if (activeHandle) {
+      activeHandle.setQuality(settings);
+    }
+
     state = { ...state, quality: profile };
   }
 

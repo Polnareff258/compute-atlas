@@ -19,6 +19,13 @@ export function getRendererStatusCopy(
     };
   }
 
+  if (state.status === 'ready' && state.backend === 'webgl2') {
+    return {
+      label: 'WEBGL2 READY',
+      detail: state.rendererName ?? 'WebGL2 renderer',
+      tone: 'ready',
+    };
+  }
   if (state.status === 'fallback' && state.backend === 'webgl2') {
     return {
       label: 'WEBGL2 FALLBACK',

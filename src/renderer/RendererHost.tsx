@@ -8,7 +8,7 @@ import { BootExperience } from '../boot/BootExperience';
 import { createInitialBootState } from '../boot/bootMachine';
 import type { BootState } from '../boot/types';
 import type { CommandBus } from '../commands/bus';
-import { getQualityProfile } from '../config/quality';
+import { deriveEffectiveDpr, getQualityProfile } from '../config/quality';
 import { createBrowserCapabilityProbe } from './capability';
 import {
   createCanvasRendererAdapters,
@@ -19,10 +19,19 @@ import {
   type RendererRuntimeState,
 } from './runtime';
 import { SceneHost } from '../scene/SceneHost';
+import type { QualityProfile } from './types';
 import type { RendererTelemetrySnapshot } from '../telemetry/rendererTelemetry';
 import { RendererStatus } from '../ui/RendererStatus';
 import { SystemMasthead } from '../ui/SystemMasthead';
 
+function isQualityProfile(value: unknown): value is QualityProfile {
+  return (
+    value === 'ultra' ||
+    value === 'high' ||
+    value === 'medium' ||
+    value === 'safe'
+  );
+}
 const INITIAL_RUNTIME_STATE: RendererRuntimeState = {
   status: 'idle',
   backend: 'unavailable',
@@ -74,7 +83,37 @@ export function RendererHost() {
       initialQuality: 'ultra',
     });
     let root: ReconcilerRoot<HTMLCanvasElement> | null = null;
+    let sceneStore: ReturnType<ReconcilerRoot<HTMLCanvasElement>['render']> | null = null;
     let disposed = false;
+
+    const renderScene = (nextState: RendererRuntimeState): void => {
+      if (!root) {
+        return;
+      }
+
+      sceneStore = root.render(
+        <SceneHost
+          quality={nextState.quality}
+          backend={nextState.backend}
+          onTelemetry={handleTelemetry}
+          onCommandBusReady={(bus) => {
+            commandBusRef.current = bus;
+          }}
+          onQualityChange={(profile) => {
+            runtime.setQuality(profile);
+            const updatedState = runtime.getState();
+            sceneStore?.getState().setDpr(
+              deriveEffectiveDpr(
+                window.devicePixelRatio,
+                getQualityProfile(updatedState.quality),
+              ),
+            );
+            setRuntimeState(updatedState);
+            renderScene(updatedState);
+          }}
+        />,
+      );
+    };
 
     const coordinator = createBootCoordinator({
       runtime,
@@ -106,27 +145,38 @@ export function RendererHost() {
               },
             };
           },
-          dpr: [1, getQualityProfile(nextState.quality).maxDpr],
+          dpr: deriveEffectiveDpr(
+            window.devicePixelRatio,
+            getQualityProfile(nextState.quality),
+          ),
           gl: rendererRef.current,
         });
-        root.render(
-          <SceneHost
-            quality={nextState.quality}
-            backend={nextState.backend}
-            onTelemetry={handleTelemetry}
-            onCommandBusReady={(bus) => {
-              commandBusRef.current = bus;
-            }}
-            onQualityChange={(profile) => {
-              runtime.setQuality(profile);
-              setRuntimeState(runtime.getState());
-            }}
-          />,
-        );
+        renderScene(nextState);
       },
     });
 
     coordinatorRef.current = coordinator;
+
+    const devQualityEvent = 'compute-atlas:dev-quality';
+    const handleDevQuality = (event: Event) => {
+      if (process.env.NODE_ENV !== 'development') {
+        return;
+      }
+
+      const profile = (event as CustomEvent<unknown>).detail;
+      if (!isQualityProfile(profile)) {
+        return;
+      }
+
+      commandBusRef.current?.dispatch({
+        type: 'SET_QUALITY',
+        source: 'system',
+        profile,
+      });
+    };
+    if (process.env.NODE_ENV === 'development') {
+      window.addEventListener(devQualityEvent, handleDevQuality);
+    }
 
     void coordinator.start().catch((error: unknown) => {
       if (disposed) {
@@ -151,6 +201,10 @@ export function RendererHost() {
       coordinator.dispose();
       coordinatorRef.current = null;
       commandBusRef.current = null;
+      if (process.env.NODE_ENV === 'development') {
+        window.removeEventListener(devQualityEvent, handleDevQuality);
+      }
+      sceneStore = null;
       root?.unmount();
       runtime.stop();
     };

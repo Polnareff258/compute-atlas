@@ -4,6 +4,7 @@ import type {
   RendererAdapter,
   RendererAdapterBackend,
 } from './runtime';
+import { deriveEffectiveDpr } from '../config/quality';
 import type { QualitySettings } from './types';
 
 export type CanvasRenderer = {
@@ -22,9 +23,9 @@ function configureRenderer(
   canvas: HTMLCanvasElement,
   quality: QualitySettings,
 ): void {
-  const devicePixelRatio = Math.min(
-    window.devicePixelRatio * quality.pixelRatioScale,
-    quality.maxDpr,
+  const devicePixelRatio = deriveEffectiveDpr(
+    window.devicePixelRatio,
+    quality,
   );
   const width = Math.max(canvas.clientWidth, 1);
   const height = Math.max(canvas.clientHeight, 1);
@@ -57,6 +58,8 @@ export function createCanvasRendererAdapters(
           backend: 'webgpu',
           rendererName: 'Three.js WebGPURenderer',
           adapterName: null,
+          setQuality: (nextQuality) =>
+            configureRenderer(renderer, canvas, nextQuality),
           dispose: () => {
             rendererRef.current = null;
             void renderer.dispose();
@@ -81,6 +84,8 @@ export function createCanvasRendererAdapters(
           backend: 'webgl2',
           rendererName: 'Three.js WebGLRenderer',
           adapterName: null,
+          setQuality: (nextQuality) =>
+            configureRenderer(renderer, canvas, nextQuality),
           dispose: () => {
             rendererRef.current = null;
             renderer.dispose();

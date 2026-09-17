@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   QUALITY_PROFILES,
+  deriveEffectiveDpr,
   getQualityProfile,
 } from '../../src/config/quality';
 
@@ -35,5 +36,36 @@ describe('quality profiles', () => {
       expect(profile.pixelRatioScale).toBeGreaterThan(0);
       expect(profile.particleBudget).toBeGreaterThan(0);
     }
+  });
+  it('derives a finite effective DPR from device ratio and quality policy', () => {
+    const devicePixelRatios = [0.5, 1, 2, 3];
+
+    for (const devicePixelRatio of devicePixelRatios) {
+      for (const profile of Object.keys(QUALITY_PROFILES) as Array<
+        keyof typeof QUALITY_PROFILES
+      >) {
+        const effectiveDpr = deriveEffectiveDpr(
+          devicePixelRatio,
+          getQualityProfile(profile),
+        );
+
+        expect(Number.isFinite(effectiveDpr)).toBe(true);
+        expect(effectiveDpr).toBeGreaterThan(0);
+        expect(effectiveDpr).toBeLessThanOrEqual(
+          getQualityProfile(profile).maxDpr,
+        );
+      }
+    }
+
+    const effectiveDprs = (
+      Object.keys(QUALITY_PROFILES) as Array<keyof typeof QUALITY_PROFILES>
+    ).map((profile) =>
+      deriveEffectiveDpr(2, getQualityProfile(profile)),
+    );
+
+    expect(effectiveDprs[0]).toBeGreaterThanOrEqual(effectiveDprs[1] ?? 0);
+    expect(effectiveDprs[1]).toBeGreaterThanOrEqual(effectiveDprs[2] ?? 0);
+    expect(effectiveDprs[2]).toBeGreaterThanOrEqual(effectiveDprs[3] ?? 0);
+    expect(deriveEffectiveDpr(2, QUALITY_PROFILES.safe)).toBeLessThanOrEqual(1);
   });
 });

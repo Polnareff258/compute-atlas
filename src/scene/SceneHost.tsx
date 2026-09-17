@@ -62,8 +62,7 @@ export function SceneHost({
   onQualityChange,
   onCommandBusReady,
 }: SceneHostProps) {
-  const [commandQuality, setCommandQuality] = useState<QualityProfile | null>(null);
-  const sceneQuality = commandQuality ?? quality;
+  const sceneQuality = quality;
   const graphLayout = useMemo(() => deriveGraphLayout(GRAPH_MANIFEST), []);
   const cameraController = useMemo(
     () => createCameraController({ reducedMotion }),
@@ -81,7 +80,6 @@ export function SceneHost({
   );
   const handleQualityChange = useCallback(
     (profile: QualityProfile) => {
-      setCommandQuality(profile);
       onQualityChange?.(profile);
     },
     [onQualityChange],
@@ -96,7 +94,6 @@ export function SceneHost({
       }),
     [graphController, handleQualityChange],
   );
-
 
   useEffect(() => {
     onCommandBusReady?.(commandBus);
