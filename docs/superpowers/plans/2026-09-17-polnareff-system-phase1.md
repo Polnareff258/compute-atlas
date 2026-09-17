@@ -261,6 +261,138 @@ git add docs/PROJECT_STATUS.md docs/superpowers/plans/2026-09-17-polnareff-syste
 git commit -m "docs: close renderer bootstrap handoff"
 ```
 
+### Stage 2: Implement the truthful Graphics Bootstrap experience
+
+**Outcome:** Replace the Stage 1 static status presentation with a serializable boot state machine and a visual bootstrap sequence that reflects real renderer capability, renderer initialization, manifest readiness and explicit subsystem availability. The scene remains usable when a subsystem is unavailable; an unavailable Ollama gateway is represented as NOT INITIALIZED, never as ONLINE.
+
+**Files:**
+- Create: src/boot/types.ts
+- Create: src/boot/bootMachine.ts
+- Create: src/boot/bootMachine.test.ts
+- Create: src/boot/health.ts
+- Create: src/boot/health.test.ts
+- Create: src/boot/bootCoordinator.ts
+- Create: src/boot/manifest.ts
+- Create: src/boot/BootExperience.tsx
+- Create: src/boot/BootFacts.tsx
+- Create: src/boot/bootCopy.ts
+- Modify: src/renderer/RendererHost.tsx
+- Modify: src/app/globals.css
+- Modify: docs/PROJECT_STATUS.md
+
+**Interfaces:**
+- BootPhase = idle | probing_graphics | initializing_renderer | checking_systems | constructing_scene | ready | entering | complete | degraded.
+- BootState is JSON-serializable and contains phase, startedAt, phaseStartedAt, minimumDurationMs, capability, renderer, health, manifest, reducedMotion, skipRequested, error and a bounded events array.
+- BootAction is a closed union of BOOT_BEGIN, GRAPHICS_PROBED, RENDERER_INITIALIZED, SYSTEMS_CHECKED, SCENE_CONSTRUCTED, ENTER_REQUESTED, TRANSITION_COMPLETE, SKIP_REQUESTED and BOOT_DEGRADED.
+- HealthSnapshot has independent backend, agent and projectManifest statuses: online, ready, offline, not_initialized, degraded or unknown, with truthful detail text and a probe timestamp.
+- BootCoordinator accepts an injected clock and scheduler plus the existing renderer runtime boundary. Its completion timing is a presentation constraint only; phase truth comes from real runtime/capability/manifest inputs.
+
+**Implementation steps:**
+
+- [ ] **Step 1: Define the serializable boot contract.**
+
+  Add discriminated unions and readonly snapshots in src/boot/types.ts. Keep Three.js objects, DOM nodes, promises and renderer adapters out of the state. Add a stable event shape for public bootstrap facts: phase_started, capability_detected, renderer_ready, health_checked, scene_constructed, degraded, enter_requested, complete.
+
+- [ ] **Step 2: Write reducer-first transition tests.**
+
+  In src/boot/bootMachine.test.ts, test the happy path through every phase, illegal actions being ignored without corrupting state, WebGPU-to-WebGL fallback preserving the capability reason, explicit degraded state, idempotent skip/enter actions, minimum visual duration gating, reduced-motion completion, and serialization with JSON.stringify.
+
+- [ ] **Step 3: Implement the pure boot reducer.**
+
+  In src/boot/bootMachine.ts, make transitions deterministic and side-effect free. A renderer failure may enter degraded while retaining a functional shell; it must not throw into the page. ENTER_REQUESTED may only enter the transition phase after renderer and scene readiness are known. TRANSITION_COMPLETE may only produce complete after the coordinator confirms the minimum duration or reduced-motion policy.
+
+- [ ] **Step 4: Add project manifest and health aggregation seams.**
+
+  Define an immutable PROJECT_MANIFEST in src/boot/manifest.ts. Add pure aggregateHealth() in src/boot/health.ts with injected probe results. Stage 2 probes the manifest and current renderer runtime only; backend and Ollama agent are explicitly not_initialized until their later server gateway stages exist. Do not perform direct Ollama calls from the browser.
+
+- [ ] **Step 5: Build the coordinator around the existing renderer runtime.**
+
+  In src/boot/bootCoordinator.ts, orchestrate capability detection, the existing runtime.start(), health aggregation and scene readiness without moving Three.js implementation details into boot modules. Use performance.now()/Date.now() through an injected clock and a cancellable scheduler. A timer can delay presentation, but it cannot turn an unready subsystem into READY. Clean up listeners and scheduled work on unmount.
+
+- [ ] **Step 6: Build the boot visual language.**
+
+  BootExperience.tsx renders a full-viewport overlay over the existing canvas with progressive fact rows, phase label, restrained progress geometry and a clear ENTER COMPUTE ENVIRONMENT affordance. BootFacts.tsx maps only typed boot facts to status rows. bootCopy.ts contains semantic copy for READY, FALLBACK, NOT INITIALIZED, DEGRADED and OFFLINE; no fake utilization, temperature, VRAM or power values.
+
+- [ ] **Step 7: Add real input and accessibility behavior.**
+
+  Listen for Enter, Space, and pointer activation only while the boot state is ready or degraded. Support ?boot=skip for repeatable development verification and ?boot=full to force the full choreography. Respect prefers-reduced-motion by shortening presentation transitions while preserving truthful initialization. The boot overlay exposes a labelled status region and a keyboard-focusable enter control.
+
+- [ ] **Step 8: Integrate without widening the renderer boundary.**
+
+  Update RendererHost.tsx to render the existing scene behind the overlay, feed it serializable boot visibility/transition state, and preserve the Stage 1 degraded shell if the runtime cannot initialize. Do not place graph, command, Agent or Three.js object references in boot state. Keep server-rendered page.tsx free of browser API access.
+
+- [ ] **Step 9: Verify Stage 2 before starting Stage 3.**
+
+  Run focused boot tests, then npm run lint, npm run typecheck, npm test, and NEXT_TELEMETRY_DISABLED=1 npm run build. Start the dev server, capture full and skipped boot screenshots at desktop dimensions, inspect browser console and server logs, verify the real backend label, verify NOT INITIALIZED for the Agent gateway, and test the degraded path with a forced unavailable adapter. Record evidence in docs/PROJECT_STATUS.md and commit Stage 2 before any Compute Core implementation begins.
+
+### Stage 3: Implement Compute Core visual system v1
+
+**Outcome:** Replace the Stage 1 atmospheric placeholder with a single GPU-friendly Compute Core visual system that reads like a spatial computing instrument: an inner procedural seed, structural cage, restrained energy field, particle shell and orbital structures. The first version is self-contained and interaction-ready but does not yet implement Knowledge Graph topology or command routing.
+
+**Files:**
+- Create: src/scene/core/coreTypes.ts
+- Create: src/scene/core/coreParameters.ts
+- Create: src/scene/core/coreParameters.test.ts
+- Create: src/scene/core/ComputeCore.tsx
+- Create: src/scene/core/CoreSeed.tsx
+- Create: src/scene/core/CoreCage.tsx
+- Create: src/scene/core/CoreEnergyField.tsx
+- Create: src/scene/core/CoreParticleShell.tsx
+- Create: src/scene/core/CoreOrbitals.tsx
+- Create: src/scene/core/coreMaterials.ts
+- Create: src/scene/camera/cameraController.ts
+- Create: src/scene/camera/cameraController.test.ts
+- Create: src/telemetry/rendererTelemetry.ts
+- Create: src/telemetry/rendererTelemetry.test.ts
+- Modify: src/scene/SceneHost.tsx
+- Modify: src/config/quality.ts
+- Modify: src/app/globals.css
+- Modify: docs/PROJECT_STATUS.md
+
+**Interfaces:**
+- ComputeCoreVisualState = dormant | awakening | idle | hover_response | focusing | agent_activity.
+- ComputeCoreInteraction contains normalized pointer coordinates, target focus direction, intensity, transition progress and reduced-motion state. It is serializable and independent of R3F.
+- CoreParameters is derived from QualityProfile and includes fixed particle budget, shell radius, cage segment budget, orbital count, field resolution and bloom eligibility.
+- RendererTelemetrySnapshot contains measured fps, frameTimeMs, drawCalls, triangles, geometries, textures, particleCount, backend and quality; unavailable values are null, never fabricated.
+- CameraController owns mutable interpolation refs and exposes setPointerTarget(), setFocusTarget(), setVisualState() and update(deltaSeconds). Components consume the controller without knowing graph or Agent semantics.
+
+**Implementation steps:**
+
+- [ ] **Step 1: Define quality-derived core budgets.**
+
+  Extend the existing quality table with explicit Core budgets. ULTRA targets the desktop GPU-first presentation, HIGH/MEDIUM reduce particle and field density, and SAFE reduces update cost and disables optional bloom. Add pure tests for monotonic budgets, finite values, and deterministic parameter output.
+
+- [ ] **Step 2: Write interaction and camera tests first.**
+
+  Test pointer target clamping, damping convergence, focus interpolation, reduced-motion behavior and no overshoot. Keep the math in cameraController.ts as scalar operations on stable mutable values so the render loop does not allocate objects or arrays.
+
+- [ ] **Step 3: Implement the core state model.**
+
+  Map boot completion to awakening, settle into idle, and expose explicit setters for future hover_response, focusing and agent_activity. State changes only alter visual parameters; they do not import command bus or Agent modules. Document the field behavior and transition math in coreTypes.ts comments.
+
+- [ ] **Step 4: Build the layered scene with stable GPU resources.**
+
+  ComputeCore.tsx owns one group and stable refs. CoreSeed uses procedural geometry/material, CoreCage uses indexed line geometry, CoreEnergyField uses a bounded shader field, CoreParticleShell uses one points draw with reusable typed buffers, and CoreOrbitals uses instanced or line-based orbital structures. Avoid one React component per particle and avoid creating vectors/materials inside useFrame.
+
+- [ ] **Step 5: Add restrained animation and pointer response.**
+
+  Use a single frame loop to update scalar uniforms, rotations and camera controller values. Pointer movement produces slight parallax and energy redistribution with inertia/damping. The core must remain legible and spatially quiet at rest; bloom, if available through the existing renderer path, is limited to the seed and energy field.
+
+- [ ] **Step 6: Add the telemetry seam without building the Developer Overlay.**
+
+  Implement rendererTelemetry.ts as a sampler that reads the actual Three.js renderer info after frames render and accepts the measured particle count from core parameters. Publish a serializable snapshot through a callback/ref seam; do not add overlay UI, fake GPU metrics or a second render loop.
+
+- [ ] **Step 7: Integrate the camera and core into SceneHost.**
+
+  Keep SceneHost responsible for scene composition and pass only serializable interaction/quality props into the core. Preserve the existing backend adapters and WebGL fallback. The core must remain mountable when the renderer is degraded, with optional layers reducing or disabling themselves from the same quality parameters.
+
+- [ ] **Step 8: Verify visual and performance behavior in a real browser.**
+
+  Run focused tests and the full static suite. Start the dev server and capture screenshots at 1920x1080 and 2560x1440 for dormant/idle and pointer-response states. Inspect browser errors, confirm WebGPU/WebGL fallback behavior, sample measured frame time/FPS and renderer info for a sustained desktop run, and record draw-call/particle budgets in the status handoff. Refine shader contrast, depth, density and motion from screenshots before marking Stage 3 complete.
+
+- [ ] **Step 9: Commit the verified Compute Core slice.**
+
+  Update docs/PROJECT_STATUS.md with the visual evidence, measured telemetry limitations and known gaps. Commit only after lint, typecheck, tests, disabled-telemetry production build and browser verification pass.
 ## Future plan map
 
 The following stages are intentionally separate implementation slices and should not be collapsed into Stage 1:
