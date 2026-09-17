@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useMemo } from 'react';
+import { useLayoutEffect, useMemo } from 'react';
 import * as THREE from 'three';
 
 import { CORE_COLORS } from './coreMaterials';
+import { createResourceLease, disposeAll } from './coreResourceLifecycle';
 import type { CoreStructuralViewProps } from './CoreNucleus';
 import { deriveCoreTopologyActivation } from './coreTopology';
 import type { CoreTopology as CoreTopologyData } from './coreTopology';
@@ -16,7 +17,7 @@ type CoreFragmentResources = {
   readonly nodesById: ReadonlyMap<number, CoreTopologyData['nodes'][number]>;
 };
 
-function createFragmentResources(topology: CoreTopologyData): CoreFragmentResources {
+export function createFragmentResources(topology: CoreTopologyData): CoreFragmentResources {
   const maximumSegments = Math.max(topology.nodes.length, 1) * 3;
   const positionAttribute = new THREE.Float32BufferAttribute(
     new Float32Array(maximumSegments * 6),
@@ -43,7 +44,7 @@ function createFragmentResources(topology: CoreTopologyData): CoreFragmentResour
   };
 }
 
-function updateFragmentResources(
+export function updateFragmentResources(
   resources: CoreFragmentResources,
   activeNodeIds: readonly number[],
   reducedMotion: boolean,
@@ -82,10 +83,8 @@ function updateFragmentResources(
   resources.geometry.setDrawRange(0, vertexCount);
 }
 
-function disposeFragmentResources(resources: CoreFragmentResources): void {
-  resources.mesh.dispose();
-  resources.geometry.dispose();
-  resources.material.dispose();
+export function disposeFragmentResources(resources: CoreFragmentResources): void {
+  disposeAll([resources.geometry, resources.material]);
 }
 
 /** Short offset line membranes reveal the active structural branch. */
@@ -115,15 +114,16 @@ export function CoreFragments({ topology, visualInput, reducedMotion }: CoreStru
     [topology, focusX, focusY, focusZ, intensity, inputReducedMotion, pointerX, pointerY, visualState],
   );
   const resources = useMemo(() => createFragmentResources(topology), [topology]);
+  const lease = useMemo(
+    () => createResourceLease(() => disposeFragmentResources(resources)),
+    [resources],
+  );
+
+  useLayoutEffect(() => lease.retain(), [lease]);
 
   useLayoutEffect(() => {
     updateFragmentResources(resources, activation.activeNodeIds, reducedMotion);
   }, [activation, reducedMotion, resources]);
-
-  useEffect(
-    () => () => disposeFragmentResources(resources),
-    [resources],
-  );
 
   return <primitive object={resources.mesh} dispose={null} />;
 }

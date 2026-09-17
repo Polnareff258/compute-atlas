@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useMemo } from 'react';
+import { useLayoutEffect, useMemo } from 'react';
 import * as THREE from 'three';
 
 import { CORE_COLORS } from './coreMaterials';
+import { createResourceLease, disposeAll } from './coreResourceLifecycle';
 import type { CoreStructuralViewProps } from './CoreNucleus';
 import { deriveCoreTopologyActivation } from './coreTopology';
 import type { CoreTopology as CoreTopologyData } from './coreTopology';
@@ -22,7 +23,7 @@ type CoreTopologyResources = {
   readonly activeColor: THREE.Color;
 };
 
-function createTopologyResources(topology: CoreTopologyData): CoreTopologyResources {
+export function createTopologyResources(topology: CoreTopologyData): CoreTopologyResources {
   const edgePositionAttribute = new THREE.Float32BufferAttribute(
     new Float32Array(Math.max(topology.edges.length, 1) * 6),
     3,
@@ -52,6 +53,10 @@ function createTopologyResources(topology: CoreTopologyData): CoreTopologyResour
     Math.max(topology.nodes.length, 1),
   );
   nodeMesh.count = 0;
+  nodeMesh.instanceColor = new THREE.InstancedBufferAttribute(
+    new Float32Array(Math.max(topology.nodes.length, 1) * 3),
+    3,
+  );
   nodeMesh.frustumCulled = false;
 
   return {
@@ -69,7 +74,7 @@ function createTopologyResources(topology: CoreTopologyData): CoreTopologyResour
   };
 }
 
-function updateTopologyResources(
+export function updateTopologyResources(
   resources: CoreTopologyResources,
   activeEdgeIds: readonly number[],
   activeNodeIds: readonly number[],
@@ -133,13 +138,14 @@ function updateTopologyResources(
   }
 }
 
-function disposeTopologyResources(resources: CoreTopologyResources): void {
-  resources.edgeMesh.dispose();
-  resources.edgeGeometry.dispose();
-  resources.edgeMaterial.dispose();
-  resources.nodeMesh.dispose();
-  resources.nodeGeometry.dispose();
-  resources.nodeMaterial.dispose();
+export function disposeTopologyResources(resources: CoreTopologyResources): void {
+  disposeAll([
+    resources.edgeGeometry,
+    resources.edgeMaterial,
+    resources.nodeMesh,
+    resources.nodeGeometry,
+    resources.nodeMaterial,
+  ]);
 }
 
 /** Data-driven structural nodes and active path buffers. */
@@ -169,6 +175,12 @@ export function CoreTopology({ topology, visualInput, reducedMotion }: CoreStruc
     [topology, focusX, focusY, focusZ, intensity, inputReducedMotion, pointerX, pointerY, visualState],
   );
   const resources = useMemo(() => createTopologyResources(topology), [topology]);
+  const lease = useMemo(
+    () => createResourceLease(() => disposeTopologyResources(resources)),
+    [resources],
+  );
+
+  useLayoutEffect(() => lease.retain(), [lease]);
 
   useLayoutEffect(() => {
     updateTopologyResources(
@@ -178,11 +190,6 @@ export function CoreTopology({ topology, visualInput, reducedMotion }: CoreStruc
       reducedMotion,
     );
   }, [activation, reducedMotion, resources]);
-
-  useEffect(
-    () => () => disposeTopologyResources(resources),
-    [resources],
-  );
 
   return (
     <group>

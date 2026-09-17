@@ -1,8 +1,161 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { getCoreParameters } from './coreParameters';
 import type { CoreVisualInput } from './coreTypes';
 import { deriveCoreTopology, deriveCoreTopologyActivation } from './coreTopology';
+import type * as TopologyView from './CoreTopology.tsx';
+import { createFragmentResources, disposeFragmentResources, updateFragmentResources } from './CoreFragments';
+import type { CoreTopology } from './coreTopology';
+import { createResourceLease } from './coreResourceLifecycle';
+
+// Explicit extension avoids the case-insensitive Windows collision with coreTopology.ts.
+const { createTopologyResources, disposeTopologyResources, updateTopologyResources } =
+  await vi.importActual<typeof TopologyView>('./CoreTopology.tsx');
+
+describe('structural resource lease', () => {
+  it('cancels retirement across setup-cleanup-setup, then disposes once on unmount', async () => {
+    const resources = createFragmentResources(structuralFixture);
+    let releases = 0;
+    resources.geometry.addEventListener('dispose', () => { releases += 1; });
+    const lease = createResourceLease(() => disposeFragmentResources(resources));
+    const firstCleanup = lease.retain();
+    firstCleanup();
+    expect(releases).toBe(0);
+    const finalCleanup = lease.retain();
+    await Promise.resolve();
+    expect(releases).toBe(0);
+    finalCleanup();
+    finalCleanup();
+    await Promise.resolve();
+    expect(releases).toBe(1);
+    expect(() => lease.retain()).toThrow();
+  });
+
+  it('retires the old topology independently of the replacement', async () => {
+    const released: string[] = [];
+    const oldLease = createResourceLease(() => released.push('old'));
+    const nextLease = createResourceLease(() => released.push('next'));
+    const oldCleanup = oldLease.retain();
+    oldCleanup();
+    const nextCleanup = nextLease.retain();
+    expect(released).toEqual([]);
+    await Promise.resolve();
+    expect(released).toEqual(['old']);
+    nextCleanup();
+    await Promise.resolve();
+    expect(released).toEqual(['old', 'next']);
+  });
+
+  it('keeps resources alive until the last lease releases, ignoring stale cleanups', async () => {
+    let releases = 0;
+    const lease = createResourceLease(() => { releases += 1; });
+    const firstCleanup = lease.retain();
+    const secondCleanup = lease.retain();
+    firstCleanup();
+    firstCleanup();
+    await Promise.resolve();
+    expect(releases).toBe(0);
+    secondCleanup();
+    const replayCleanup = lease.retain();
+    replayCleanup();
+    await Promise.resolve();
+    expect(releases).toBe(1);
+  });
+});
+
+const structuralFixture: CoreTopology = {
+  nodes: [
+    { id: 10, position: [0, 0, 0], weight: 1, region: 'anchor' },
+    { id: 20, position: [1, 2, 3], weight: 0.8, region: 'satellite' },
+    { id: 30, position: [-2, -1, -3], weight: 0.6, region: 'route' },
+  ],
+  edges: [
+    { id: 100, source: 10, target: 20, activationRank: 0, route: 'local' },
+    { id: 200, source: 20, target: 30, activationRank: 1, route: 'directional' },
+    { id: 300, source: 30, target: 10, activationRank: 2, route: 'signal' },
+  ],
+};
+
+describe('structural resource contract', () => {
+  it('preallocates instance colors and retains buffers while active membership shrinks', () => {
+    const resources = createTopologyResources(structuralFixture);
+    const colors = resources.nodeMesh.instanceColor;
+    const positions = resources.edgePositionAttribute.array;
+    try {
+      expect(colors).not.toBeNull();
+      expect(colors?.count).toBe(3);
+      updateTopologyResources(resources, [100, 200], [10, 20, 30], false);
+      expect(resources.edgeGeometry.drawRange.count).toBe(4);
+      expect(resources.nodeMesh.count).toBe(3);
+      updateTopologyResources(resources, [200], [20, 30], true);
+      expect(resources.edgeGeometry.drawRange.count).toBe(2);
+      expect(resources.nodeMesh.count).toBe(2);
+      expect(Array.from(positions.slice(0, 6))).toEqual([1, 2, 3, -2, -1, -3]);
+      expect(Array.from(resources.nodeMesh.instanceMatrix.array.slice(12, 15))).toEqual([1, 2, 3]);
+      expect(resources.nodeMesh.instanceColor).toBe(colors);
+      expect(resources.edgePositionAttribute.array).toBe(positions);
+      updateTopologyResources(resources, [], [], false);
+      expect(resources.edgeGeometry.drawRange.count).toBe(0);
+      expect(resources.nodeMesh.count).toBe(0);
+    } finally {
+      disposeTopologyResources(resources);
+    }
+  });
+
+  it('reuses fragment storage and hides all inactive membranes, including stale buffer tails', () => {
+    const resources = createFragmentResources(structuralFixture);
+    const positions = resources.positionAttribute.array;
+    try {
+      updateFragmentResources(resources, [10, 20, 30], false);
+      expect(resources.geometry.drawRange.count).toBe(12);
+      updateFragmentResources(resources, [20], true);
+      expect(resources.geometry.drawRange.count).toBe(6);
+      expect(positions[0]).toBeCloseTo(1.115);
+      expect(resources.positionAttribute.array).toBe(positions);
+      updateFragmentResources(resources, [10], false);
+      expect(resources.geometry.drawRange.count).toBe(0);
+    } finally {
+      disposeFragmentResources(resources);
+    }
+  });
+
+  it('attempts every topology disposal even when the first resource throws', () => {
+    const resources = createTopologyResources(structuralFixture);
+    const released: string[] = [];
+    resources.edgeGeometry.addEventListener('dispose', () => { throw new Error('release failed'); });
+    resources.edgeMaterial.addEventListener('dispose', () => released.push('edge material'));
+    resources.nodeMesh.addEventListener('dispose', () => released.push('instances'));
+    resources.nodeGeometry.addEventListener('dispose', () => released.push('node geometry'));
+    resources.nodeMaterial.addEventListener('dispose', () => released.push('node material'));
+    expect(() => disposeTopologyResources(resources)).toThrow();
+    expect(released).toEqual(['edge material', 'instances', 'node geometry', 'node material']);
+  });
+
+  it('still releases the fragment material after geometry disposal throws', () => {
+    const resources = createFragmentResources(structuralFixture);
+    let materialReleased = false;
+    resources.geometry.addEventListener('dispose', () => { throw new Error('release failed'); });
+    resources.material.addEventListener('dispose', () => { materialReleased = true; });
+    expect(() => disposeFragmentResources(resources)).toThrow();
+    expect(materialReleased).toBe(true);
+  });
+
+  it.each([
+    ['dormant', [], []],
+    ['idle', [100], [10, 20]],
+    ['awakening', [100, 200], [10, 20, 30]],
+    ['hover_response', [100], [10, 20]],
+    ['focusing', [200], [20, 30]],
+    ['agent_activity', [100, 200, 300], [10, 20, 30]],
+  ] as const)('uses only selected edge endpoints for %s', (visualState, edges, nodes) => {
+    const activation = deriveCoreTopologyActivation(structuralFixture, {
+      visualState, pointerX: 1, pointerY: 0, focusX: -1, focusY: 0, focusZ: 0,
+      intensity: 1, reducedMotion: false,
+    });
+    expect(activation.activeEdgeIds).toEqual(edges);
+    expect(activation.activeNodeIds).toEqual(nodes);
+  });
+});
 
 describe('deriveCoreTopology', () => {
   const parameters = getCoreParameters('ultra');
