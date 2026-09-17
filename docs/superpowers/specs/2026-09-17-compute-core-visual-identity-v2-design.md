@@ -22,6 +22,13 @@ This is a visual subsystem correction, not a renderer, Graph, Command Bus or Age
 - Preserve GPU-first behavior: reusable buffers, no per-particle React nodes, no CPU per-frame 70k particle updates and no per-frame allocation loops.
 - Keep the existing WebGPU-first/WebGL2 fallback boundary and all Stage 0–5.1 contracts intact.
 
+## 2.1 Review constraints
+
+These constraints are hard acceptance criteria for implementation and visual review:
+
+- Non-spherical does not mean an unstructured scatter of random lines and points. The composition must retain an explicit hierarchy: primary anchor, secondary regions, directional paths, field behavior and intentional negative space.
+- State changes must alter structural relationships before merely changing opacity or color. Hover/focus/activity should activate paths, redirect flow, change local density or alter fragment relationships in a causal and inspectable way.
+- Silhouette is the first screenshot test. Temporarily ignore UI copy; if the overview can still be summarized at a glance as one central ball or cloud, Stage 3.5 is not complete and must iterate.
 ## 3. Non-goals
 
 - No Command Palette, parser, Ollama, Agent Gateway, Agent Trace or Developer Overlay.
@@ -219,10 +226,12 @@ Save overview, hover and focus screenshots under `artifacts/stage35-core-v2-*.pn
 The visual checklist is explicit:
 
 - no obvious glowing sphere as the primary silhouette;
+- clear primary anchor, secondary regions, directional paths and negative space remain legible;
 - no recognizable icosahedron shell;
 - no three closed torus rings;
 - no uniform spherical particle boundary;
 - no constant rotation everywhere;
+- hover/focus/activity visibly reorganize structure, paths, flow or local density, not only tone;
 - sparse idle state and denser activity state;
 - Core and Graph share restrained line/activation language;
 - ULTRA is visibly richer without inventing hardware metrics;
