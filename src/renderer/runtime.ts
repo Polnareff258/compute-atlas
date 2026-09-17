@@ -37,6 +37,7 @@ export type RendererRuntimeState = {
   readonly rendererName: string | null;
   readonly adapterName: string | null;
   readonly quality: QualityProfile;
+  readonly capability: RendererCapabilityReport | null;
   readonly error: string | null;
   readonly startedAt: number | null;
 };
@@ -89,6 +90,7 @@ export function createRendererRuntime(
     rendererName: null,
     adapterName: null,
     quality: options.initialQuality ?? 'ultra',
+    capability: null,
     error: null,
     startedAt: null,
   };
@@ -136,6 +138,7 @@ export function createRendererRuntime(
       backend: 'unavailable',
       rendererName: null,
       adapterName: null,
+      capability: null,
       error: null,
       startedAt: null,
     };
@@ -152,6 +155,11 @@ export function createRendererRuntime(
       };
       return getState();
     }
+
+    state = {
+      ...state,
+      capability: report,
+    };
 
     const backendOrder = getBackendOrder(report);
     let lastError = report.reason ?? null;

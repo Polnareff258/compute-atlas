@@ -3,6 +3,10 @@
 import { createRoot, type ReconcilerRoot } from '@react-three/fiber';
 import { useEffect, useRef, useState } from 'react';
 
+import { createBootCoordinator } from '../boot/bootCoordinator';
+import { BootExperience } from '../boot/BootExperience';
+import { createInitialBootState } from '../boot/bootMachine';
+import type { BootState } from '../boot/types';
 import { getQualityProfile } from '../config/quality';
 import { createBrowserCapabilityProbe } from './capability';
 import {
@@ -23,17 +27,20 @@ const INITIAL_RUNTIME_STATE: RendererRuntimeState = {
   rendererName: null,
   adapterName: null,
   quality: 'ultra',
+  capability: null,
   error: null,
   startedAt: null,
 };
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'unknown renderer host error';
-}
-
 export function RendererHost() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const coordinatorRef = useRef<ReturnType<typeof createBootCoordinator> | null>(
+    null,
+  );
   const [runtimeState, setRuntimeState] = useState(INITIAL_RUNTIME_STATE);
+  const [bootState, setBootState] = useState<BootState>(() =>
+    createInitialBootState(),
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -50,62 +57,58 @@ export function RendererHost() {
     let root: ReconcilerRoot<HTMLCanvasElement> | null = null;
     let disposed = false;
 
-    const startRenderer = async () => {
-      const nextState = await runtime.start();
+    const coordinator = createBootCoordinator({
+      runtime,
+      onStateChange: setBootState,
+      onRendererInitialized: async (nextState) => {
+        setRuntimeState(nextState);
 
-      if (disposed) {
-        runtime.stop();
-        return;
-      }
+        if (
+          nextState.status !== 'ready' &&
+          nextState.status !== 'fallback'
+        ) {
+          return;
+        }
 
-      setRuntimeState(nextState);
+        if (!rendererRef.current) {
+          runtime.stop();
+          throw new Error('Renderer initialized without a canvas handle');
+        }
 
-      if (nextState.status !== 'ready' && nextState.status !== 'fallback') {
-        return;
-      }
-
-      if (!rendererRef.current) {
-        setRuntimeState({
-          ...nextState,
-          status: 'degraded',
-          backend: 'unavailable',
-          rendererName: null,
-          adapterName: null,
-          error: 'Renderer initialized without a canvas handle',
-          startedAt: null,
+        root = createRoot(canvas);
+        await root.configure({
+          camera: { fov: 48, position: [0, 0, 6] },
+          dpr: [1, getQualityProfile(nextState.quality).maxDpr],
+          gl: rendererRef.current,
         });
-        runtime.stop();
-        return;
-      }
+        root.render(<SceneHost />);
+      },
+    });
 
-      root = createRoot(canvas);
-      await root.configure({
-        camera: { fov: 48, position: [0, 0, 6] },
-        dpr: [1, getQualityProfile('ultra').maxDpr],
-        gl: rendererRef.current,
-      });
-      root.render(<SceneHost />);
-    };
+    coordinatorRef.current = coordinator;
 
-    void startRenderer().catch((error: unknown) => {
+    void coordinator.start().catch((error: unknown) => {
       if (disposed) {
         return;
       }
 
+      runtime.stop();
       setRuntimeState({
         ...runtime.getState(),
         status: 'degraded',
         backend: 'unavailable',
         rendererName: null,
         adapterName: null,
-        error: getErrorMessage(error),
+        capability: null,
+        error: error instanceof Error ? error.message : 'Bootstrap failed',
         startedAt: null,
       });
-      runtime.stop();
     });
 
     return () => {
       disposed = true;
+      coordinator.dispose();
+      coordinatorRef.current = null;
       root?.unmount();
       runtime.stop();
     };
@@ -117,6 +120,10 @@ export function RendererHost() {
       <div className="renderer-host__vignette" aria-hidden="true" />
       <SystemMasthead />
       <RendererStatus state={runtimeState} />
+      <BootExperience
+        state={bootState}
+        onEnter={() => coordinatorRef.current?.requestEnter()}
+      />
     </section>
   );
 }

@@ -12,6 +12,7 @@ function createState(
     rendererName: null,
     adapterName: null,
     quality: 'ultra',
+    capability: null,
     error: null,
     startedAt: null,
     ...overrides,

@@ -57,6 +57,7 @@ describe('createRendererRuntime', () => {
       rendererName: null,
       adapterName: null,
       quality: 'high',
+      capability: null,
       error: null,
       startedAt: null,
     });

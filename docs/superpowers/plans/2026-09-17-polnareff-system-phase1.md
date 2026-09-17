@@ -289,39 +289,39 @@ git commit -m "docs: close renderer bootstrap handoff"
 
 **Implementation steps:**
 
-- [ ] **Step 1: Define the serializable boot contract.**
+- [x] **Step 1: Define the serializable boot contract.**
 
   Add discriminated unions and readonly snapshots in src/boot/types.ts. Keep Three.js objects, DOM nodes, promises and renderer adapters out of the state. Add a stable event shape for public bootstrap facts: phase_started, capability_detected, renderer_ready, health_checked, scene_constructed, degraded, enter_requested, complete.
 
-- [ ] **Step 2: Write reducer-first transition tests.**
+- [x] **Step 2: Write reducer-first transition tests.**
 
   In src/boot/bootMachine.test.ts, test the happy path through every phase, illegal actions being ignored without corrupting state, WebGPU-to-WebGL fallback preserving the capability reason, explicit degraded state, idempotent skip/enter actions, minimum visual duration gating, reduced-motion completion, and serialization with JSON.stringify.
 
-- [ ] **Step 3: Implement the pure boot reducer.**
+- [x] **Step 3: Implement the pure boot reducer.**
 
   In src/boot/bootMachine.ts, make transitions deterministic and side-effect free. A renderer failure may enter degraded while retaining a functional shell; it must not throw into the page. ENTER_REQUESTED may only enter the transition phase after renderer and scene readiness are known. TRANSITION_COMPLETE may only produce complete after the coordinator confirms the minimum duration or reduced-motion policy.
 
-- [ ] **Step 4: Add project manifest and health aggregation seams.**
+- [x] **Step 4: Add project manifest and health aggregation seams.**
 
   Define an immutable PROJECT_MANIFEST in src/boot/manifest.ts. Add pure aggregateHealth() in src/boot/health.ts with injected probe results. Stage 2 probes the manifest and current renderer runtime only; backend and Ollama agent are explicitly not_initialized until their later server gateway stages exist. Do not perform direct Ollama calls from the browser.
 
-- [ ] **Step 5: Build the coordinator around the existing renderer runtime.**
+- [x] **Step 5: Build the coordinator around the existing renderer runtime.**
 
   In src/boot/bootCoordinator.ts, orchestrate capability detection, the existing runtime.start(), health aggregation and scene readiness without moving Three.js implementation details into boot modules. Use performance.now()/Date.now() through an injected clock and a cancellable scheduler. A timer can delay presentation, but it cannot turn an unready subsystem into READY. Clean up listeners and scheduled work on unmount.
 
-- [ ] **Step 6: Build the boot visual language.**
+- [x] **Step 6: Build the boot visual language.**
 
   BootExperience.tsx renders a full-viewport overlay over the existing canvas with progressive fact rows, phase label, restrained progress geometry and a clear ENTER COMPUTE ENVIRONMENT affordance. BootFacts.tsx maps only typed boot facts to status rows. bootCopy.ts contains semantic copy for READY, FALLBACK, NOT INITIALIZED, DEGRADED and OFFLINE; no fake utilization, temperature, VRAM or power values.
 
-- [ ] **Step 7: Add real input and accessibility behavior.**
+- [x] **Step 7: Add real input and accessibility behavior.**
 
   Listen for Enter, Space, and pointer activation only while the boot state is ready or degraded. Support ?boot=skip for repeatable development verification and ?boot=full to force the full choreography. Respect prefers-reduced-motion by shortening presentation transitions while preserving truthful initialization. The boot overlay exposes a labelled status region and a keyboard-focusable enter control.
 
-- [ ] **Step 8: Integrate without widening the renderer boundary.**
+- [x] **Step 8: Integrate without widening the renderer boundary.**
 
   Update RendererHost.tsx to render the existing scene behind the overlay, feed it serializable boot visibility/transition state, and preserve the Stage 1 degraded shell if the runtime cannot initialize. Do not place graph, command, Agent or Three.js object references in boot state. Keep server-rendered page.tsx free of browser API access.
 
-- [ ] **Step 9: Verify Stage 2 before starting Stage 3.**
+- [x] **Step 9: Verify Stage 2 before starting Stage 3.**
 
   Run focused boot tests, then npm run lint, npm run typecheck, npm test, and NEXT_TELEMETRY_DISABLED=1 npm run build. Start the dev server, capture full and skipped boot screenshots at desktop dimensions, inspect browser console and server logs, verify the real backend label, verify NOT INITIALIZED for the Agent gateway, and test the degraded path with a forced unavailable adapter. Record evidence in docs/PROJECT_STATUS.md and commit Stage 2 before any Compute Core implementation begins.
 
