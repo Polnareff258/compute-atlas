@@ -166,27 +166,27 @@ git commit -m "feat: detect webgpu and webgl2 capabilities"
 - Produces `createRendererRuntime(options)` with `start()`, `stop()`, `setQuality(profile)` and `getState()`.
 - Does not expose Three.js internals to consumers.
 
-- [ ] **Step 1: Write failing runtime state tests**
+- [x] **Step 1: Write failing runtime state tests**
 
 Test initial state, WebGPU success, WebGL fallback after WebGPU failure, unavailable state, quality changes, idempotent `stop()` and preservation of error reason on fallback.
 
-- [ ] **Step 2: Define renderer adapter seams**
+- [x] **Step 2: Define renderer adapter seams**
 
 Define a `RendererAdapter` interface with `initialize(canvas, quality): Promise<RendererHandle>`, `dispose()`, and `getSnapshot()`. Keep the WebGPU and WebGL construction details behind this interface.
 
-- [ ] **Step 3: Implement state transitions**
+- [x] **Step 3: Implement state transitions**
 
 Use explicit states `idle`, `probing`, `initializing`, `ready`, `fallback`, `degraded`, `stopped`. Never throw initialization errors to the root app; convert them to state and allow the caller to render a fallback shell.
 
-- [ ] **Step 4: Wire a small Zustand store**
+- [x] **Step 4: Wire a small Zustand store**
 
 Store only serializable runtime state and actions that call the runtime boundary. Do not store Three.js objects in Zustand.
 
-- [ ] **Step 5: Verify Task 3**
+- [x] **Step 5: Verify Task 3**
 
 Run `npm test -- src/renderer/runtime.test.ts` and `npm run typecheck`. Expected: the state machine tests pass with fake adapters and no DOM.
 
-- [ ] **Step 6: Commit Task 3**
+- [x] **Step 6: Commit Task 3**
 
 ```text
 git add src/renderer/runtime.ts src/renderer/runtimeStore.ts src/renderer/runtime.test.ts src/renderer/types.ts
