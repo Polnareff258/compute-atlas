@@ -17,4 +17,8 @@ export type QualitySettings = {
   allowBloom: boolean;
   graphDensity: number;
   pixelRatioScale: number;
+  coreParticleBudget: number;
+  coreCageSegments: number;
+  coreOrbitalCount: number;
+  coreFieldResolution: number;
 };

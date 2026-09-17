@@ -1,9 +1,14 @@
 'use client';
 
 import { extend } from '@react-three/fiber';
+import type { ComponentProps } from 'react';
 import * as THREE from 'three';
 
-import { Atmosphere } from './Atmosphere';
+import type {
+  QualityProfile,
+  RendererBackend,
+} from '../renderer/types';
+import { ComputeCore } from './core/ComputeCore';
 
 extend({
   BufferAttribute: THREE.BufferAttribute,
@@ -19,12 +24,37 @@ extend({
   TorusGeometry: THREE.TorusGeometry,
 });
 
-export function SceneHost() {
+export type SceneHostProps = {
+  readonly quality: QualityProfile;
+  readonly backend: RendererBackend;
+  readonly reducedMotion?: boolean;
+  readonly onTelemetry?: ComponentProps<typeof ComputeCore>['onTelemetry'];
+};
+
+export function SceneHost({
+  quality,
+  backend,
+  reducedMotion = false,
+  onTelemetry,
+}: SceneHostProps) {
   return (
     <>
       <color attach="background" args={['#050609']} />
       <fogExp2 attach="fog" args={['#050609', 0.035]} />
-      <Atmosphere />
+      {onTelemetry ? (
+        <ComputeCore
+          quality={quality}
+          backend={backend}
+          reducedMotion={reducedMotion}
+          onTelemetry={onTelemetry}
+        />
+      ) : (
+        <ComputeCore
+          quality={quality}
+          backend={backend}
+          reducedMotion={reducedMotion}
+        />
+      )}
     </>
   );
 }

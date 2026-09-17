@@ -1,7 +1,7 @@
 'use client';
 
 import { createRoot, type ReconcilerRoot } from '@react-three/fiber';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { createBootCoordinator } from '../boot/bootCoordinator';
 import { BootExperience } from '../boot/BootExperience';
@@ -18,6 +18,7 @@ import {
   type RendererRuntimeState,
 } from './runtime';
 import { SceneHost } from '../scene/SceneHost';
+import type { RendererTelemetrySnapshot } from '../telemetry/rendererTelemetry';
 import { RendererStatus } from '../ui/RendererStatus';
 import { SystemMasthead } from '../ui/SystemMasthead';
 
@@ -37,7 +38,23 @@ export function RendererHost() {
   const coordinatorRef = useRef<ReturnType<typeof createBootCoordinator> | null>(
     null,
   );
+  const latestTelemetryRef = useRef<RendererTelemetrySnapshot | null>(null);
+  const lastTelemetryLogRef = useRef(0);
   const [runtimeState, setRuntimeState] = useState(INITIAL_RUNTIME_STATE);
+  const handleTelemetry = useCallback((snapshot: RendererTelemetrySnapshot) => {
+    latestTelemetryRef.current = snapshot;
+
+    if (
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('telemetry') === '1'
+    ) {
+      const now = performance.now();
+      if (now - lastTelemetryLogRef.current >= 1_000) {
+        lastTelemetryLogRef.current = now;
+        console.info('[POLNAREFF TELEMETRY]', snapshot);
+      }
+    }
+  }, []);
   const [bootState, setBootState] = useState<BootState>(() =>
     createInitialBootState(),
   );
@@ -81,7 +98,13 @@ export function RendererHost() {
           dpr: [1, getQualityProfile(nextState.quality).maxDpr],
           gl: rendererRef.current,
         });
-        root.render(<SceneHost />);
+        root.render(
+          <SceneHost
+            quality={nextState.quality}
+            backend={nextState.backend}
+            onTelemetry={handleTelemetry}
+          />,
+        );
       },
     });
 
@@ -112,7 +135,7 @@ export function RendererHost() {
       root?.unmount();
       runtime.stop();
     };
-  }, []);
+  }, [handleTelemetry]);
 
   return (
     <section className="renderer-host" aria-label="Graphics runtime">

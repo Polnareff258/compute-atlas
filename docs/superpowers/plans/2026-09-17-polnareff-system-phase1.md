@@ -358,39 +358,39 @@ git commit -m "docs: close renderer bootstrap handoff"
 
 **Implementation steps:**
 
-- [ ] **Step 1: Define quality-derived core budgets.**
+- [x] **Step 1: Define quality-derived core budgets.**
 
   Extend the existing quality table with explicit Core budgets. ULTRA targets the desktop GPU-first presentation, HIGH/MEDIUM reduce particle and field density, and SAFE reduces update cost and disables optional bloom. Add pure tests for monotonic budgets, finite values, and deterministic parameter output.
 
-- [ ] **Step 2: Write interaction and camera tests first.**
+- [x] **Step 2: Write interaction and camera tests first.**
 
   Test pointer target clamping, damping convergence, focus interpolation, reduced-motion behavior and no overshoot. Keep the math in cameraController.ts as scalar operations on stable mutable values so the render loop does not allocate objects or arrays.
 
-- [ ] **Step 3: Implement the core state model.**
+- [x] **Step 3: Implement the core state model.**
 
   Map boot completion to awakening, settle into idle, and expose explicit setters for future hover_response, focusing and agent_activity. State changes only alter visual parameters; they do not import command bus or Agent modules. Document the field behavior and transition math in coreTypes.ts comments.
 
-- [ ] **Step 4: Build the layered scene with stable GPU resources.**
+- [x] **Step 4: Build the layered scene with stable GPU resources.**
 
   ComputeCore.tsx owns one group and stable refs. CoreSeed uses procedural geometry/material, CoreCage uses indexed line geometry, CoreEnergyField uses a bounded shader field, CoreParticleShell uses one points draw with reusable typed buffers, and CoreOrbitals uses instanced or line-based orbital structures. Avoid one React component per particle and avoid creating vectors/materials inside useFrame.
 
-- [ ] **Step 5: Add restrained animation and pointer response.**
+- [x] **Step 5: Add restrained animation and pointer response.**
 
   Use a single frame loop to update scalar uniforms, rotations and camera controller values. Pointer movement produces slight parallax and energy redistribution with inertia/damping. The core must remain legible and spatially quiet at rest; bloom, if available through the existing renderer path, is limited to the seed and energy field.
 
-- [ ] **Step 6: Add the telemetry seam without building the Developer Overlay.**
+- [x] **Step 6: Add the telemetry seam without building the Developer Overlay.**
 
   Implement rendererTelemetry.ts as a sampler that reads the actual Three.js renderer info after frames render and accepts the measured particle count from core parameters. Publish a serializable snapshot through a callback/ref seam; do not add overlay UI, fake GPU metrics or a second render loop.
 
-- [ ] **Step 7: Integrate the camera and core into SceneHost.**
+- [x] **Step 7: Integrate the camera and core into SceneHost.**
 
   Keep SceneHost responsible for scene composition and pass only serializable interaction/quality props into the core. Preserve the existing backend adapters and WebGL fallback. The core must remain mountable when the renderer is degraded, with optional layers reducing or disabling themselves from the same quality parameters.
 
-- [ ] **Step 8: Verify visual and performance behavior in a real browser.**
+- [x] **Step 8: Verify visual and performance behavior in a real browser.**
 
   Run focused tests and the full static suite. Start the dev server and capture screenshots at 1920x1080 and 2560x1440 for dormant/idle and pointer-response states. Inspect browser errors, confirm WebGPU/WebGL fallback behavior, sample measured frame time/FPS and renderer info for a sustained desktop run, and record draw-call/particle budgets in the status handoff. Refine shader contrast, depth, density and motion from screenshots before marking Stage 3 complete.
 
-- [ ] **Step 9: Commit the verified Compute Core slice.**
+- [x] **Step 9: Commit the verified Compute Core slice.**
 
   Update docs/PROJECT_STATUS.md with the visual evidence, measured telemetry limitations and known gaps. Commit only after lint, typecheck, tests, disabled-telemetry production build and browser verification pass.
 ## Future plan map
