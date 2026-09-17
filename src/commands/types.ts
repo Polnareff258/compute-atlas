@@ -4,10 +4,10 @@ import type { QualityProfile } from '@/renderer/types';
 export type CommandSource = 'pointer' | 'keyboard' | 'palette' | 'agent' | 'system';
 
 export type Command =
-  | { type: 'NAVIGATE_HOME'; source: CommandSource }
-  | { type: 'FOCUS_NODE'; source: CommandSource; nodeId: GraphNodeId }
-  | { type: 'OPEN_SECTION'; source: CommandSource; sectionId: string }
-  | { type: 'SYSTEM_STATUS'; source: CommandSource }
-  | { type: 'SET_QUALITY'; source: CommandSource; profile: QualityProfile }
-  | { type: 'SET_DEV_OVERLAY'; source: CommandSource; visible: boolean }
-  | { type: 'SURPRISE_ME'; source: CommandSource };
+  | { readonly type: 'NAVIGATE_HOME'; readonly source: CommandSource }
+  | { readonly type: 'FOCUS_NODE'; readonly source: CommandSource; readonly nodeId: GraphNodeId }
+  | { readonly type: 'OPEN_SECTION'; readonly source: CommandSource; readonly sectionId: string }
+  | { readonly type: 'SYSTEM_STATUS'; readonly source: CommandSource }
+  | { readonly type: 'SET_QUALITY'; readonly source: CommandSource; readonly profile: QualityProfile }
+  | { readonly type: 'SET_DEV_OVERLAY'; readonly source: CommandSource; readonly visible: boolean }
+  | { readonly type: 'SURPRISE_ME'; readonly source: CommandSource };
