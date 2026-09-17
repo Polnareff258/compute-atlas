@@ -49,7 +49,7 @@
 - Produces `QualityProfile`, `RendererBackend`, `CommandSource`, `GraphNodeId` and `AgentEvent` types that later tasks consume.
 - Produces a root page that can render the Stage 1 shell without importing browser-only APIs on the server.
 
-- [ ] **Step 1: Create the minimal package manifest and scripts**
+- [x] **Step 1: Create the minimal package manifest and scripts**
 
 Use scripts with explicit verification targets:
 
@@ -69,11 +69,11 @@ Use scripts with explicit verification targets:
 
 Install only the dependencies required by the Stage 1 boundary: Next, React, React DOM, Three, `@react-three/fiber`, `@react-three/drei`, Zustand and Zod; install Vitest and its TypeScript/jsdom support as development dependencies. Add Playwright only when browser verification is implemented in a later Stage 2 task.
 
-- [ ] **Step 2: Add strict TypeScript and lint configuration**
+- [x] **Step 2: Add strict TypeScript and lint configuration**
 
 Enable `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `exactOptionalPropertyTypes`, and `noEmit`. Configure the Next ESLint flat config to cover `src` and `tests`, excluding `.next`, `node_modules` and generated files.
 
-- [ ] **Step 3: Define stable foundational types**
+- [x] **Step 3: Define stable foundational types**
 
 Define:
 
@@ -86,19 +86,19 @@ export type GraphNodeId = 'core' | 'ai' | 'graphics' | 'game-analysis' | 'system
 
 Keep these types framework-neutral so tests and server modules do not depend on R3F.
 
-- [ ] **Step 4: Create the first quality profile table**
+- [x] **Step 4: Create the first quality profile table**
 
 Export immutable profiles with explicit fields: `particleBudget`, `maxDpr`, `allowBloom`, `graphDensity`, `pixelRatioScale`. Use ULTRA values suitable for desktop and progressively reduce budgets for HIGH/MEDIUM/SAFE. Keep values in one file and expose `getQualityProfile(profile)`.
 
-- [ ] **Step 5: Add a smoke test for the configuration contract**
+- [x] **Step 5: Add a smoke test for the configuration contract**
 
 Test that all four profiles exist, ULTRA has the highest particle budget, each max DPR is positive, and `getQualityProfile('ultra')` returns the same semantic values as the exported table.
 
-- [ ] **Step 6: Add a minimal app shell and status document**
+- [x] **Step 6: Add a minimal app shell and status document**
 
 Render a dark root shell with the product name and a placeholder mount point for the renderer. Document that Stage 0 is complete only after install, lint, typecheck, test and production build succeed.
 
-- [ ] **Step 7: Verify Task 1**
+- [x] **Step 7: Verify Task 1**
 
 Run:
 
@@ -112,7 +112,7 @@ npm run build
 
 Expected: all commands exit successfully and no browser-only API is evaluated during the build.
 
-- [ ] **Step 8: Commit Task 1**
+- [x] **Step 8: Commit Task 1**
 
 ```text
 git add package.json package-lock.json tsconfig.json next.config.ts next-env.d.ts eslint.config.mjs vitest.config.ts .gitignore src tests docs/PROJECT_STATUS.md
