@@ -470,3 +470,30 @@ Each future stage must produce its own evidence and update `docs/PROJECT_STATUS.
 - [x] Import audit confirmed commands core has no Three.js/React/Agent dependency and Graph/Core have no Command dependency.
 
 **Handoff:** Stage 5 is complete. The next isolated slice is Stage 6 — Command Palette; do not start it as part of this record.
+### Stage 5.1: Command / Quality Seam Correction + AI Handoff
+
+**Outcome:** Correct the Stage 5 graph hover/focus ownership and make quality changes reach the active renderer and R3F scene without adding Stage 6 or Agent functionality.
+
+**Implementation record:**
+
+- [x] Added regression coverage proving programmatic `FOCUS_NODE` preserves real pointer hover and does not synthesize phantom hover.
+- [x] Kept `GraphController` limited to `focusNode()` and `clearFocus()` semantic actions.
+- [x] Added pure `deriveEffectiveDpr()` policy using the existing `pixelRatioScale` and `maxDpr` settings with finite positive guards.
+- [x] Extended the active `RendererHandle` with `setQuality(settings)`; canvas adapters reapply pixel ratio and size without renderer recreation.
+- [x] Made RendererHost explicitly synchronize the R3F RootStore DPR and re-render SceneHost with the runtime's canonical quality state.
+- [x] Removed duplicate SceneHost `commandQuality` state; Core and Graph now receive quality from the runtime render path.
+- [x] Added a development-only quality dispatch seam for browser verification; no UI, parser or global command singleton was introduced.
+- [x] Corrected truthful WebGL2 ready status copy and added regression coverage.
+- [x] Created `docs/AI_HANDOFF.md` as the low-token review index.
+
+**Verification record:**
+
+- [x] Focused graph/command/runtime/quality/status tests pass.
+- [x] Full Vitest suite passes with 17 test files and 65 tests.
+- [x] Lint and strict typecheck pass.
+- [x] Disabled-telemetry Next production build passes.
+- [x] WebGPU browser verified Graph hover/focus/Escape and ULTRA → SAFE → ULTRA canvas DPR recovery with no uncaught exception.
+- [x] WebGL2 fallback verified Graph hover/focus and SAFE quality DPR application with no uncaught exception.
+- [x] Local implementation commits: `392699f` graph ownership correction and `68b3372` renderer quality propagation.
+
+**Handoff:** Stage 5.1 is complete. The next isolated slice is Stage 6 — Command Palette; do not start it as part of this record.

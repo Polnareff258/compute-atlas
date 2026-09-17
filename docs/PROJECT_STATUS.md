@@ -3,7 +3,7 @@
 **As of:** 2026-09-17
 **Repository:** initialized from an empty directory
 **Current phase:** Phase 1
-**Current stage:** Stage 5 complete; Stage 6 Command Palette pending
+**Current stage:** Stage 5 complete; Stage 5.1 corrective pass complete; Stage 6 Command Palette pending
 
 ## Confirmed architecture
 
@@ -26,6 +26,7 @@
 | Stage 3 — Compute Core | Complete | Layered Core, quality budgets, inertial pointer response, WebGPU-compatible materials, telemetry seam and desktop browser evidence are complete. |
 | Stage 4 — Knowledge Graph | Complete | Data-driven schema, deterministic spatial layout, graph interaction, camera focus and browser evidence are complete. |
 | Stage 5 — Command Bus | Complete | Typed synchronous dispatch, graph/quality adapters, structured results and unavailable future commands are verified. |
+| Stage 5.1 — corrective pass | Complete | Hover/focus ownership separated; runtime quality now reaches canvas/R3F DPR; AI handoff added. |
 | Stage 6 — Command Palette | Not started | No palette UI has been added. |
 | Stage 7 — backend/Ollama health | Not started | Browser gateway intentionally remains NOT INITIALIZED until this stage. |
 | Stage 8 — Agent tool calling | Not started | No model or tool call is made from the browser. |
@@ -101,7 +102,7 @@ Stage 5 establishes the typed command boundary without adding a palette, parser,
 - `src/commands/bus.ts` provides synchronous deterministic dispatch. Missing handlers return `unavailable`; handler exceptions become `failed`; subscriber exceptions are isolated from command execution.
 - `src/commands/commandEnvironment.ts` defines injected semantic capabilities only. The command core imports no Three.js, React, R3F, Agent or Ollama module.
 - `src/commands/adapters/graphCommands.ts` maps `FOCUS_NODE` and `NAVIGATE_HOME` to `focusNode` and `clearFocus`. `src/graph/graphController.ts` converts those capabilities into the existing Stage 4 interaction actions, preserving one graph state source of truth.
-- `src/commands/adapters/rendererCommands.ts` maps `SET_QUALITY` to the existing renderer quality seam. SceneHost applies the quality override to Core/Graph, while RendererHost forwards the same semantic setter to the runtime boundary.
+- `src/commands/adapters/rendererCommands.ts` maps `SET_QUALITY` to the existing renderer quality seam. RendererRuntime is the canonical quality owner; RendererHost forwards the runtime quality to both the active renderer handle and the R3F scene store, while SceneHost receives it as a prop for Core/Graph.
 - `SceneHost` constructs the bus through dependency injection and exposes a lifecycle callback for future palette/Agent sources. No global service locator or DOM/Three.js mutation was added.
 - `OPEN_SECTION`, `SYSTEM_STATUS`, `SET_DEV_OVERLAY` and `SURPRISE_ME` remain unregistered and truthfully return `unavailable` until their owning stages exist. No random or fake system behavior was introduced.
 
@@ -115,3 +116,38 @@ Stage 5 establishes the typed command boundary without adding a palette, parser,
 - WebGL2 fallback browser regression at actual viewport 2538×1342: same Graph interactions passed; no uncaught exceptions or console error events.
 - Dependency audit confirmed commands core has no Three.js/React/Agent imports; Graph and ComputeCore have no Command imports.
 - Stage 6 Command Palette, natural-language parsing, Ollama and Agent work remain untouched.
+## Stage 5.1 corrective pass
+
+Stage 5.1 is a corrective pass over the Stage 5 seams. It does not introduce Command Palette, parsing, Ollama or Agent behavior.
+
+- Graph hover and focus ownership are independent. `POINTER_ENTER_NODE` / `POINTER_LEAVE_NODE` own only real pointer hover; `FOCUS_NODE` / `CLEAR_FOCUS` own only focus. Programmatic `FOCUS_NODE` no longer synthesizes hover, so `NAVIGATE_HOME` cannot leave phantom hover behind.
+- `GraphController` remains a semantic `focusNode(id)` / `clearFocus()` adapter and does not dispatch pointer actions or know pointer position.
+- `RendererRuntime` remains the canonical observable quality state. `RendererHandle.setQuality(settings)` reapplies the active adapter's pixel ratio and size without recreating the renderer or changing backend selection.
+- `deriveEffectiveDpr(devicePixelRatio, settings)` is the shared pure policy: finite positive browser DPR multiplied by `pixelRatioScale`, clamped by `maxDpr`. RendererHost applies the same result through the R3F RootStore `setDpr` seam and explicitly re-renders SceneHost with the new runtime quality.
+- SceneHost no longer keeps duplicate `commandQuality` state. Core and Graph consume the quality prop delivered by the runtime-owned render path.
+- WebGL2 `ready` status now reports `WEBGL2 READY` instead of the ambiguous initialization label when WebGPU is unavailable and WebGL2 is the selected backend.
+- `docs/AI_HANDOFF.md` is the low-token entry point for future review; it indexes ownership, stable contracts, deferred work and verification without copying the full history.
+
+### Stage 5.1 verification evidence
+
+- `npm test`: 17 test files and 65 tests passed after the status-copy regression was included.
+- `npm run lint` — pass.
+- `npm run typecheck` — pass.
+- `NEXT_TELEMETRY_DISABLED=1 npm run build` — pass on Next 16.3.5 before the documentation-only changes.
+- WebGPU `boot=skip`: actual headless viewport CSS 758×426; status `WEBGPU READY`; Graph hover, GRAPHICS focus and Escape unfocus passed; no uncaught exception.
+- WebGPU quality dispatch: ULTRA drawing buffer 758×426, SAFE 469×264, effective DPR `1 → 0.6187335092348285 → 1`; status and scene returned to ULTRA without recreating the renderer.
+- WebGL2 fallback: actual CSS viewport 758×482; status `WEBGL2 READY`; Graph hover/focus passed; SAFE quality drawing buffer 469×298; no uncaught exception.
+- Browser notices remain limited to known environment/library messages: React DevTools/HMR, Three.Clock deprecation, WebGPU PCFSoftShadowMap remapping, and headless `powerPreference`/zero-vertex notices. No fake GPU, VRAM, utilization or thermal metrics were added.
+- No new Command Palette, parser, Ollama, Agent Gateway, SSE, Agent Trace, Developer Overlay or Stage 11/12 work was introduced.
+
+### Stage 5.1 ownership audit
+
+- Command core has no React, Three.js or R3F import.
+- ComputeCore has no Graph, Command or Agent import.
+- Graph has no Agent import and graph schema remains serializable.
+- No global singleton, `window.commandBus`, arbitrary DOM mutation or renderer recreation was added.
+- Quality changes do not alter WebGPU/WebGL2 backend selection.
+
+### Stage 5.1 handoff
+
+Stage 5.1 is complete. The next isolated slice is Stage 6 — Command Palette; do not start it as part of this record.

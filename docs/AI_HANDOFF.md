@@ -118,7 +118,7 @@ Do not add palette, parser, Ollama, Agent, SSE, trace or overlay work while revi
 ## Verification
 
 Latest focused Stage 5.1 tests: 29 tests passed across graph, command, runtime, quality and status seams.
-Latest full suite before documentation: 17 test files, 64 tests passed; the status-copy regression adds one test.
+Latest full suite: 17 test files, 65 tests passed.
 npm run lint: pass.
 npm run typecheck: pass.
 NEXT_TELEMETRY_DISABLED=1 npm run build: pass on Next 16.3.5.
