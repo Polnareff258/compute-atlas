@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { getCoreParameters } from './coreParameters';
 import { deriveCoreField, deriveCoreFieldState } from './coreField';
+import {
+  createCoreFlowFieldResources,
+  deriveCoreFlowFieldDrawCount,
+  deriveCoreFlowFieldIndex,
+  disposeCoreFlowFieldResources,
+} from './CoreFlowField';
+import type { CoreFieldDescriptor } from './coreField';
 import type { CoreVisualInput } from './coreTypes';
+import type { RendererBackend } from '../../renderer/types';
 
 const idleInput: CoreVisualInput = {
   pointerX: 0.12,
@@ -232,5 +240,73 @@ describe('deriveCoreField', () => {
     expect(state.activity).toBeLessThanOrEqual(1);
     expect(state.activeStreamCount).toBeGreaterThanOrEqual(1);
     expect(state.activeStreamCount).toBeLessThanOrEqual(field.streamCount);
+  });
+  it('selects the material backend from the explicit renderer backend seam', () => {
+    const field = deriveCoreField({ particleBudget: 8, fieldResolution: 8 }, 17);
+    const expected: readonly [RendererBackend, 'node' | 'standard'][] = [
+      ['webgpu', 'node'],
+      ['webgl2', 'standard'],
+      ['unavailable', 'standard'],
+    ];
+
+    for (const [backend, materialBackend] of expected) {
+      const resources = createCoreFlowFieldResources(field, 1, backend);
+
+      expect(resources.materialHandle.backend).toBe(materialBackend);
+      disposeCoreFlowFieldResources(resources);
+    }
+  });
+
+  it('excludes zero-weight samples from the static index while preserving stream draw ranges', () => {
+    const field: CoreFieldDescriptor = {
+      attributes: {
+        positions: new Float32Array(12),
+        drift: new Float32Array(12),
+        phase: new Float32Array([0, 0.25, 0.5, 0.75]),
+        region: new Float32Array([0, 1, 0, 1]),
+        weight: new Float32Array([1, 0, 1, 1]),
+      },
+      bounds: [1, 1, 1],
+      streamCount: 2,
+    };
+    const index = deriveCoreFlowFieldIndex(field);
+    const resources = createCoreFlowFieldResources(field, 1, 'webgl2');
+
+    expect(Array.from(index.indices)).toEqual([0, 2, 3]);
+    expect(Array.from(index.streamOffsets)).toEqual([0, 2, 3]);
+    expect(deriveCoreFlowFieldDrawCount(index, 1)).toBe(2);
+    expect(deriveCoreFlowFieldDrawCount(index, 2)).toBe(3);
+    expect(resources.geometry.drawRange).toEqual({ start: 0, count: 2 });
+    expect(Array.from((resources.geometry.index?.array ?? []) as ArrayLike<number>)).toEqual([0, 2, 3]);
+
+    disposeCoreFlowFieldResources(resources);
+  });
+
+  it('makes agent activity reveal more existing visible streams without rewriting base arrays', () => {
+    const field: CoreFieldDescriptor = {
+      attributes: {
+        positions: new Float32Array(12),
+        drift: new Float32Array(12),
+        phase: new Float32Array([0, 0.25, 0.5, 0.75]),
+        region: new Float32Array([0, 1, 0, 1]),
+        weight: new Float32Array([1, 1, 1, 1]),
+      },
+      bounds: [1, 1, 1],
+      streamCount: 2,
+    };
+    const baseAttributes = Object.fromEntries(
+      Object.entries(field.attributes).map(([name, values]) => [name, Array.from(values)]),
+    );
+    const index = deriveCoreFlowFieldIndex(field);
+    const idle = deriveCoreFieldState(field, idleInput);
+    const agent = deriveCoreFieldState(field, { ...idleInput, visualState: 'agent_activity' });
+
+    expect(agent.activeStreamCount).toBeGreaterThan(idle.activeStreamCount);
+    expect(deriveCoreFlowFieldDrawCount(index, agent.activeStreamCount)).toBeGreaterThan(
+      deriveCoreFlowFieldDrawCount(index, idle.activeStreamCount),
+    );
+    expect(Object.fromEntries(
+      Object.entries(field.attributes).map(([name, values]) => [name, Array.from(values)]),
+    )).toEqual(baseAttributes);
   });
 });

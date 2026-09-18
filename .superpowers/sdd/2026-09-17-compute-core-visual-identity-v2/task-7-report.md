@@ -43,3 +43,48 @@ git diff --check                                   -> exit 0
 
 - Actual R3F mounting, WebGPU shader build/link, WebGL2 fallback selection, and silhouette verification are intentionally deferred to Task 9/10. This task supplies the deterministic geometry and lifecycle seam only.
 - Field point count and stream selection are quality-derived but have not received a Stage 11 performance measurement.
+
+## Review fix round 1
+
+### Status
+
+Addressed both Important findings from the Task 7 review. The fix is limited to the existing Task 7 view/test scope and is not mounted into ComputeCore.
+
+### TDD evidence
+
+- RED: after adding the review tests, `npm exec vitest run src/scene/core/coreField.test.ts` reported 16 tests with 3 failures: WebGL2 incorrectly returned `node`, `deriveCoreFlowFieldIndex` was absent, and the dependent stream-visibility test could not run.
+- GREEN: after the implementation, the focused suite passed 16/16.
+
+### Finding 1 — backend/material seam
+
+- Extended `CoreFlowFieldProps` with `backend: RendererBackend`.
+- `createCoreFlowFieldResources` now receives the backend from its caller; it does not inspect renderer state.
+- `backend === 'webgpu'` requests the existing `PointsNodeMaterial` path. `webgl2` and `unavailable` request the existing standard material path.
+- Added a resource test proving all three backend choices.
+- This prop extension is intentional: the original Task 7 prop omitted the renderer-owned backend, so a future ComputeCore composition could not select WebGL2 without adding forbidden capability detection inside the field view. ComputeCore/SceneHost remain unchanged in this fix.
+
+### Finding 2 — void/index contract
+
+- Added `deriveCoreFlowFieldIndex`, a one-time deterministic static index builder.
+- Samples are ordered by stream and only weights `> 0` enter the index; zero-weight void samples remain in all descriptor arrays but cannot be drawn.
+- Added `streamOffsets` and `deriveCoreFlowFieldDrawCount` so `activeStreamCount` changes the visible stream prefix without per-frame filtering, typed-array construction, or Three.js allocation.
+- Added tests for exact zero-weight exclusion, preserved stream order, draw-range counts, agent stream expansion, and unchanged base arrays.
+
+### Verification
+
+Fresh final run before commit:
+
+```text
+npm exec vitest run src/scene/core/coreField.test.ts  -> 1 file, 16 passed
+npm run typecheck                                  -> exit 0
+npm run lint                                       -> exit 0
+git diff --check                                   -> exit 0
+```
+
+The focused test process still emits the existing Three CJS deprecation warning caused by the R3F/Three import path; it is not a test failure or lint/typecheck diagnostic.
+
+### Boundary check
+
+- Changed only `src/scene/core/CoreFlowField.tsx` and `src/scene/core/coreField.test.ts` in this fix round; no `ComputeCore.tsx`, `SceneHost.tsx`, renderer architecture, `coreFlowMaterial.ts`, Graph, Command, Agent, or Stage 8/9 code was changed.
+- Backend ownership remains with the caller; field code only consumes the typed backend value.
+- Descriptor arrays remain immutable; void visibility is represented by the static index contract.

@@ -11,49 +11,77 @@ import { createCoreFlowMaterial } from './coreFlowMaterial';
 import { createResourceLease, disposeAll } from './coreResourceLifecycle';
 import type { CoreFieldDescriptor } from './coreField';
 import type { CoreParameters, CoreVisualInput } from './coreTypes';
+import type { RendererBackend } from '../../renderer/types';
 
 export type CoreFlowFieldProps = {
   readonly descriptor: CoreFieldDescriptor;
   readonly parameters: CoreParameters;
   readonly visualInput: CoreVisualInput;
+  readonly backend: RendererBackend;
+};
+
+export type CoreFlowFieldIndex = {
+  readonly indices: Uint16Array | Uint32Array;
+  readonly streamOffsets: Uint32Array;
 };
 
 type CoreFlowFieldResources = {
   readonly geometry: THREE.BufferGeometry;
+  readonly fieldIndex: CoreFlowFieldIndex;
   readonly materialHandle: ReturnType<typeof createCoreFlowMaterial>;
   readonly points: THREE.Points;
 };
 
-function createStreamOrder(sampleCount: number, streamCount: number): Uint16Array | Uint32Array {
+export function deriveCoreFlowFieldIndex(descriptor: CoreFieldDescriptor): CoreFlowFieldIndex {
+  const sampleCount = descriptor.attributes.phase.length;
+  const streamCount = Math.max(
+    1,
+    Math.floor(Number.isFinite(descriptor.streamCount) ? descriptor.streamCount : 1),
+  );
+  const visibleByStream = new Uint32Array(streamCount);
+
+  for (let sample = 0; sample < sampleCount; sample += 1) {
+    const weight = descriptor.attributes.weight[sample] ?? 0;
+    if (Number.isFinite(weight) && weight > 0) {
+      const streamIndex = sample % streamCount;
+      visibleByStream[streamIndex] = (visibleByStream[streamIndex] ?? 0) + 1;
+    }
+  }
+
+  const streamOffsets = new Uint32Array(streamCount + 1);
+  for (let stream = 0; stream < streamCount; stream += 1) {
+    streamOffsets[stream + 1] = (streamOffsets[stream] ?? 0) + (visibleByStream[stream] ?? 0);
+  }
+
+  const visibleCount = streamOffsets[streamCount] ?? 0;
   const IndexArray = sampleCount > 65_535 ? Uint32Array : Uint16Array;
-  const order = new IndexArray(sampleCount);
+  const indices = new IndexArray(visibleCount);
   let writeIndex = 0;
 
   for (let stream = 0; stream < streamCount; stream += 1) {
     for (let sample = stream; sample < sampleCount; sample += streamCount) {
-      order[writeIndex] = sample;
-      writeIndex += 1;
+      const weight = descriptor.attributes.weight[sample] ?? 0;
+      if (Number.isFinite(weight) && weight > 0) {
+        indices[writeIndex] = sample;
+        writeIndex += 1;
+      }
     }
   }
 
-  return order;
+  return { indices, streamOffsets };
 }
 
-function activeSampleCount(
-  sampleCount: number,
-  streamCount: number,
+export function deriveCoreFlowFieldDrawCount(
+  index: CoreFlowFieldIndex,
   activeStreamCount: number,
 ): number {
-  const selectedStreams = Math.max(1, Math.min(streamCount, activeStreamCount));
-  let count = 0;
+  const streamCount = index.streamOffsets.length - 1;
+  const requestedStreams = Number.isFinite(activeStreamCount)
+    ? Math.floor(activeStreamCount)
+    : 0;
+  const selectedStreams = Math.max(0, Math.min(streamCount, requestedStreams));
 
-  for (let stream = 0; stream < selectedStreams; stream += 1) {
-    if (stream < sampleCount) {
-      count += Math.floor((sampleCount - stream - 1) / streamCount) + 1;
-    }
-  }
-
-  return count;
+  return index.streamOffsets[selectedStreams] ?? 0;
 }
 
 function pointSizeFor(parameters: CoreParameters): number {
@@ -67,27 +95,28 @@ function pointSizeFor(parameters: CoreParameters): number {
 export function createCoreFlowFieldResources(
   descriptor: CoreFieldDescriptor,
   pointSize: number,
+  backend: RendererBackend,
 ): CoreFlowFieldResources {
   const { attributes } = descriptor;
-  const sampleCount = attributes.phase.length;
+  const fieldIndex = deriveCoreFlowFieldIndex(descriptor);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(attributes.positions, 3));
   geometry.setAttribute('coreDrift', new THREE.Float32BufferAttribute(attributes.drift, 3));
   geometry.setAttribute('corePhase', new THREE.Float32BufferAttribute(attributes.phase, 1));
   geometry.setAttribute('coreRegion', new THREE.Float32BufferAttribute(attributes.region, 1));
   geometry.setAttribute('coreWeight', new THREE.Float32BufferAttribute(attributes.weight, 1));
-  geometry.setIndex(new THREE.BufferAttribute(createStreamOrder(sampleCount, descriptor.streamCount), 1));
-  geometry.setDrawRange(0, activeSampleCount(sampleCount, descriptor.streamCount, 1));
+  geometry.setIndex(new THREE.BufferAttribute(fieldIndex.indices, 1));
+  geometry.setDrawRange(0, deriveCoreFlowFieldDrawCount(fieldIndex, 1));
 
   const materialHandle = createCoreFlowMaterial({
     color: CORE_COLORS.flow,
     pointSize,
-    webgpuPreferred: true,
+    webgpuPreferred: backend === 'webgpu',
   });
   const points = new THREE.Points(geometry, materialHandle.material);
   points.frustumCulled = false;
 
-  return { geometry, materialHandle, points };
+  return { geometry, fieldIndex, materialHandle, points };
 }
 
 export function disposeCoreFlowFieldResources(resources: CoreFlowFieldResources): void {
@@ -99,15 +128,20 @@ export function disposeCoreFlowFieldResources(resources: CoreFlowFieldResources)
  * content is immutable after construction; the frame loop updates only the
  * material's scalar visual input and elapsed time.
  */
-export function CoreFlowField({ descriptor, parameters, visualInput }: CoreFlowFieldProps): JSX.Element {
-  const pointSize = useMemo(() => pointSizeFor(parameters), [parameters]);
+export function CoreFlowField({
+  backend,
+  descriptor,
+  parameters,
+  visualInput,
+}: CoreFlowFieldProps): JSX.Element {
+  const pointSize = pointSizeFor(parameters);
   const fieldState = useMemo(
     () => deriveCoreFieldState(descriptor, visualInput),
     [descriptor, visualInput],
   );
   const resources = useMemo(
-    () => createCoreFlowFieldResources(descriptor, pointSize),
-    [descriptor, pointSize],
+    () => createCoreFlowFieldResources(descriptor, pointSize, backend),
+    [backend, descriptor, pointSize],
   );
   const lease = useMemo(
     () => createResourceLease(() => disposeCoreFlowFieldResources(resources)),
@@ -131,14 +165,10 @@ export function CoreFlowField({ descriptor, parameters, visualInput }: CoreFlowF
     };
     resources.geometry.setDrawRange(
       0,
-      activeSampleCount(
-        descriptor.attributes.phase.length,
-        descriptor.streamCount,
-        fieldState.activeStreamCount,
-      ),
+      deriveCoreFlowFieldDrawCount(resources.fieldIndex, fieldState.activeStreamCount),
     );
     resources.materialHandle.updateInput(frameInputRef.current, 0);
-  }, [descriptor, fieldState, resources, visualInput.reducedMotion, visualInput.visualState]);
+  }, [fieldState, resources, visualInput.reducedMotion, visualInput.visualState]);
 
   useFrame((state) => {
     resources.materialHandle.updateInput(frameInputRef.current, state.clock.elapsedTime);
