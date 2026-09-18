@@ -65,6 +65,23 @@ function finite(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+const STANDARD_POINT_SIZE_SCALE = 0.018;
+const STANDARD_POINT_SIZE_MIN = 0.008;
+const STANDARD_POINT_SIZE_MAX = 0.032;
+
+/**
+ * PointsNodeMaterial interprets size in its GPU point path, while the
+ * WebGL2 PointsMaterial fallback uses a world-unit size. Keep the fallback
+ * visually comparable without turning the ribbon field into solid bands.
+ */
+export function deriveCoreFlowStandardPointSize(pointSize: number): number {
+  return THREE.MathUtils.clamp(
+    Math.max(STANDARD_POINT_SIZE_MIN, finite(pointSize) * STANDARD_POINT_SIZE_SCALE),
+    STANDARD_POINT_SIZE_MIN,
+    STANDARD_POINT_SIZE_MAX,
+  );
+}
+
 function normalizedSignedCoordinate(value: number, limit: number): number {
   return THREE.MathUtils.clamp(finite(value), -limit, limit);
 }
@@ -214,7 +231,7 @@ function createStandardHandle(config: CoreFlowMaterialConfig): CoreFlowMaterialH
   const inputState = createInputState();
   const material = new THREE.PointsMaterial({
     color: new THREE.Color(config.color),
-    size: Math.max(0.01, finite(config.pointSize)),
+    size: deriveCoreFlowStandardPointSize(config.pointSize),
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,

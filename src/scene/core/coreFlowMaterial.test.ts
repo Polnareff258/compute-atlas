@@ -88,6 +88,7 @@ describe('createCoreFlowMaterial', () => {
     expect(handle.material.isMaterial).toBe(true);
     expect(handle.material.type).toBe('PointsMaterial');
     expect('isShaderMaterial' in handle.material && handle.material.isShaderMaterial).toBe(false);
+    expect((handle.material as unknown as { readonly size: number }).size).toBe(0.0315);
 
     handle.dispose();
   });
