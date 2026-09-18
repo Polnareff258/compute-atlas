@@ -99,7 +99,7 @@ function clampUnit(value: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 }
 
-function normalizedDirection(
+function normalizedInputDirection(
   x: number,
   y: number,
   z: number,
@@ -117,6 +117,23 @@ function normalizedDirection(
   return [safeX / length, safeY / length, safeZ / length];
 }
 
+function normalizedGeometryDirection(
+  x: number,
+  y: number,
+  z: number,
+  fallback: Point,
+): Point {
+  const safeX = Number.isFinite(x) ? x : 0;
+  const safeY = Number.isFinite(y) ? y : 0;
+  const safeZ = Number.isFinite(z) ? z : 0;
+  const length = Math.hypot(safeX, safeY, safeZ);
+
+  if (length < 0.0001) {
+    return fallback;
+  }
+
+  return [safeX / length, safeY / length, safeZ / length];
+}
 function selectAlignedTrajectory(
   trajectories: readonly CoreTrajectory[],
   route: CoreTrajectory['route'],
@@ -132,7 +149,7 @@ function selectAlignedTrajectory(
     const end = trajectory.points.at(-1);
     if (!start || !end) continue;
 
-    const direction = normalizedDirection(
+    const direction = normalizedGeometryDirection(
       end[0] - start[0],
       end[1] - start[1],
       end[2] - start[2],
@@ -173,8 +190,8 @@ export function deriveCoreTrajectoryActivation(
   input: CoreVisualInput,
 ): CoreTrajectoryActivation {
   const intensity = clampUnit(input.intensity);
-  const pointerDirection = normalizedDirection(input.pointerX, input.pointerY, 0.18, [0.76, 0.1, -0.24]);
-  const focusDirection = normalizedDirection(input.focusX, input.focusY, input.focusZ, [0.84, 0.12, 0.3]);
+  const pointerDirection = normalizedInputDirection(input.pointerX, input.pointerY, 0.18, [0.76, 0.1, -0.24]);
+  const focusDirection = normalizedInputDirection(input.focusX, input.focusY, input.focusZ, [0.84, 0.12, 0.3]);
   let active: readonly CoreTrajectory[] = [];
   let signals: readonly CoreTrajectory[] = [];
   let activeSegmentFraction = 0;

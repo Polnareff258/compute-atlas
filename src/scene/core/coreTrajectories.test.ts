@@ -174,6 +174,34 @@ describe('deriveCoreTrajectories', () => {
     expect(trajectories.map((trajectory) => trajectory.points.map((point) => [...point]))).toEqual(pointsBefore);
   });
 
+  it('selects a directional trajectory when focus is exactly its normalized endpoint direction', () => {
+    const trajectories = deriveCoreTrajectories({ trajectoryBudget: 12 }, 17);
+    const target = trajectories.find((trajectory) => trajectory.id === 1);
+    const start = target?.points[0];
+    const end = target?.points.at(-1);
+    const focusDelta = [
+      (end?.[0] ?? 0) - (start?.[0] ?? 0),
+      (end?.[1] ?? 0) - (start?.[1] ?? 0),
+      (end?.[2] ?? 0) - (start?.[2] ?? 0),
+    ] as const;
+    const focusLength = Math.hypot(...focusDelta);
+    const focusDirection = focusDelta.map((value) => value / focusLength) as unknown as readonly [number, number, number];
+
+    expect(target?.route).toBe('directional');
+    expect(focusDelta.some((value) => Math.abs(value) > 1)).toBe(true);
+    expect(focusDirection.every((value) => Math.abs(value) <= 1)).toBe(true);
+
+    const activation = deriveCoreTrajectoryActivation(trajectories, {
+      ...baseVisualInput,
+      focusX: focusDirection[0],
+      focusY: focusDirection[1],
+      focusZ: focusDirection[2],
+      visualState: 'focusing',
+    });
+
+    expect(activation.activeTrajectoryIds).toEqual([target?.id]);
+  });
+
   it('keeps activation serializable and bounded for empty paths and reduced motion', () => {
     const trajectories = deriveCoreTrajectories({ trajectoryBudget: 0 }, 17);
     const activation = deriveCoreTrajectoryActivation(trajectories, {
