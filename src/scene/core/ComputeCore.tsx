@@ -12,16 +12,20 @@ import type {
   QualityProfile,
   RendererBackend,
 } from '../../renderer/types';
-import { deriveCoreVisualInput, getCoreParameters } from './coreParameters';
+import {
+  deriveCoreTelemetryParticleCount,
+  deriveCoreVisualInput,
+  getCoreParameters,
+} from './coreParameters';
 import { CoreNucleus } from './CoreNucleus';
 import { CoreTopology } from './CoreTopologyView';
 import { CoreFragments } from './CoreFragments';
-import { CoreFlowField, deriveCoreFlowFieldDrawCount, deriveCoreFlowFieldIndex } from './CoreFlowField';
+import { CoreFlowField } from './CoreFlowField';
 import { CoreTrajectories } from './CoreTrajectoryPaths';
 import { CoreSignals } from './CoreSignals';
 import { deriveCoreTopology } from './coreTopology';
-import { deriveCoreField, deriveCoreFieldState } from './coreField';
-import { deriveCoreTrajectories, deriveCoreTrajectoryActivation } from './coreTrajectories';
+import { deriveCoreField } from './coreField';
+import { deriveCoreTrajectories } from './coreTrajectories';
 import type { ComputeCoreVisualState, CoreVisualInput } from './coreTypes';
 
 const CORE_SEED = 17;
@@ -48,7 +52,6 @@ export function ComputeCore({
   const topology = useMemo(() => deriveCoreTopology(parameters, CORE_SEED), [parameters]);
   const field = useMemo(() => deriveCoreField(parameters, CORE_SEED), [parameters]);
   const trajectories = useMemo(() => deriveCoreTrajectories(parameters, CORE_SEED), [parameters]);
-  const fieldIndex = useMemo(() => deriveCoreFlowFieldIndex(field), [field]);
   const localController = useMemo(
     () => createCameraController({ reducedMotion }),
     [reducedMotion],
@@ -159,12 +162,7 @@ export function ComputeCore({
           renderer: gl,
           backend,
           quality,
-          particleCount: deriveCoreFlowFieldDrawCount(
-            fieldIndex,
-            deriveCoreFieldState(field, publishedInputRef.current).activeStreamCount,
-          ) + deriveCoreTrajectoryActivation(
-            trajectories, publishedInputRef.current,
-          ).signalTrajectoryIds.length,
+          particleCount: deriveCoreTelemetryParticleCount(parameters),
           deltaSeconds: safeDelta,
           sampledAt: performance.now(),
         }),

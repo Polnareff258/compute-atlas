@@ -2,6 +2,13 @@ import { getQualityProfile } from '../../config/quality';
 import type { QualityProfile } from '../../renderer/types';
 import type { CoreParameters, CoreVisualInput } from './coreTypes';
 
+/** Preserves the established telemetry meaning: configured core particle budget. */
+export function deriveCoreTelemetryParticleCount(
+  parameters: Pick<CoreParameters, 'particleBudget'>,
+): number {
+  return parameters.particleBudget;
+}
+
 /** Sanitizes controller scalars at the serializable visual boundary. */
 export function deriveCoreVisualInput(input: CoreVisualInput): CoreVisualInput {
   const finiteClamp = (value: number, minimum: number, maximum: number) =>

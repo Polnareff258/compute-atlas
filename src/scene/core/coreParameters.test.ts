@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveCoreVisualInput, getCoreParameters } from './coreParameters';
+import {
+  deriveCoreTelemetryParticleCount,
+  deriveCoreVisualInput,
+  getCoreParameters,
+} from './coreParameters';
 import { createCameraController } from '../camera/cameraController';
 
 describe('deriveCoreVisualInput', () => {
@@ -43,6 +47,13 @@ describe('deriveCoreVisualInput', () => {
 });
 
 describe('getCoreParameters', () => {
+  it('keeps telemetry particle count on the configured core budget', () => {
+    const parameters = getCoreParameters('ultra');
+
+    expect(deriveCoreTelemetryParticleCount(parameters)).toBe(parameters.particleBudget);
+  });
+
+
   it('derives deterministic V2 budgets from the renderer quality profile', () => {
     const ultra = getCoreParameters('ultra');
     const high = getCoreParameters('high');
