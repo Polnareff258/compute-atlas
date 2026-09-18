@@ -1,4 +1,4 @@
-import type { CoreParameters } from './coreTypes';
+import type { CoreParameters, CoreVisualInput } from './coreTypes';
 
 export type CoreFieldAttributes = {
   readonly positions: Float32Array;
@@ -13,7 +13,12 @@ export type CoreFieldDescriptor = {
   readonly bounds: readonly [number, number, number];
   readonly streamCount: number;
 };
-
+/** Serializable state inputs consumed by the field view without mutating its descriptor. */
+export type CoreFieldState = {
+  readonly directionalBias: readonly [number, number, number];
+  readonly activity: number;
+  readonly activeStreamCount: number;
+};
 const FIELD_BOUNDS: readonly [number, number, number] = [3.25, 2.55, 2.85];
 const TAU = Math.PI * 2;
 
@@ -48,6 +53,110 @@ function clamp(value: number, limit: number): number {
   return Math.max(-limit, Math.min(limit, value));
 }
 
+function normalizedUnit(value: number): number {
+  return clamp(Number.isFinite(value) ? value : 0, 1);
+}
+
+function normalizedDirection(
+  x: number,
+  y: number,
+  z: number,
+  fallback: readonly [number, number, number],
+): readonly [number, number, number] {
+  const safeX = normalizedUnit(x);
+  const safeY = normalizedUnit(y);
+  const safeZ = normalizedUnit(z);
+  const length = Math.hypot(safeX, safeY, safeZ);
+
+  if (length < 0.0001) {
+    return fallback;
+  }
+
+  return [safeX / length, safeY / length, safeZ / length];
+}
+
+function normalizedIntensity(value: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+function availableStreamCount(field: Pick<CoreFieldDescriptor, 'streamCount'>): number {
+  return Math.max(1, Math.floor(Number.isFinite(field.streamCount) ? field.streamCount : 1));
+}
+
+function stateActivity(base: number, intensity: number, reducedMotion: boolean): number {
+  const animatedActivity = Math.min(1, base + intensity * 0.16);
+
+  return reducedMotion ? animatedActivity * 0.52 : animatedActivity;
+}
+
+/**
+ * Maps shared Core visual input to bounded field controls. The field descriptor
+ * remains immutable: changes select existing directional streams and alter
+ * scalar displacement inputs rather than simulating or rewriting attributes.
+ */
+export function deriveCoreFieldState(
+  field: Pick<CoreFieldDescriptor, 'streamCount'>,
+  input: CoreVisualInput,
+): CoreFieldState {
+  const streamCount = availableStreamCount(field);
+  const intensity = normalizedIntensity(input.intensity);
+  const pointerDirection = normalizedDirection(
+    input.pointerX,
+    input.pointerY,
+    0.28,
+    [0.76, 0.08, -0.2],
+  );
+  const focusDirection = normalizedDirection(
+    input.focusX,
+    input.focusY,
+    input.focusZ,
+    [0.84, 0.12, 0.3],
+  );
+
+  switch (input.visualState) {
+    case 'dormant':
+      return {
+        directionalBias: [0.62, 0.04, -0.18],
+        activity: stateActivity(0.08, intensity, input.reducedMotion),
+        activeStreamCount: 1,
+      };
+    case 'awakening':
+      return {
+        directionalBias: [0.72, 0.18, 0.12],
+        activity: stateActivity(0.3, intensity, input.reducedMotion),
+        activeStreamCount: Math.min(streamCount, 2),
+      };
+    case 'hover_response':
+      return {
+        directionalBias: pointerDirection,
+        activity: stateActivity(0.5, intensity, input.reducedMotion),
+        activeStreamCount: Math.min(streamCount, 2),
+      };
+    case 'focusing':
+      return {
+        directionalBias: focusDirection,
+        activity: stateActivity(0.7, intensity, input.reducedMotion),
+        activeStreamCount: Math.min(streamCount, 2),
+      };
+    case 'agent_activity':
+      return {
+        directionalBias: normalizedDirection(
+          pointerDirection[0] + focusDirection[0],
+          pointerDirection[1] + focusDirection[1],
+          pointerDirection[2] + focusDirection[2],
+          focusDirection,
+        ),
+        activity: stateActivity(0.84, intensity, input.reducedMotion),
+        activeStreamCount: Math.min(streamCount, 3),
+      };
+    case 'idle':
+      return {
+        directionalBias: [0.74, 0.08, -0.24],
+        activity: stateActivity(0.2, intensity, input.reducedMotion),
+        activeStreamCount: 1,
+      };
+  }
+}
 /**
  * Derives the static field consumed by later GPU views.
  *

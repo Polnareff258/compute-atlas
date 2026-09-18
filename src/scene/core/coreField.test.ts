@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import { getCoreParameters } from './coreParameters';
-import { deriveCoreField } from './coreField';
+import { deriveCoreField, deriveCoreFieldState } from './coreField';
+import type { CoreVisualInput } from './coreTypes';
+
+const idleInput: CoreVisualInput = {
+  pointerX: 0.12,
+  pointerY: -0.18,
+  focusX: 0.4,
+  focusY: -0.2,
+  focusZ: 0.7,
+  intensity: 0.65,
+  visualState: 'idle',
+  reducedMotion: false,
+};
 
 function occupiedRegions(field: ReturnType<typeof deriveCoreField>): Set<number> {
   const regions = new Set<number>();
@@ -153,5 +165,72 @@ describe('deriveCoreField', () => {
 
     expect(Array.from(tiny.attributes.weight)).toContain(0);
     expect(Array.from(medium.attributes.weight)).toContain(0);
+  });
+  it('maps idle, hover, and focus to distinct deterministic directional field inputs', () => {
+    const field = deriveCoreField(parameters, 17);
+    const idle = deriveCoreFieldState(field, idleInput);
+    const hover = deriveCoreFieldState(field, {
+      ...idleInput,
+      pointerX: -0.72,
+      pointerY: 0.54,
+      visualState: 'hover_response',
+    });
+    const focus = deriveCoreFieldState(field, {
+      ...idleInput,
+      focusX: -1.6,
+      focusY: 0.9,
+      focusZ: 1.2,
+      visualState: 'focusing',
+    });
+
+    expect(deriveCoreFieldState(field, idleInput)).toEqual(idle);
+    expect(hover.directionalBias).not.toEqual(idle.directionalBias);
+    expect(focus.directionalBias).not.toEqual(hover.directionalBias);
+    expect(new Set([idle.activity, hover.activity, focus.activity]).size).toBe(3);
+  });
+
+  it('increases active stream count for agent activity without changing descriptor arrays', () => {
+    const field = deriveCoreField(parameters, 17);
+    const positions = Array.from(field.attributes.positions);
+    const drift = Array.from(field.attributes.drift);
+    const phase = Array.from(field.attributes.phase);
+    const region = Array.from(field.attributes.region);
+    const weight = Array.from(field.attributes.weight);
+    const idle = deriveCoreFieldState(field, idleInput);
+    const agent = deriveCoreFieldState(field, {
+      ...idleInput,
+      visualState: 'agent_activity',
+    });
+
+    expect(agent.activeStreamCount).toBeGreaterThan(idle.activeStreamCount);
+    expect(Array.from(field.attributes.positions)).toEqual(positions);
+    expect(Array.from(field.attributes.drift)).toEqual(drift);
+    expect(Array.from(field.attributes.phase)).toEqual(phase);
+    expect(Array.from(field.attributes.region)).toEqual(region);
+    expect(Array.from(field.attributes.weight)).toEqual(weight);
+  });
+
+  it('keeps state mapping serializable, finite, and bounded for extreme inputs', () => {
+    const field = deriveCoreField(parameters, 17);
+    const state = deriveCoreFieldState(field, {
+      ...idleInput,
+      pointerX: Number.POSITIVE_INFINITY,
+      pointerY: Number.NEGATIVE_INFINITY,
+      focusX: Number.NaN,
+      focusY: Number.MAX_VALUE,
+      focusZ: Number.MIN_VALUE,
+      intensity: Number.NaN,
+      visualState: 'agent_activity',
+      reducedMotion: true,
+    });
+
+    expect(JSON.parse(JSON.stringify(state))).toEqual(state);
+    expect(state.directionalBias.every(Number.isFinite)).toBe(true);
+    expect(state.directionalBias.every((value) => Math.abs(value) <= 1)).toBe(true);
+    expect(Number.isFinite(state.activity)).toBe(true);
+    expect(state.activity).toBeGreaterThanOrEqual(0);
+    expect(state.activity).toBeLessThanOrEqual(1);
+    expect(state.activeStreamCount).toBeGreaterThanOrEqual(1);
+    expect(state.activeStreamCount).toBeLessThanOrEqual(field.streamCount);
   });
 });
