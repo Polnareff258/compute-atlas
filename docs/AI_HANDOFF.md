@@ -4,7 +4,7 @@
 
 Repository: Polnareff258/compute-atlas
 Default branch: master
-Current HEAD: 68b3372 (verified implementation head before documentation commits)
+Current HEAD: 7972d32 (latest pushed implementation head; documentation closeout follows)
 
 ## Product
 
@@ -15,11 +15,11 @@ Future stages add deterministic commands, a local Agent gateway and runnable exp
 
 ## Current Stage
 
-Stage 5.1 complete: Command / Quality Seam Correction + AI Handoff
+Stage 3.5 complete: Compute Core Visual Identity V2
 Next: Stage 6 — Command Palette
 
-Stage 5.1 is a corrective pass, not a new main product phase.
-Do not start Stage 6 work in a Stage 5.1 review.
+Stage 3.5 is an inserted visual identity slice, not a replacement for the existing Stage 0–5.1 history.
+Do not start Stage 6 work in a Stage 3.5 review.
 
 ## Architecture
 
@@ -30,6 +30,8 @@ Browser
 │     └─ WebGL2 adapter
 ├─ R3F SceneHost
 │  ├─ ComputeCore
+│  ├─ deterministic topology / field / trajectory descriptors
+│  ├─ GPU-first field material + WebGL2 fallback
 │  └─ KnowledgeGraph
 ├─ CommandBus
 │  └─ semantic adapters
@@ -42,6 +44,7 @@ SceneHost composes the R3F scene and maps semantic interaction to camera/Core be
 ## Hard Boundaries
 
 - ComputeCore does not import Graph, Command or Agent.
+- V2 pure descriptor generators do not contain Three.js objects; scene resources stay in R3F view modules.
 - Graph data and graph reducer do not import Three.js objects, Agent or Command core.
 - Graph core does not import Agent.
 - Command core does not import React, Three.js or R3F.
@@ -74,6 +77,7 @@ Stage 3 — Layered Compute Core, camera controller, reduced motion and serializ
 Stage 4 — Data-driven Knowledge Graph, deterministic layout, spatial hover/focus and camera integration.
 Stage 5 — Typed synchronous Command Bus, registry, results and graph/renderer semantic adapters.
 Stage 5.1 — Independent hover/focus ownership, runtime-to-renderer quality propagation, truthful WebGL2 status and this handoff.
+Stage 3.5 — Asymmetric Compute Core V2 composition, structure-changing states, WebGPU/WebGL2 browser evidence and fallback point-size correction.
 
 ## Current State Ownership
 
@@ -84,6 +88,7 @@ Renderer backend owner: RendererRuntime plus the selected WebGPU/WebGL2 adapter.
 Renderer DPR owner: the active renderer handle plus the R3F RootStore setDpr seam.
 Camera focus owner: SceneHost's existing CameraController; Graph only supplies semantic interaction.
 Compute Core response owner: SceneHost maps graph state to ComputeCoreVisualState; ComputeCore remains graph-blind.
+Compute Core V2 visual owner: ComputeCore composes deterministic topology, field, fragment, trajectory and signal views; coreFlowMaterial.ts owns the WebGPU/WebGL2 material seam.
 
 ## Quality Propagation
 
@@ -106,27 +111,29 @@ Backend selection is not changed by quality changes.
 - Stage 11: performance instrumentation and frame-budget tuning.
 - Stage 12: final visual polish and regression pass.
 
-Do not add palette, parser, Ollama, Agent, SSE, trace or overlay work while reviewing Stage 5.1.
+Do not add palette, parser, Ollama, Agent, SSE, trace, overlay, Stage 11 or Stage 12 work while reviewing Stage 3.5.
 
 ## Known Issues / Debt
 
 - KnowledgeGraph pointer projection is O(N) per pointer move; this is acceptable for five domain nodes.
-- The browser logs known library/environment notices: Three.Clock deprecation, WebGPU PCFSoftShadowMap remapping, and headless powerPreference/zero-vertex notices.
+- The browser logs known library/environment notices: missing `/favicon.ico`, Three.Clock deprecation, WebGPU PCFSoftShadowMap remapping, headless powerPreference/zero-vertex notices and software WebGL2 ReadPixels notices.
 - No sustained FPS, GPU utilization, VRAM or thermal claim has been made.
 - The development-only quality dispatch event exists solely for browser verification; it is not a production command API or UI.
 
 ## Verification
 
-Latest focused Stage 5.1 tests: 29 tests passed across graph, command, runtime, quality and status seams.
-Latest full suite: 17 test files, 65 tests passed.
+Latest focused Stage 3.5 Core tests: 5 test files, 73 tests passed.
+Latest full suite: 21 test files, 136 tests passed.
 npm run lint: pass.
 npm run typecheck: pass.
 NEXT_TELEMETRY_DISABLED=1 npm run build: pass on Next 16.3.5.
 WebGPU browser: boot=skip, Three.js WebGPURenderer, WEBGPU READY, graph hover/focus/Escape pass, no uncaught exception.
 WebGPU measured canvas at the headless viewport: CSS 758x426, ULTRA drawing 758x426, SAFE drawing 469x264, then ULTRA restored.
 WebGPU effective DPR changed 1 → 0.6187335092348285 → 1 through SET_QUALITY dispatch.
-WebGL2 browser: WebGL2 adapter selected with WEBGL2 READY, graph hover/focus pass, quality safe applied, no uncaught exception.
-No app/R3F error events were observed. Known library warnings remain listed above.
+WebGL2 browser: WebGL2 adapter selected with WEBGL2 READY, V2 overview/hover/focus/Escape pass, corrected fallback field silhouette, no uncaught page error.
+WebGPU browser: 1920×1080 and 2560×1440 screenshots pass the silhouette gate; reduced-motion hover/focus/Escape pass.
+Evidence: artifacts/stage35-core-v2-overview-webgpu.png, stage35-core-v2-hover-webgpu.png, stage35-core-v2-focused-webgpu.png, stage35-core-v2-overview-2560-webgpu.png, and the three corresponding WebGL2 files.
+No app/R3F error events or new V2 material warnings were observed. Known library warnings remain listed above.
 
 ## Sol Review Guidance
 
@@ -173,6 +180,16 @@ tests/smoke/quality.test.ts
 Scene integration:
 src/scene/SceneHost.tsx
 src/scene/camera/cameraController.ts
+
+Compute Core V2:
+src/scene/core/ComputeCore.tsx
+src/scene/core/coreTopology.ts
+src/scene/core/coreField.ts
+src/scene/core/coreFlowMaterial.ts
+src/scene/core/coreTrajectories.ts
+src/scene/core/CoreNucleus.tsx
+src/scene/core/CoreFlowField.tsx
+src/scene/core/CoreTrajectories.tsx
 
 Status:
 src/ui/statusCopy.ts

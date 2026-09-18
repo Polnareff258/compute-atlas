@@ -497,3 +497,36 @@ Each future stage must produce its own evidence and update `docs/PROJECT_STATUS.
 - [x] Local implementation commits: `392699f` graph ownership correction and `68b3372` renderer quality propagation.
 
 **Handoff:** Stage 5.1 is complete. The next isolated slice is Stage 6 — Command Palette; do not start it as part of this record.
+
+### Stage 3.5: Compute Core Visual Identity V2
+
+**Outcome:** Replace the spherical Compute Core presentation with a structured, asymmetric GPU-first composition while preserving the existing renderer, camera, Graph and Command boundaries. This inserted stage remains separate from Stage 6 and does not implement Command Palette, Ollama, Agent, Trace, Developer Overlay, Stage 11 performance tuning or Stage 12 final polish.
+
+**Implementation record:**
+
+- [x] Read the approved V2 design/spec, SDD task ledger, project status, current history and the actual renderer, scene, camera, quality and Core interfaces before editing.
+- [x] Added deterministic V2 contracts and generators for topology, field attributes and broken trajectories. The contracts remain serializable and keep Three.js resources out of pure data generation.
+- [x] Added reusable R3F views for the primary anchor, topology, fragments, directional field, trajectories and signals. The composition preserves primary anchor, secondary regions, directional paths, field voids and negative space rather than recreating a sphere or random cloud.
+- [x] Mounted V2 through the existing `ComputeCore` composition boundary. ComputeCore remains independent of Graph, Command and Agent; SceneHost and the existing CameraController contracts remain intact.
+- [x] Mapped idle, hover, focus and agent-activity state to structural changes: active topology/fragment groups, field stream count and direction bias, trajectory activation and signal ranges. Opacity and color remain secondary cues.
+- [x] Preserved the existing WebGPU-first / WebGL2 fallback selection. The browser gate found and fixed a real fallback-only point-size mismatch through `deriveCoreFlowStandardPointSize()` and a focused regression test; no renderer recreation or backend selection rewrite was introduced.
+
+**Verification record:**
+
+- [x] `npm exec vitest run src/scene/core`: 5 files and 73 tests passed.
+- [x] `npm run lint` passed.
+- [x] `npm run typecheck` passed.
+- [x] `npm test`: 21 files and 136 tests passed.
+- [x] `NEXT_TELEMETRY_DISABLED=1 npm run build` passed on Next 16.3.5.
+- [x] WebGPU at 1920×1080 with `boot=skip`: actual canvas 1920×1080, `WEBGPU READY`, `Three.js WebGPURenderer`, Graph hover/focus/Escape, reduced-motion interaction and no uncaught page errors. Screenshots: `artifacts/stage35-core-v2-overview-webgpu.png`, `artifacts/stage35-core-v2-hover-webgpu.png`, `artifacts/stage35-core-v2-focused-webgpu.png`.
+- [x] WebGPU at 2560×1440: actual canvas 2560×1440, domain labels remained in frame and hierarchy remained legible. Screenshot: `artifacts/stage35-core-v2-overview-2560-webgpu.png`.
+- [x] WebGL2 fallback using the existing GPU-disabled method: `WEBGL2 READY`, `Three.js WebGLRenderer`, overview/hover/focus/Escape passed and the corrected asymmetric silhouette remained coherent. Screenshots: `artifacts/stage35-core-v2-overview-webgl2.png`, `artifacts/stage35-core-v2-hover-webgl2.png`, `artifacts/stage35-core-v2-focused-webgl2.png`.
+- [x] Console review found no uncaught page errors or new V2 material warnings. Existing environment/library notices and the missing favicon request are recorded in `docs/PROJECT_STATUS.md`; no fabricated hardware telemetry was added.
+- [x] Luna reviewer approved the Task 10 fallback correction and evidence package with no blocking findings.
+
+**Commits:**
+
+- `cb0fa36` — compose Compute Core Visual Identity V2.
+- `7972d32` — tune the WebGL2 fallback point-size policy after browser evidence.
+
+**Handoff:** Stage 3.5 is complete. The next isolated slice remains Stage 6 — Command Palette; do not start it as part of this record.

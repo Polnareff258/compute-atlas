@@ -1,9 +1,9 @@
 # POLNAREFF SYSTEM Project Status
 
-**As of:** 2026-09-17
+**As of:** 2026-09-18
 **Repository:** initialized from an empty directory
 **Current phase:** Phase 1
-**Current stage:** Stage 5 complete; Stage 5.1 corrective pass complete; Stage 6 Command Palette pending
+**Current stage:** Stage 3.5 — Compute Core Visual Identity V2 complete; Stage 6 Command Palette pending
 
 ## Confirmed architecture
 
@@ -27,6 +27,7 @@
 | Stage 4 — Knowledge Graph | Complete | Data-driven schema, deterministic spatial layout, graph interaction, camera focus and browser evidence are complete. |
 | Stage 5 — Command Bus | Complete | Typed synchronous dispatch, graph/quality adapters, structured results and unavailable future commands are verified. |
 | Stage 5.1 — corrective pass | Complete | Hover/focus ownership separated; runtime quality now reaches canvas/R3F DPR; AI handoff added. |
+| Stage 3.5 — Compute Core Visual Identity V2 | Complete | Non-spherical V2 composition, structure-changing states, WebGPU/WebGL2 evidence and fallback correction are complete. |
 | Stage 6 — Command Palette | Not started | No palette UI has been added. |
 | Stage 7 — backend/Ollama health | Not started | Browser gateway intentionally remains NOT INITIALIZED until this stage. |
 | Stage 8 — Agent tool calling | Not started | No model or tool call is made from the browser. |
@@ -151,3 +152,37 @@ Stage 5.1 is a corrective pass over the Stage 5 seams. It does not introduce Com
 ### Stage 5.1 handoff
 
 Stage 5.1 is complete. The next isolated slice is Stage 6 — Command Palette; do not start it as part of this record.
+
+## Stage 3.5 — Compute Core Visual Identity V2
+
+Stage 3.5 replaces the former spherical Core presentation with a structured, GPU-first composition while preserving the Stage 0–5.1 renderer, camera, Graph and Command boundaries. It intentionally stops before Command Palette, Ollama, Agent, Trace, Developer Overlay, Stage 11 performance tuning and Stage 12 final polish.
+
+- `src/scene/core/coreTopology.ts` defines a deterministic primary anchor, secondary regions and bounded fragments. The view layer renders the descriptors without random physics or a closed shell.
+- `src/scene/core/coreField.ts` defines a deterministic ribbon-like field with directional drift, explicit void bands and immutable GPU attributes. `CoreFlowField` uses the existing WebGPU NodeMaterial seam and a standard WebGL2 fallback.
+- `src/scene/core/coreTrajectories.ts` defines broken directional routes and signal activation. Hover, focus and agent activity alter active paths, stream counts, direction bias and local density; they are not color-only states.
+- `ComputeCore` composes `CoreNucleus`, `CoreTopology`, `CoreFragments`, `CoreFlowField`, `CoreTrajectories` and `CoreSignals`. The old spherical V1 visual layers are no longer mounted, and ComputeCore remains Graph/Command/Agent independent.
+- The browser gate found one real fallback defect: `PointsMaterial` interpreted the shared point size in world units and overexposed the field. `deriveCoreFlowStandardPointSize()` now applies a bounded world-unit policy only to WebGL2 fallback; its regression test fixes the 1.75 → 0.0315 mapping. WebGPU behavior is unchanged.
+
+### Stage 3.5 verification evidence
+
+- `npm exec vitest run src/scene/core`: 5 test files, 73 tests passed.
+- `npm run lint`: passed.
+- `npm run typecheck`: passed.
+- `npm test`: 21 test files, 136 tests passed.
+- `NEXT_TELEMETRY_DISABLED=1 npm run build`: passed on Next 16.3.5.
+- WebGPU at 1920×1080 with `boot=skip`: `WEBGPU READY`, `Three.js WebGPURenderer`, canvas 1920×1080, Graph hover/focus/Escape passed, reduced-motion interaction passed. Screenshots: `artifacts/stage35-core-v2-overview-webgpu.png`, `artifacts/stage35-core-v2-hover-webgpu.png`, `artifacts/stage35-core-v2-focused-webgpu.png`.
+- WebGPU at 2560×1440: canvas 2560×1440, all five domain labels remained in frame and the V2 hierarchy remained legible. Screenshot: `artifacts/stage35-core-v2-overview-2560-webgpu.png`.
+- WebGL2 fallback with the existing GPU-disabled verification path: `WEBGL2 READY`, `Three.js WebGLRenderer`, overview/hover/focus/Escape passed and the corrected asymmetric field remained coherent. Screenshots: `artifacts/stage35-core-v2-overview-webgl2.png`, `artifacts/stage35-core-v2-hover-webgl2.png`, `artifacts/stage35-core-v2-focused-webgl2.png`.
+- No uncaught page errors or new V2 material warnings occurred. Known non-fatal messages remain: missing `/favicon.ico`, Windows adapter `powerPreference`, Three.Clock deprecation, WebGPU PCFSoftShadowMap remapping, WebGPU zero-vertex draw notice and software WebGL2 ReadPixels notices.
+- The silhouette review passed: overview reads as an asymmetric anchor/region/path/field composition with deliberate voids and negative space, not a central ball, cloud, ring shell or random scatter. No FPS, GPU utilization, VRAM or thermal claim was made.
+
+### Stage 3.5 ownership audit
+
+- `ComputeCore.tsx` imports no Graph, Command or Agent module.
+- Pure V2 descriptor generators contain no Three.js objects; material/view resources remain inside the scene layer.
+- WebGPU/WebGL2 selection remains owned by the existing renderer adapters; the fallback correction does not recreate the renderer or alter backend selection.
+- No Command Palette, parser, Ollama, Agent Gateway, SSE, Agent Trace, Developer Overlay or Stage 11/12 implementation was added.
+
+### Stage 3.5 handoff
+
+Stage 3.5 is complete. The next isolated slice remains Stage 6 — Command Palette; do not start it as part of this record.
