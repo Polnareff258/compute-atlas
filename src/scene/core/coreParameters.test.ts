@@ -1,6 +1,46 @@
 import { describe, expect, it } from 'vitest';
 
-import { getCoreParameters } from './coreParameters';
+import { deriveCoreVisualInput, getCoreParameters } from './coreParameters';
+import { createCameraController } from '../camera/cameraController';
+
+describe('deriveCoreVisualInput', () => {
+  it('passes controller scalars and distinct interaction states to the views', () => {
+    const controller = createCameraController({ reducedMotion: true });
+    controller.setPointerTarget(0.4, -0.2);
+    controller.setFocusTarget(-0.6, 0.3, 0.8);
+    controller.update(0.016);
+    const read = (visualState: 'idle' | 'hover_response' | 'focusing') => {
+      controller.setVisualState(visualState);
+      return deriveCoreVisualInput({
+        pointerX: controller.getPointerX(), pointerY: controller.getPointerY(),
+        focusX: controller.getFocusX(), focusY: controller.getFocusY(),
+        focusZ: controller.getFocusZ(), intensity: controller.getResponseStrength(),
+        visualState, reducedMotion: true,
+      });
+    };
+    const idle = read('idle');
+    const hover = read('hover_response');
+    const focus = read('focusing');
+    expect(idle.pointerX).toBe(0.4);
+    expect(focus.focusZ).toBe(0.8);
+    expect(hover.visualState).toBe('hover_response');
+    expect(focus.visualState).toBe('focusing');
+    expect(hover.intensity).toBeGreaterThan(idle.intensity);
+    expect(focus.intensity).toBeGreaterThan(idle.intensity);
+    expect(focus.reducedMotion).toBe(true);
+    expect(JSON.parse(JSON.stringify(focus))).toEqual(focus);
+  });
+  it('bounds invalid controller scalars without losing the semantic state', () => {
+    expect(deriveCoreVisualInput({
+      pointerX: Infinity, pointerY: -3, focusX: NaN, focusY: 2,
+      focusZ: -Infinity, intensity: Infinity,
+      visualState: 'agent_activity', reducedMotion: false,
+    })).toEqual({
+      pointerX: 0, pointerY: -1, focusX: 0, focusY: 1, focusZ: 0,
+      intensity: 0, visualState: 'agent_activity', reducedMotion: false,
+    });
+  });
+});
 
 describe('getCoreParameters', () => {
   it('derives deterministic V2 budgets from the renderer quality profile', () => {
@@ -57,15 +97,14 @@ describe('getCoreParameters', () => {
     expect(safe.fieldResolution).toBeGreaterThan(0);
   });
 
-  it('retains deterministic V1 fields during the staged migration', () => {
+  it('exposes V2 budgets without retired spherical layer parameters', () => {
     const ultra = getCoreParameters('ultra');
     const safe = getCoreParameters('safe');
 
-    expect(ultra.shellRadius).toBe(2.18);
-    expect(safe.shellRadius).toBe(2.18);
-    expect(ultra.cageSegments).toBe(3);
-    expect(safe.cageSegments).toBe(1);
-    expect(ultra.orbitalCount).toBe(3);
-    expect(safe.orbitalCount).toBe(1);
+    for (const parameters of [ultra, safe]) {
+      expect(parameters).not.toHaveProperty('shellRadius');
+      expect(parameters).not.toHaveProperty('cageSegments');
+      expect(parameters).not.toHaveProperty('orbitalCount');
+    }
   });
 });

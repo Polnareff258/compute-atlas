@@ -148,7 +148,7 @@ export function disposeTopologyResources(resources: CoreTopologyResources): void
   ]);
 }
 
-/** Data-driven structural nodes and active path buffers. */
+/** Data-driven structural nodes and active path buffers (distinct from coreTopology.ts). */
 export function CoreTopology({ topology, visualInput, reducedMotion }: CoreStructuralViewProps) {
   const {
     focusX,

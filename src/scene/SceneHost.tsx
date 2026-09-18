@@ -31,6 +31,7 @@ import { ComputeCore } from './core/ComputeCore';
 import { KnowledgeGraph } from './graph/KnowledgeGraph';
 
 extend({
+  BoxGeometry: THREE.BoxGeometry,
   BufferAttribute: THREE.BufferAttribute,
   BufferGeometry: THREE.BufferGeometry,
   Color: THREE.Color,
@@ -41,7 +42,6 @@ extend({
   MeshBasicMaterial: THREE.MeshBasicMaterial,
   Points: THREE.Points,
   PointsMaterial: THREE.PointsMaterial,
-  SphereGeometry: THREE.SphereGeometry,
   TorusGeometry: THREE.TorusGeometry,
 });
 

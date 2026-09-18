@@ -3,14 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { getCoreParameters } from './coreParameters';
 import type { CoreVisualInput } from './coreTypes';
 import { deriveCoreTopology, deriveCoreTopologyActivation } from './coreTopology';
-import type * as TopologyView from './CoreTopology.tsx';
+import type * as TopologyView from './CoreTopologyView';
 import { createFragmentResources, disposeFragmentResources, updateFragmentResources } from './CoreFragments';
 import type { CoreTopology } from './coreTopology';
 import { createResourceLease } from './coreResourceLifecycle';
 
-// Explicit extension avoids the case-insensitive Windows collision with coreTopology.ts.
 const { createTopologyResources, disposeTopologyResources, updateTopologyResources } =
-  await vi.importActual<typeof TopologyView>('./CoreTopology.tsx');
+  await vi.importActual<typeof TopologyView>('./CoreTopologyView');
 
 describe('structural resource lease', () => {
   it('cancels retirement across setup-cleanup-setup, then disposes once on unmount', async () => {
