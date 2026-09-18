@@ -1,10 +1,17 @@
-import type { CoreParameters } from './coreTypes';
+import type { CoreParameters, CoreVisualInput } from './coreTypes';
 
 export type CoreTrajectory = {
   readonly id: number;
   readonly points: readonly (readonly [number, number, number])[];
   readonly activationRank: number;
   readonly route: 'dormant' | 'local' | 'directional' | 'signal';
+};
+
+export type CoreTrajectoryActivation = {
+  readonly activeTrajectoryIds: readonly number[];
+  readonly signalTrajectoryIds: readonly number[];
+  readonly activeSegmentFraction: number;
+  readonly signalSpeed: number;
 };
 
 type Point = readonly [number, number, number];
@@ -86,6 +93,134 @@ function samplePath(start: Point, control: Point, end: Point, sampleCount: numbe
   return Array.from({ length: sampleCount }, (_, sampleIndex) =>
     interpolateQuadratic(start, control, end, sampleIndex / (sampleCount - 1)),
   );
+}
+
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+function normalizedDirection(
+  x: number,
+  y: number,
+  z: number,
+  fallback: Point,
+): Point {
+  const safeX = Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0;
+  const safeY = Number.isFinite(y) ? Math.max(-1, Math.min(1, y)) : 0;
+  const safeZ = Number.isFinite(z) ? Math.max(-1, Math.min(1, z)) : 0;
+  const length = Math.hypot(safeX, safeY, safeZ);
+
+  if (length < 0.0001) {
+    return fallback;
+  }
+
+  return [safeX / length, safeY / length, safeZ / length];
+}
+
+function selectAlignedTrajectory(
+  trajectories: readonly CoreTrajectory[],
+  route: CoreTrajectory['route'],
+  target: Point,
+): CoreTrajectory | undefined {
+  let selected: CoreTrajectory | undefined;
+  let selectedScore = Number.NEGATIVE_INFINITY;
+
+  for (const trajectory of trajectories) {
+    if (trajectory.route !== route) continue;
+
+    const start = trajectory.points[0];
+    const end = trajectory.points.at(-1);
+    if (!start || !end) continue;
+
+    const direction = normalizedDirection(
+      end[0] - start[0],
+      end[1] - start[1],
+      end[2] - start[2],
+      [1, 0, 0],
+    );
+    const score = direction[0] * target[0] + direction[1] * target[1] + direction[2] * target[2];
+
+    if (
+      score > selectedScore ||
+      (score === selectedScore && selected !== undefined && trajectory.activationRank < selected.activationRank)
+    ) {
+      selected = trajectory;
+      selectedScore = score;
+    }
+  }
+
+  return selected;
+}
+
+function selectBaselineTrajectories(trajectories: readonly CoreTrajectory[]): readonly CoreTrajectory[] {
+  return trajectories
+    .filter((trajectory) => trajectory.route === 'dormant' || trajectory.route === 'local')
+    .sort((first, second) => first.activationRank - second.activationRank)
+    .slice(0, 2);
+}
+
+function idsFor(trajectories: readonly CoreTrajectory[]): readonly number[] {
+  return trajectories.map((trajectory) => trajectory.id);
+}
+
+/**
+ * Selects existing open routes for a visual state without mutating the
+ * serializable trajectory descriptors. The resulting route membership is the
+ * causal visual change consumed by both merged-line and signal views.
+ */
+export function deriveCoreTrajectoryActivation(
+  trajectories: readonly CoreTrajectory[],
+  input: CoreVisualInput,
+): CoreTrajectoryActivation {
+  const intensity = clampUnit(input.intensity);
+  const pointerDirection = normalizedDirection(input.pointerX, input.pointerY, 0.18, [0.76, 0.1, -0.24]);
+  const focusDirection = normalizedDirection(input.focusX, input.focusY, input.focusZ, [0.84, 0.12, 0.3]);
+  let active: readonly CoreTrajectory[] = [];
+  let signals: readonly CoreTrajectory[] = [];
+  let activeSegmentFraction = 0;
+  let signalSpeed = 0;
+
+  switch (input.visualState) {
+    case 'dormant':
+      break;
+    case 'awakening':
+      active = selectBaselineTrajectories(trajectories);
+      activeSegmentFraction = 0.5 + intensity * 0.16;
+      break;
+    case 'hover_response': {
+      const local = selectAlignedTrajectory(trajectories, 'local', pointerDirection);
+      active = local ? [local] : selectBaselineTrajectories(trajectories).slice(0, 1);
+      activeSegmentFraction = 0.68 + intensity * 0.16;
+      break;
+    }
+    case 'focusing': {
+      const directional = selectAlignedTrajectory(trajectories, 'directional', focusDirection);
+      active = directional ? [directional] : selectBaselineTrajectories(trajectories).slice(0, 1);
+      activeSegmentFraction = 0.8 + intensity * 0.16;
+      break;
+    }
+    case 'agent_activity':
+      signals = trajectories
+        .filter((trajectory) => trajectory.route === 'signal')
+        .sort((first, second) => first.activationRank - second.activationRank)
+        .slice(0, 3);
+      active = signals.length > 0 ? signals : selectBaselineTrajectories(trajectories).slice(0, 1);
+      activeSegmentFraction = 0.66 + intensity * 0.22;
+      signalSpeed = input.reducedMotion ? 0 : 0.42 + intensity * 0.44;
+      break;
+    case 'idle':
+    default:
+      active = selectBaselineTrajectories(trajectories);
+      activeSegmentFraction = 0.32 + intensity * 0.12;
+      break;
+  }
+
+  return {
+    activeTrajectoryIds: idsFor(active),
+    signalTrajectoryIds: idsFor(signals),
+    activeSegmentFraction: clampUnit(activeSegmentFraction),
+    signalSpeed: Number.isFinite(signalSpeed) && signalSpeed > 0 ? signalSpeed : 0,
+  };
 }
 
 /**
