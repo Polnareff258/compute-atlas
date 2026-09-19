@@ -28,6 +28,7 @@ import {
 } from './camera/cameraController';
 import type { ComputeCoreVisualState } from './core/coreTypes';
 import { ComputeCore } from './core/ComputeCore';
+import { Atmosphere } from './Atmosphere';
 import { KnowledgeGraph } from './graph/KnowledgeGraph';
 
 extend({
@@ -42,6 +43,7 @@ extend({
   MeshBasicMaterial: THREE.MeshBasicMaterial,
   Points: THREE.Points,
   PointsMaterial: THREE.PointsMaterial,
+  SphereGeometry: THREE.SphereGeometry,
   TorusGeometry: THREE.TorusGeometry,
 });
 
@@ -152,6 +154,7 @@ export function SceneHost({
     <>
       <color attach="background" args={['#050609']} />
       <fogExp2 attach="fog" args={['#050609', 0.035]} />
+      <Atmosphere reducedMotion={reducedMotion} />
       {onTelemetry ? (
         <ComputeCore {...coreProps} onTelemetry={onTelemetry} />
       ) : (
@@ -163,6 +166,7 @@ export function SceneHost({
         layout={graphLayout}
         manifest={GRAPH_MANIFEST}
         onAction={handleGraphAction}
+        reducedMotion={reducedMotion}
       />
     </>
   );

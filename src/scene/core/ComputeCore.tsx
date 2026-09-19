@@ -13,10 +13,10 @@ import type {
   RendererBackend,
 } from '../../renderer/types';
 import {
-  deriveCoreTelemetryParticleCount,
   deriveCoreVisualInput,
   getCoreParameters,
 } from './coreParameters';
+import { deriveCoreTelemetryCounts } from './coreTelemetry';
 import { CoreNucleus } from './CoreNucleus';
 import { CoreTopology } from './CoreTopologyView';
 import { CoreFragments } from './CoreFragments';
@@ -142,7 +142,7 @@ export function ComputeCore({
       const interactionLift =
         visualStateRef.current === 'hover_response' ? 0.012 : 0;
       const targetScale =
-        (0.84 + awakeningProgress * 0.16 + interactionLift) *
+        (1.08 + awakeningProgress * 0.07 + interactionLift) *
         (1 - focusMagnitude * 0.035);
       groupRef.current.scale.setScalar(targetScale);
       groupRef.current.position.set(-focusX * 0.06, -focusY * 0.04, -focusZ * 0.04);
@@ -157,12 +157,21 @@ export function ComputeCore({
       elapsedRef.current - lastTelemetryRef.current > 0.25
     ) {
       lastTelemetryRef.current = elapsedRef.current;
+      const telemetryCounts = deriveCoreTelemetryCounts(
+        parameters,
+        field,
+        trajectories,
+        publishedInputRef.current,
+      );
       onTelemetry(
         sampleRendererTelemetry({
           renderer: gl,
           backend,
           quality,
-          particleCount: deriveCoreTelemetryParticleCount(parameters),
+          particleCount: telemetryCounts.renderedFieldSamples,
+          configuredFieldBudget: telemetryCounts.configuredFieldBudget,
+          renderedFieldSamples: telemetryCounts.renderedFieldSamples,
+          activeSignalSamples: telemetryCounts.activeSignalSamples,
           deltaSeconds: safeDelta,
           sampledAt: performance.now(),
         }),
@@ -177,7 +186,12 @@ export function ComputeCore({
       <CoreFragments topology={topology} visualInput={viewInput} reducedMotion={reducedMotion} />
       <CoreFlowField descriptor={field} parameters={parameters} visualInput={viewInput} backend={backend} />
       <CoreTrajectories trajectories={trajectories} visualInput={viewInput} reducedMotion={reducedMotion} />
-      <CoreSignals trajectories={trajectories} visualInput={viewInput} reducedMotion={reducedMotion} />
+      <CoreSignals
+        trajectories={trajectories}
+        visualInput={viewInput}
+        reducedMotion={reducedMotion}
+        activeSignalBudget={parameters.activeSignalBudget}
+      />
     </group>
   );
 }

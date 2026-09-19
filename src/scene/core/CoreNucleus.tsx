@@ -15,7 +15,7 @@ export type CoreStructuralViewProps = {
 
 const ORIGIN: readonly [number, number, number] = [0, 0, 0];
 
-/** A small, asymmetric anchor assembly rather than a second spherical core. */
+/** Layered processing slabs around a compact nucleus; geometry is declarative and static. */
 export function CoreNucleus({
   topology,
   visualInput,
@@ -40,39 +40,53 @@ export function CoreNucleus({
     : direction[0] * 0.08 + direction[2] * 0.035;
 
   return (
-    <group rotation={[0.18 + direction[1] * 0.04, -0.26 + responsiveRotation, 0.08]}>
-      <mesh scale={[0.26 * stateScale, 0.07, 0.12]} position={[-0.05, 0.02, 0]}>
+    <group scale={1.85} rotation={[0.18 + direction[1] * 0.04, -0.26 + responsiveRotation, 0.08]}>
+      <mesh scale={[0.76 * stateScale, 0.2, 0.42]} position={[-0.08, -0.02, 0]}>
         <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial
           color={CORE_COLORS.nucleus}
           depthWrite={false}
-          opacity={0.62}
+          opacity={0.54}
           transparent
-          wireframe
         />
       </mesh>
-      <mesh rotation={[0.42, 0.18, -0.24]} scale={[0.13, 0.24 * stateScale, 0.06]}>
+      <mesh scale={[0.52 * stateScale, 0.12, 0.48]} position={[-0.32, 0.2, 0.02]}>
         <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial
-          color={CORE_COLORS.nucleusAccent}
+          color={CORE_COLORS.fragment}
           depthWrite={false}
-          opacity={0.48}
+          opacity={0.66}
           transparent
-          wireframe
         />
       </mesh>
       <mesh
-        position={[direction[0] * 0.025, direction[1] * 0.025, direction[2] * 0.025]}
-        rotation={[0.12, -0.34, 0.3]}
-        scale={[0.08, 0.05, 0.22]}
+        position={[0.3, 0.12, -0.02]}
+        rotation={[0.08, -0.18, 0.02]}
+        scale={[0.46 * stateScale, 0.13, 0.4]}
       >
         <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial
-          color={CORE_COLORS.nucleusAccent}
+          color={CORE_COLORS.fragment}
           depthWrite={false}
-          opacity={0.56}
+          opacity={0.46}
           transparent
         />
+      </mesh>
+      <mesh position={[direction[0] * 0.04, direction[1] * 0.035, 0.205 + direction[2] * 0.025]}>
+        <boxGeometry args={[0.34, 0.26, 0.16]} />
+        <meshBasicMaterial color={CORE_COLORS.nucleusAccent} depthWrite={false} opacity={0.74} transparent />
+      </mesh>
+      <mesh position={[-0.58, -0.16, 0.19]} rotation={[0.08, 0.02, -0.12]}>
+        <boxGeometry args={[0.3, 0.075, 0.22]} />
+        <meshBasicMaterial color={CORE_COLORS.nucleus} depthWrite={false} opacity={0.64} transparent />
+      </mesh>
+      <mesh position={[0.06, -0.22, -0.28]} rotation={[0.08, 0.12, 0.22]}>
+        <boxGeometry args={[0.72, 0.075, 0.14]} />
+        <meshBasicMaterial color={CORE_COLORS.nucleusAccent} depthWrite={false} opacity={0.42} transparent />
+      </mesh>
+      <mesh position={[0.12, 0.34, -0.24]} rotation={[-0.08, -0.14, -0.16]}>
+        <boxGeometry args={[0.56, 0.065, 0.12]} />
+        <meshBasicMaterial color={CORE_COLORS.nucleus} depthWrite={false} opacity={0.5} transparent />
       </mesh>
     </group>
   );

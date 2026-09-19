@@ -64,14 +64,14 @@ describe('structural resource lease', () => {
 
 const structuralFixture: CoreTopology = {
   nodes: [
-    { id: 10, position: [0, 0, 0], weight: 1, region: 'anchor' },
-    { id: 20, position: [1, 2, 3], weight: 0.8, region: 'satellite' },
-    { id: 30, position: [-2, -1, -3], weight: 0.6, region: 'route' },
+    { id: 10, position: [0, 0, 0], scale: [1, 1, 1], weight: 1, depthBand: 0, region: 'anchor' },
+    { id: 20, position: [1, 2, 3], scale: [1, 0.5, 0.4], weight: 0.8, depthBand: 0.2, region: 'primary' },
+    { id: 30, position: [-2, -1, -3], scale: [0.8, 0.4, 0.3], weight: 0.6, depthBand: 0.4, region: 'secondary' },
   ],
   edges: [
-    { id: 100, source: 10, target: 20, activationRank: 0, route: 'local' },
-    { id: 200, source: 20, target: 30, activationRank: 1, route: 'directional' },
-    { id: 300, source: 30, target: 10, activationRank: 2, route: 'signal' },
+    { id: 100, source: 10, target: 20, activationRank: 0, importance: 1, route: 'primary' },
+    { id: 200, source: 20, target: 30, activationRank: 1, importance: 0.7, route: 'secondary' },
+    { id: 300, source: 30, target: 10, activationRank: 2, importance: 0.4, route: 'ambient' },
   ],
 };
 
@@ -79,22 +79,32 @@ describe('structural resource contract', () => {
   it('preallocates instance colors and retains buffers while active membership shrinks', () => {
     const resources = createTopologyResources(structuralFixture);
     const colors = resources.nodeMesh.instanceColor;
-    const positions = resources.edgePositionAttribute.array;
+    const positions = resources.secondaryPositionAttribute.array;
+    const visualInput = {
+      pointerX: 0, pointerY: 0, focusX: 0, focusY: 0, focusZ: 0,
+      intensity: 0.4, reducedMotion: false,
+    } as const;
+    const idle = deriveCoreTopologyActivation(structuralFixture, { ...visualInput, visualState: 'idle' });
+    const focus = deriveCoreTopologyActivation(structuralFixture, { ...visualInput, visualState: 'focusing' });
+    const dormant = deriveCoreTopologyActivation(structuralFixture, { ...visualInput, visualState: 'dormant' });
     try {
       expect(colors).not.toBeNull();
       expect(colors?.count).toBe(3);
-      updateTopologyResources(resources, [100, 200], [10, 20, 30], false);
-      expect(resources.edgeGeometry.drawRange.count).toBe(4);
+      updateTopologyResources(resources, idle, false);
+      expect(resources.primaryMesh.count).toBe(1);
+      expect(resources.secondaryGeometry.drawRange.count).toBe(2);
+      expect(resources.ambientGeometry.drawRange.count).toBe(2);
       expect(resources.nodeMesh.count).toBe(3);
-      updateTopologyResources(resources, [200], [20, 30], true);
-      expect(resources.edgeGeometry.drawRange.count).toBe(2);
+      updateTopologyResources(resources, focus, true);
+      expect(resources.primaryMesh.count).toBe(0);
+      expect(resources.secondaryGeometry.drawRange.count).toBe(2);
       expect(resources.nodeMesh.count).toBe(2);
       expect(Array.from(positions.slice(0, 6))).toEqual([1, 2, 3, -2, -1, -3]);
       expect(Array.from(resources.nodeMesh.instanceMatrix.array.slice(12, 15))).toEqual([1, 2, 3]);
       expect(resources.nodeMesh.instanceColor).toBe(colors);
-      expect(resources.edgePositionAttribute.array).toBe(positions);
-      updateTopologyResources(resources, [], [], false);
-      expect(resources.edgeGeometry.drawRange.count).toBe(0);
+      expect(resources.secondaryPositionAttribute.array).toBe(positions);
+      updateTopologyResources(resources, dormant, false);
+      expect(resources.secondaryGeometry.drawRange.count).toBe(0);
       expect(resources.nodeMesh.count).toBe(0);
     } finally {
       disposeTopologyResources(resources);
@@ -121,13 +131,21 @@ describe('structural resource contract', () => {
   it('attempts every topology disposal even when the first resource throws', () => {
     const resources = createTopologyResources(structuralFixture);
     const released: string[] = [];
-    resources.edgeGeometry.addEventListener('dispose', () => { throw new Error('release failed'); });
-    resources.edgeMaterial.addEventListener('dispose', () => released.push('edge material'));
+    resources.primaryMesh.addEventListener('dispose', () => { throw new Error('release failed'); });
+    resources.primaryGeometry.addEventListener('dispose', () => released.push('primary geometry'));
+    resources.primaryMaterial.addEventListener('dispose', () => released.push('primary material'));
+    resources.secondaryGeometry.addEventListener('dispose', () => released.push('secondary geometry'));
+    resources.secondaryMaterial.addEventListener('dispose', () => released.push('secondary material'));
+    resources.ambientGeometry.addEventListener('dispose', () => released.push('ambient geometry'));
+    resources.signalGeometry.addEventListener('dispose', () => released.push('signal geometry'));
     resources.nodeMesh.addEventListener('dispose', () => released.push('instances'));
     resources.nodeGeometry.addEventListener('dispose', () => released.push('node geometry'));
     resources.nodeMaterial.addEventListener('dispose', () => released.push('node material'));
     expect(() => disposeTopologyResources(resources)).toThrow();
-    expect(released).toEqual(['edge material', 'instances', 'node geometry', 'node material']);
+    expect(released).toEqual([
+      'primary geometry', 'primary material', 'secondary geometry', 'secondary material',
+      'ambient geometry', 'signal geometry', 'instances', 'node geometry', 'node material',
+    ]);
   });
 
   it('still releases the fragment material after geometry disposal throws', () => {
@@ -141,7 +159,7 @@ describe('structural resource contract', () => {
 
   it.each([
     ['dormant', [], []],
-    ['idle', [100], [10, 20]],
+    ['idle', [100, 200, 300], [10, 20, 30]],
     ['awakening', [100, 200], [10, 20, 30]],
     ['hover_response', [100], [10, 20]],
     ['focusing', [200], [20, 30]],
@@ -158,6 +176,65 @@ describe('structural resource contract', () => {
 
 describe('deriveCoreTopology', () => {
   const parameters = getCoreParameters('ultra');
+
+  it('exposes a massed machine hierarchy with explicit route classes and depth bands', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const nodes = topology.nodes as readonly (typeof topology.nodes[number] & {
+      readonly scale?: readonly [number, number, number];
+      readonly depthBand?: number;
+    })[];
+    const edges = topology.edges as readonly (typeof topology.edges[number] & {
+      readonly importance?: number;
+    })[];
+
+    expect(new Set(nodes.map((node) => node.region))).toEqual(
+      new Set(['anchor', 'primary', 'secondary', 'route', 'foreground']),
+    );
+    expect(nodes.every((node) => node.scale?.every(Number.isFinite))).toBe(true);
+    expect(nodes.every((node) => Number.isFinite(node.depthBand))).toBe(true);
+    expect(new Set(edges.map((edge) => edge.route))).toEqual(
+      new Set(['primary', 'secondary', 'ambient', 'signal']),
+    );
+    expect(edges.filter((edge) => edge.route === 'primary').length).toBeGreaterThanOrEqual(2);
+    expect(edges.every((edge) => Number.isFinite(edge.importance))).toBe(true);
+  });
+
+  it('renders primary members as a bounded instanced group and keeps support routes separate', () => {
+    const resources = createTopologyResources(structuralFixture);
+    const activation = deriveCoreTopologyActivation(structuralFixture, {
+      visualState: 'idle', pointerX: 0, pointerY: 0, focusX: 0, focusY: 0, focusZ: 0,
+      intensity: 0.4, reducedMotion: false,
+    });
+
+    try {
+      updateTopologyResources(resources, activation, false);
+      expect(resources.primaryMesh.count).toBe(1);
+      expect(resources.secondaryGeometry.drawRange.count).toBe(2);
+      expect(resources.ambientGeometry.drawRange.count).toBe(2);
+      expect(resources.signalGeometry.drawRange.count).toBe(0);
+    } finally {
+      disposeTopologyResources(resources);
+    }
+  });
+
+  it('separates primary, secondary and ambient activation memberships', () => {
+    const topology = deriveCoreTopology(parameters, 17);
+    const activation = deriveCoreTopologyActivation(topology, {
+      pointerX: 0.35,
+      pointerY: -0.2,
+      focusX: 0.8,
+      focusY: 0.1,
+      focusZ: -0.4,
+      intensity: 0.72,
+      visualState: 'idle',
+      reducedMotion: false,
+    });
+
+    expect(activation.primaryEdgeIds.length).toBeGreaterThan(0);
+    expect(activation.activeEdgeIds).toEqual(expect.arrayContaining([...activation.primaryEdgeIds]));
+    expect(activation.activeEdgeIds).toEqual(expect.arrayContaining([...activation.secondaryEdgeIds]));
+    expect(activation.activeEdgeIds).toEqual(expect.arrayContaining([...activation.ambientEdgeIds]));
+  });
 
   function inputFor(
     visualState: CoreVisualInput['visualState'],
@@ -220,12 +297,13 @@ describe('deriveCoreTopology', () => {
     expect(topology.edges.length).toBeLessThanOrEqual(parameters.topologyEdgeBudget);
   });
 
-  it('keeps an anchor, satellites, routes, and intentional negative space', () => {
+  it('keeps an anchor, processing regions, routes, and intentional negative space', () => {
     const topology = deriveCoreTopology(parameters, 17);
     const regions = new Set(topology.nodes.map((node) => node.region));
 
     expect(regions).toContain('anchor');
-    expect(regions).toContain('satellite');
+    expect(regions).toContain('primary');
+    expect(regions).toContain('secondary');
     expect(regions).toContain('route');
 
     const completeGraphEdgeCount = (topology.nodes.length * (topology.nodes.length - 1)) / 2;
@@ -246,8 +324,8 @@ describe('deriveCoreTopology', () => {
     const safe = deriveCoreTopology(getCoreParameters('safe'), 17);
 
     expect(safe.nodes.some((node) => node.region === 'anchor')).toBe(true);
-    expect(safe.nodes.some((node) => node.region === 'satellite')).toBe(true);
-    expect(safe.nodes.some((node) => node.region === 'route')).toBe(true);
+    expect(safe.nodes.some((node) => node.region === 'primary')).toBe(true);
+    expect(safe.nodes.some((node) => node.region === 'secondary')).toBe(true);
     expect(safe.edges.length).toBeGreaterThan(0);
   });
 
@@ -329,33 +407,34 @@ describe('deriveCoreTopology', () => {
     expect(topology.nodes.some((node) => node.position[2] > 0.5)).toBe(true);
     expect(topology.nodes.some((node) => node.position[2] < -0.5)).toBe(true);
   });
-  it('activates a sparse baseline while idle', () => {
+  it('activates a readable primary baseline with supporting routes while idle', () => {
     const topology = deriveCoreTopology(parameters, 17);
     const activation = deriveCoreTopologyActivation(topology, inputFor('idle'));
 
-    expect(activation.activeEdgeIds).toEqual([0]);
-    expect(activation.activeNodeIds).toEqual([0, 1]);
+    expect(activation.primaryEdgeIds.length).toBeGreaterThan(0);
+    expect(activation.activeEdgeIds).toEqual(expect.arrayContaining([...activation.primaryEdgeIds]));
+    expect(activation.secondaryEdgeIds.length).toBeGreaterThan(0);
   });
 
-  it('activates a local branch for hover response', () => {
+  it('activates a primary branch for hover response', () => {
     const topology = deriveCoreTopology(parameters, 17);
     const activation = deriveCoreTopologyActivation(topology, inputFor('hover_response'));
     const activeEdges = topology.edges.filter((edge) => activation.activeEdgeIds.includes(edge.id));
 
     expect(activeEdges.length).toBeGreaterThan(0);
-    expect(activeEdges.every((edge) => edge.route === 'local')).toBe(true);
+    expect(activeEdges.every((edge) => edge.route === 'primary')).toBe(true);
     expect(activation.activeEdgeIds).not.toEqual(
       deriveCoreTopologyActivation(topology, inputFor('idle')).activeEdgeIds,
     );
   });
 
-  it('activates a directional route while focusing', () => {
+  it('activates a secondary route while focusing', () => {
     const topology = deriveCoreTopology(parameters, 17);
     const activation = deriveCoreTopologyActivation(topology, inputFor('focusing'));
     const activeEdges = topology.edges.filter((edge) => activation.activeEdgeIds.includes(edge.id));
 
     expect(activeEdges.length).toBeGreaterThan(0);
-    expect(activeEdges.every((edge) => edge.route === 'directional')).toBe(true);
+    expect(activeEdges.every((edge) => edge.route === 'secondary')).toBe(true);
     expect(activation.activeEdgeIds).not.toEqual(
       deriveCoreTopologyActivation(topology, inputFor('hover_response')).activeEdgeIds,
     );
@@ -397,10 +476,10 @@ describe('deriveCoreTopology', () => {
     expect(left.activeEdgeIds).not.toEqual(right.activeEdgeIds);
     expect(
       topology.edges.find((edge) => edge.id === left.activeEdgeIds[0])?.route,
-    ).toBe('local');
+    ).toBe('primary');
     expect(
       topology.edges.find((edge) => edge.id === right.activeEdgeIds[0])?.route,
-    ).toBe('local');
+    ).toBe('primary');
   });
 
   it('selects different directional edges for materially different focus vectors', () => {
@@ -417,9 +496,9 @@ describe('deriveCoreTopology', () => {
     expect(left.activeEdgeIds).not.toEqual(right.activeEdgeIds);
     expect(
       topology.edges.find((edge) => edge.id === left.activeEdgeIds[0])?.route,
-    ).toBe('directional');
+    ).toBe('secondary');
     expect(
       topology.edges.find((edge) => edge.id === right.activeEdgeIds[0])?.route,
-    ).toBe('directional');
+    ).toBe('secondary');
   });
 });

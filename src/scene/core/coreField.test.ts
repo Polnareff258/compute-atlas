@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { getCoreParameters } from './coreParameters';
-import { deriveCoreField, deriveCoreFieldState } from './coreField';
+import { countVisibleCoreFieldSamples, deriveCoreField, deriveCoreFieldState } from './coreField';
 import {
   createCoreFlowFieldResources,
   deriveCoreFlowFieldDrawCount,
@@ -109,6 +109,39 @@ describe('deriveCoreField', () => {
     expect(zeroWeightSamples).toBeGreaterThan(0);
   });
 
+  it('produces deterministic compression, zone and depth attributes with multiple voids', () => {
+    const first = deriveCoreField(parameters, 17);
+    const second = deriveCoreField(parameters, 17);
+
+    expect(first.attributes.compression).toEqual(second.attributes.compression);
+    expect(first.attributes.zone).toEqual(second.attributes.zone);
+    expect(first.attributes.depthBias).toEqual(second.attributes.depthBias);
+    expect(new Set(first.attributes.zone).size).toBeGreaterThan(1);
+    expect(first.attributes.compression.every((value) => value >= 0 && value <= 1)).toBe(true);
+    expect(first.attributes.depthBias.every(Number.isFinite)).toBe(true);
+    expect(Array.from(first.attributes.weight).filter((weight) => weight === 0).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('counts only positive-weight samples in the active stream prefix', () => {
+    const descriptor: CoreFieldDescriptor = {
+      attributes: {
+        positions: new Float32Array(18),
+        drift: new Float32Array(18),
+        phase: new Float32Array(6),
+        region: new Float32Array(6),
+        weight: new Float32Array([1, 0, 1, 1, 0, 1]),
+        compression: new Float32Array(6),
+        zone: new Float32Array(6),
+        depthBias: new Float32Array(6),
+      },
+      bounds: [1, 1, 1],
+      streamCount: 2,
+    };
+
+    expect(countVisibleCoreFieldSamples(descriptor, 1)).toBe(2);
+    expect(countVisibleCoreFieldSamples(descriptor, 2)).toBe(4);
+  });
+
   it('changes the deterministic field with a different seed', () => {
     const first = deriveCoreField(parameters, 17);
     const second = deriveCoreField(parameters, 91);
@@ -185,15 +218,17 @@ describe('deriveCoreField', () => {
     });
     const focus = deriveCoreFieldState(field, {
       ...idleInput,
-      focusX: -1.6,
-      focusY: 0.9,
-      focusZ: 1.2,
+      focusX: -0.2,
+      focusY: -0.8,
+      focusZ: 0.6,
       visualState: 'focusing',
     });
 
     expect(deriveCoreFieldState(field, idleInput)).toEqual(idle);
     expect(hover.directionalBias).not.toEqual(idle.directionalBias);
     expect(focus.directionalBias).not.toEqual(hover.directionalBias);
+    expect(focus.targetZone).not.toBe(hover.targetZone);
+    expect(hover.activeZoneCount).toBe(hover.activeStreamCount);
     expect(new Set([idle.activity, hover.activity, focus.activity]).size).toBe(3);
   });
 
@@ -240,6 +275,9 @@ describe('deriveCoreField', () => {
     expect(state.activity).toBeLessThanOrEqual(1);
     expect(state.activeStreamCount).toBeGreaterThanOrEqual(1);
     expect(state.activeStreamCount).toBeLessThanOrEqual(field.streamCount);
+    expect(Number.isInteger(state.targetZone)).toBe(true);
+    expect(state.targetZone).toBeGreaterThanOrEqual(0);
+    expect(state.targetZone).toBeLessThan(field.streamCount);
   });
   it('selects the material backend from the explicit renderer backend seam', () => {
     const field = deriveCoreField({ particleBudget: 8, fieldResolution: 8 }, 17);
@@ -265,6 +303,9 @@ describe('deriveCoreField', () => {
         phase: new Float32Array([0, 0.25, 0.5, 0.75]),
         region: new Float32Array([0, 1, 0, 1]),
         weight: new Float32Array([1, 0, 1, 1]),
+        compression: new Float32Array(4),
+        zone: new Float32Array(4),
+        depthBias: new Float32Array(4),
       },
       bounds: [1, 1, 1],
       streamCount: 2,
@@ -290,9 +331,12 @@ describe('deriveCoreField', () => {
         phase: new Float32Array([0, 0.25, 0.5, 0.75]),
         region: new Float32Array([0, 1, 0, 1]),
         weight: new Float32Array([1, 1, 1, 1]),
+        compression: new Float32Array(4),
+        zone: new Float32Array(4),
+        depthBias: new Float32Array(4),
       },
       bounds: [1, 1, 1],
-      streamCount: 2,
+      streamCount: 3,
     };
     const baseAttributes = Object.fromEntries(
       Object.entries(field.attributes).map(([name, values]) => [name, Array.from(values)]),

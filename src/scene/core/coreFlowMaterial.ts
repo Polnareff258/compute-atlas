@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { PointsNodeMaterial } from 'three/webgpu';
 import {
   attribute,
+  abs,
   float,
+  max,
   positionLocal,
   time,
   uniform,
@@ -44,6 +46,9 @@ type CoreFlowInputState = {
   intensity: number;
   activity: number;
   elapsedSeconds: number;
+  targetZone: number;
+  activeZoneCount: number;
+  motionScale: number;
 };
 
 
@@ -59,6 +64,9 @@ const EMPTY_INPUT_STATE: CoreFlowInputState = {
   intensity: 0,
   activity: 0,
   elapsedSeconds: 0,
+  targetZone: 0,
+  activeZoneCount: 0,
+  motionScale: 1,
 };
 
 function finite(value: number): number {
@@ -92,6 +100,10 @@ function normalizedIntensity(value: number): number {
 
 function normalizedElapsedSeconds(value: number): number {
   return Math.max(0, finite(value)) % ELAPSED_SECONDS_PERIOD;
+}
+
+function normalizedZone(value: number): number {
+  return Math.round(THREE.MathUtils.clamp(finite(value), 0, 8));
 }
 
 function activityForState(input: CoreVisualInput): number {
@@ -132,6 +144,10 @@ function applyInput(
   state.intensity = normalizedIntensity(input.intensity);
   state.activity = activityForState(input);
   state.elapsedSeconds = normalizedElapsedSeconds(elapsedSeconds);
+  state.targetZone = normalizedZone(input.targetZone ?? 0);
+  state.activeZoneCount = normalizedZone(input.activeZoneCount ?? 0);
+  state.motionScale = input.reducedMotion ? 0 : 1;
+  if (input.reducedMotion) state.elapsedSeconds = 0;
 }
 
 function createInputUniforms() {
@@ -144,6 +160,9 @@ function createInputUniforms() {
     intensity: uniform(0, 'float').setName('coreFlowIntensity'),
     activity: uniform(0, 'float').setName('coreFlowActivity'),
     elapsedSeconds: uniform(0, 'float').setName('coreFlowElapsedSeconds'),
+    targetZone: uniform(0, 'float').setName('coreFlowTargetZone'),
+    activeZoneCount: uniform(0, 'float').setName('coreFlowActiveZoneCount'),
+    motionScale: uniform(1, 'float').setName('coreFlowMotionScale'),
   };
 }
 
@@ -158,13 +177,20 @@ function applyUniforms(uniforms: CoreFlowUniforms, state: CoreFlowInputState): v
   uniforms.intensity.value = state.intensity;
   uniforms.activity.value = state.activity;
   uniforms.elapsedSeconds.value = state.elapsedSeconds;
+  uniforms.targetZone.value = state.targetZone;
+  uniforms.activeZoneCount.value = state.activeZoneCount;
+  uniforms.motionScale.value = state.motionScale;
 }
 
 function createFlowPositionNode(uniforms: CoreFlowUniforms) {
   const drift = attribute('coreDrift', 'vec3');
   const phase = attribute('corePhase', 'float');
   const weight = attribute('coreWeight', 'float');
+  const compression = attribute('coreCompression', 'float');
+  const zone = attribute('coreZone', 'float');
+  const depthBias = attribute('coreDepthBias', 'float');
   const temporalWave = time
+    .mul(uniforms.motionScale)
     .add(uniforms.elapsedSeconds)
     .mul(float(0.72))
     .add(phase)
@@ -179,8 +205,21 @@ function createFlowPositionNode(uniforms: CoreFlowUniforms) {
   const focusBias = vec3(uniforms.focusX, uniforms.focusY, uniforms.focusZ)
     .mul(uniforms.activity)
     .mul(float(0.008));
+  const targetZoneRadius = max(uniforms.activeZoneCount.sub(float(1)), float(0));
+  const targetZoneInfluence = max(
+    targetZoneRadius.add(float(1)).sub(abs(zone.sub(uniforms.targetZone))),
+    float(0),
+  );
+  const compressionBias = vec3(uniforms.pointerX, uniforms.pointerY, uniforms.focusZ)
+    .mul(targetZoneInfluence.mul(compression).mul(uniforms.activity).mul(float(0.024)));
+  const depthOffset = vec3(float(0), float(0), depthBias.mul(float(0.018)));
 
-  return positionLocal.add(drift.mul(temporalWave.mul(amplitude))).add(pointerBias).add(focusBias);
+  return positionLocal
+    .add(drift.mul(temporalWave.mul(amplitude)))
+    .add(pointerBias)
+    .add(focusBias)
+    .add(compressionBias)
+    .add(depthOffset);
 }
 
 function createNodeHandle(config: CoreFlowMaterialConfig): CoreFlowMaterialHandle {

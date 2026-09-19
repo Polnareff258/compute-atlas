@@ -2,11 +2,11 @@ import { getQualityProfile } from '../../config/quality';
 import type { QualityProfile } from '../../renderer/types';
 import type { CoreParameters, CoreVisualInput } from './coreTypes';
 
-/** Preserves the established telemetry meaning: configured core particle budget. */
+/** Compatibility helper: the configured core budget remains available to callers. */
 export function deriveCoreTelemetryParticleCount(
-  parameters: Pick<CoreParameters, 'particleBudget'>,
+  parameters: Pick<CoreParameters, 'configuredFieldBudget' | 'particleBudget'>,
 ): number {
-  return parameters.particleBudget;
+  return parameters.configuredFieldBudget ?? parameters.particleBudget;
 }
 
 /** Sanitizes controller scalars at the serializable visual boundary. */
@@ -34,11 +34,17 @@ export function getCoreParameters(profile: QualityProfile): CoreParameters {
 
   return {
     profile,
+    configuredFieldBudget: quality.coreParticleBudget,
+    fieldSampleBudget: Math.min(
+      quality.coreParticleBudget,
+      quality.coreFieldResolution * quality.coreFieldResolution * 10,
+    ),
+    activeSignalBudget: Math.max(1, Math.round(quality.graphDensity * 4)),
     particleBudget: quality.coreParticleBudget,
-    topologyNodeBudget: Math.max(1, Math.round(12 * quality.graphDensity)),
-    topologyEdgeBudget: Math.max(1, Math.round(10 * quality.graphDensity)),
+    topologyNodeBudget: Math.max(12, Math.round(20 * quality.graphDensity)),
+    topologyEdgeBudget: Math.max(11, Math.round(20 * quality.graphDensity)),
     fragmentBudget: Math.max(1, Math.round(quality.coreParticleBudget / 600)),
-    trajectoryBudget: Math.max(1, Math.round(12 * quality.graphDensity)),
+    trajectoryBudget: Math.max(8, Math.round(12 * quality.graphDensity)),
     fieldResolution: quality.coreFieldResolution,
     allowBloom: quality.allowBloom,
   };

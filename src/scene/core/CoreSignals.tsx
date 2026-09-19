@@ -47,9 +47,13 @@ function boundedElapsed(elapsedTime: number): number {
 
 export function createCoreSignalResources(
   trajectories: readonly CoreTrajectory[],
+  activeSignalBudget = trajectories.length,
 ): CoreSignalResources {
+  const signalCapacity = Number.isFinite(activeSignalBudget)
+    ? Math.max(0, Math.min(trajectories.length, Math.floor(activeSignalBudget)))
+    : 0;
   const positionAttribute = new THREE.Float32BufferAttribute(
-    new Float32Array(Math.max(trajectories.length, 1) * 3),
+    new Float32Array(Math.max(signalCapacity, 1) * 3),
     3,
   );
   const geometry = new THREE.BufferGeometry();
@@ -116,12 +120,17 @@ export function CoreSignals({
   trajectories,
   visualInput,
   reducedMotion,
+  activeSignalBudget,
 }: CoreTrajectoryViewProps): JSX.Element {
   const activation = useMemo(
     () => deriveCoreTrajectoryActivation(trajectories, visualInput),
     [trajectories, visualInput],
   );
-  const resources = useMemo(() => createCoreSignalResources(trajectories), [trajectories]);
+  const signalBudget = activeSignalBudget ?? trajectories.length;
+  const resources = useMemo(
+    () => createCoreSignalResources(trajectories, signalBudget),
+    [trajectories, signalBudget],
+  );
   const lease = useMemo(
     () => createResourceLease(() => disposeCoreSignalResources(resources)),
     [resources],

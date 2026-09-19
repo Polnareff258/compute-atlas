@@ -24,6 +24,9 @@ export type RendererTelemetrySnapshot = {
   readonly geometries: number | null;
   readonly textures: number | null;
   readonly particleCount: number;
+  readonly configuredFieldBudget: number;
+  readonly renderedFieldSamples: number;
+  readonly activeSignalSamples: number;
   readonly backend: RendererBackend;
   readonly quality: QualityProfile;
   readonly sampledAt: number;
@@ -43,6 +46,9 @@ export type RendererTelemetryInput = {
   readonly backend: RendererBackend;
   readonly quality: QualityProfile;
   readonly particleCount: number;
+  readonly configuredFieldBudget: number;
+  readonly renderedFieldSamples: number;
+  readonly activeSignalSamples: number;
   readonly deltaSeconds: number;
   readonly sampledAt: number;
 };
@@ -59,7 +65,10 @@ export function sampleRendererTelemetry(
     triangles: finiteOrNull(input.renderer.info?.render?.triangles),
     geometries: finiteOrNull(input.renderer.info?.memory?.geometries),
     textures: finiteOrNull(input.renderer.info?.memory?.textures),
-    particleCount: input.particleCount,
+    particleCount: input.renderedFieldSamples,
+    configuredFieldBudget: input.configuredFieldBudget,
+    renderedFieldSamples: input.renderedFieldSamples,
+    activeSignalSamples: input.activeSignalSamples,
     backend: input.backend,
     quality: input.quality,
     sampledAt: input.sampledAt,

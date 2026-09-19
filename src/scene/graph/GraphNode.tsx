@@ -1,9 +1,11 @@
 'use client';
 
 import { Html } from '@react-three/drei';
+import { useMemo } from 'react';
 
 import type { GraphInteractionState } from '../../graph/interaction';
 import type { GraphNode as GraphNodeData, GraphPosition } from '../../graph/types';
+import { deriveDomainVisualDescriptor, type DomainVisualNodeId } from './domainVisuals';
 
 export type GraphNodeViewProps = {
   readonly node: GraphNodeData;
@@ -16,64 +18,54 @@ function visualTone(
   isFocused: boolean,
   isDimmed: boolean,
 ): { readonly color: string; readonly opacity: number } {
-  if (isDimmed) {
-    return { color: '#4b5961', opacity: 0.28 };
-  }
-
-  if (isFocused) {
-    return { color: '#d6e4e1', opacity: 0.94 };
-  }
-
-  if (isHovered) {
-    return { color: '#a8bbc1', opacity: 0.84 };
-  }
-
-  return { color: '#748893', opacity: 0.56 };
+  if (isDimmed) return { color: '#4b5961', opacity: 0.2 };
+  if (isFocused) return { color: '#d6e4e1', opacity: 0.92 };
+  if (isHovered) return { color: '#a8bbc1', opacity: 0.78 };
+  return { color: '#748893', opacity: 0.48 };
 }
 
-export function GraphNodeView({
-  node,
-  position,
-  interaction,
-}: GraphNodeViewProps) {
+/** Distinct deterministic processing silhouette; semantic labels stay secondary. */
+export function GraphNodeView({ node, position, interaction }: GraphNodeViewProps) {
   const isHovered = interaction.hoveredNodeId === node.id;
   const isFocused = interaction.focusedNodeId === node.id;
-  const isDimmed =
-    interaction.focusedNodeId !== null && !isFocused;
+  const isDimmed = interaction.focusedNodeId !== null && !isFocused;
   const tone = visualTone(isHovered, isFocused, isDimmed);
-  const radius = 0.105 + node.importance * 0.032;
-  const ringScale = isFocused ? 1.36 : isHovered ? 1.2 : 1;
+  const descriptor = useMemo(
+    () => node.kind === 'domain'
+      ? deriveDomainVisualDescriptor(node.id as DomainVisualNodeId, 1)
+      : null,
+    [node.id, node.kind],
+  );
+
+  if (!descriptor) return null;
 
   return (
     <group
       name={'graph-node-' + node.id}
       position={[position[0], position[1], position[2]]}
-      scale={isFocused ? 1.12 : isHovered ? 1.06 : 1}
+      scale={isFocused ? 1.1 : isHovered ? 1.045 : 1}
     >
-      <mesh scale={ringScale}>
-        <torusGeometry args={[radius * 1.45, 0.008, 6, 32]} />
-        <meshBasicMaterial
-          color={tone.color}
-          depthWrite={false}
-          opacity={tone.opacity * 0.76}
-          transparent
-        />
-      </mesh>
-      <mesh scale={isFocused ? 1.16 : 1}>
-        <icosahedronGeometry args={[radius, 1]} />
-        <meshBasicMaterial
-          color={tone.color}
-          depthWrite={false}
-          opacity={tone.opacity}
-          transparent
-          wireframe
-        />
-      </mesh>
+      {descriptor.members.map((member, index) => (
+        <mesh
+          key={descriptor.kind + '-' + index}
+          position={[...member.position]}
+          rotation={[...member.rotation]}
+          scale={[...member.scale]}
+        >
+          <boxGeometry args={[1, 1, 1]} />
+          <meshBasicMaterial
+            color={tone.color}
+            depthWrite={false}
+            opacity={tone.opacity * (index === 0 ? 0.9 : 0.58)}
+            transparent
+          />
+        </mesh>
+      ))}
       <Html
         center={false}
         className='graph-node-label-wrapper'
         distanceFactor={8}
-        position={[radius * 1.9, radius * 0.9, 0]}
+        position={[0.62, 0.32, 0.04]}
         style={{ pointerEvents: 'none' }}
       >
         <div
@@ -84,9 +76,7 @@ export function GraphNodeView({
         >
           <span className="graph-node-label__name">{node.label}</span>
           {isHovered || isFocused ? (
-            <span className="graph-node-label__description">
-              {node.description}
-            </span>
+            <span className="graph-node-label__description">{node.description}</span>
           ) : null}
         </div>
       </Html>

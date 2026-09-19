@@ -135,6 +135,15 @@ describe('deriveCoreTrajectories', () => {
     expect(activationRanks).toEqual([...activationRanks].sort((first, second) => first - second));
     expectFiniteOpenPaths(trajectories);
   });
+
+  it('classifies open routes into primary, secondary, ambient and signal lanes', () => {
+    const trajectories = deriveCoreTrajectories({ trajectoryBudget: 16 }, 17);
+    const routes = new Set(trajectories.map((trajectory) => trajectory.route));
+
+    expect(routes).toEqual(new Set(['primary', 'secondary', 'ambient', 'signal']));
+    expect(trajectories.filter((trajectory) => trajectory.route === 'primary').length).toBeGreaterThanOrEqual(2);
+    expectFiniteOpenPaths(trajectories);
+  });
   it('maps visual states to deterministic route activation without mutating descriptor points', () => {
     const trajectories = deriveCoreTrajectories({ trajectoryBudget: 12 }, 17);
     const pointsBefore = trajectories.map((trajectory) => trajectory.points.map((point) => [...point]));
@@ -160,12 +169,12 @@ describe('deriveCoreTrajectories', () => {
 
     expect(idle.activeTrajectoryIds.every((id) => {
       const route = routeFor(id);
-      return route === 'dormant' || route === 'local';
+      return route === 'primary' || route === 'secondary' || route === 'ambient';
     })).toBe(true);
     expect(hover.activeTrajectoryIds.length).toBeGreaterThan(0);
-    expect(hover.activeTrajectoryIds.every((id) => routeFor(id) === 'local')).toBe(true);
+    expect(hover.activeTrajectoryIds.every((id) => routeFor(id) === 'primary')).toBe(true);
     expect(focus.activeTrajectoryIds.length).toBeGreaterThan(0);
-    expect(focus.activeTrajectoryIds.every((id) => routeFor(id) === 'directional')).toBe(true);
+    expect(focus.activeTrajectoryIds.every((id) => routeFor(id) === 'secondary')).toBe(true);
     expect(agent.signalTrajectoryIds.length).toBeGreaterThanOrEqual(2);
     expect(agent.signalTrajectoryIds.every((id) => routeFor(id) === 'signal')).toBe(true);
     expect(new Set(agent.signalTrajectoryIds).size).toBe(agent.signalTrajectoryIds.length);
@@ -176,7 +185,7 @@ describe('deriveCoreTrajectories', () => {
 
   it('selects a directional trajectory when focus is exactly its normalized endpoint direction', () => {
     const trajectories = deriveCoreTrajectories({ trajectoryBudget: 12 }, 17);
-    const target = trajectories.find((trajectory) => trajectory.id === 1);
+    const target = trajectories.find((trajectory) => trajectory.id === 2);
     const start = target?.points[0];
     const end = target?.points.at(-1);
     const focusDelta = [
@@ -187,7 +196,7 @@ describe('deriveCoreTrajectories', () => {
     const focusLength = Math.hypot(...focusDelta);
     const focusDirection = focusDelta.map((value) => value / focusLength) as unknown as readonly [number, number, number];
 
-    expect(target?.route).toBe('directional');
+    expect(target?.route).toBe('secondary');
     expect(focusDelta.some((value) => Math.abs(value) > 1)).toBe(true);
     expect(focusDirection.every((value) => Math.abs(value) <= 1)).toBe(true);
 
@@ -248,7 +257,7 @@ describe('deriveCoreTrajectories', () => {
 
   it('moves bounded signal points along existing signal trajectories without creating new buffers', () => {
     const trajectories = deriveCoreTrajectories({ trajectoryBudget: 12 }, 17);
-    const resources = createCoreSignalResources(trajectories);
+    const resources = createCoreSignalResources(trajectories, 2);
     const agent = deriveCoreTrajectoryActivation(trajectories, {
       ...baseVisualInput,
       visualState: 'agent_activity',
@@ -264,7 +273,7 @@ describe('deriveCoreTrajectories', () => {
     updateCoreSignalResources(resources, agent, 4.5, true);
 
     expect(resources.positionAttribute.array).toBe(positions);
-    expect(resources.geometry.drawRange.count).toBe(agent.signalTrajectoryIds.length);
+    expect(resources.geometry.drawRange.count).toBe(2);
     expect(inMotion).not.toEqual(atStart);
     expect(Array.from(positions)).toEqual(reducedFirst);
     disposeCoreSignalResources(resources);

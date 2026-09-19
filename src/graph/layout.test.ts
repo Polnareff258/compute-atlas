@@ -41,5 +41,13 @@ describe('deriveGraphLayout', () => {
     expect(low[0]).toEqual(layout[edge.source]);
     expect(low.at(-1)).toEqual(layout[edge.target]);
     expect(high.length).toBeGreaterThan(low.length);
+    const midpoint = low[Math.floor(low.length / 2)];
+    expect(midpoint).toBeDefined();
+    expect(midpoint?.[1]).not.toBeCloseTo(
+      (layout[edge.source][1] + layout[edge.target][1]) / 2,
+      2,
+    );
+    expect(Math.max(...Object.values(layout).map((position) => position[2])) -
+      Math.min(...Object.values(layout).map((position) => position[2]))).toBeGreaterThan(1.5);
   });
 });

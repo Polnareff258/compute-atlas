@@ -105,6 +105,9 @@ export function createCoreFlowFieldResources(
   geometry.setAttribute('corePhase', new THREE.Float32BufferAttribute(attributes.phase, 1));
   geometry.setAttribute('coreRegion', new THREE.Float32BufferAttribute(attributes.region, 1));
   geometry.setAttribute('coreWeight', new THREE.Float32BufferAttribute(attributes.weight, 1));
+  geometry.setAttribute('coreCompression', new THREE.Float32BufferAttribute(attributes.compression, 1));
+  geometry.setAttribute('coreZone', new THREE.Float32BufferAttribute(attributes.zone, 1));
+  geometry.setAttribute('coreDepthBias', new THREE.Float32BufferAttribute(attributes.depthBias, 1));
   geometry.setIndex(new THREE.BufferAttribute(fieldIndex.indices, 1));
   geometry.setDrawRange(0, deriveCoreFlowFieldDrawCount(fieldIndex, 1));
 
@@ -162,6 +165,8 @@ export function CoreFlowField({
       intensity: fieldState.activity,
       visualState: visualInput.visualState,
       reducedMotion: visualInput.reducedMotion,
+      targetZone: fieldState.targetZone,
+      activeZoneCount: fieldState.activeZoneCount,
     };
     resources.geometry.setDrawRange(
       0,

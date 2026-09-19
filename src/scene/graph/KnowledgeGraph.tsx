@@ -22,6 +22,7 @@ export type KnowledgeGraphProps = {
   readonly graphDensity: number;
   readonly interaction: GraphInteractionState;
   readonly onAction: (action: GraphInteractionAction) => void;
+  readonly reducedMotion: boolean;
 };
 
 type ProjectedNode = {
@@ -48,7 +49,7 @@ function projectDomainNodes(
     const position = layout[node.id];
     const center = new THREE.Vector3(position[0], position[1], position[2]);
     const edge = new THREE.Vector3(
-      position[0] + 0.24,
+      position[0] + 0.62,
       position[1],
       position[2],
     );
@@ -89,7 +90,7 @@ function GraphPointerBoundary({
   layout,
   interaction,
   onAction,
-}: KnowledgeGraphProps) {
+}: Pick<KnowledgeGraphProps, 'manifest' | 'layout' | 'interaction' | 'onAction'>) {
   const { camera, gl } = useThree();
   const hoveredNodeRef = useRef<GraphNodeId | null>(interaction.hoveredNodeId);
   const domainNodes = useMemo(
@@ -165,11 +166,11 @@ export function KnowledgeGraph({
   graphDensity,
   interaction,
   onAction,
+  reducedMotion,
 }: KnowledgeGraphProps) {
   return (
     <group name="knowledge-graph">
       <GraphPointerBoundary
-        graphDensity={graphDensity}
         interaction={interaction}
         layout={layout}
         manifest={manifest}
@@ -180,6 +181,7 @@ export function KnowledgeGraph({
         graphDensity={graphDensity}
         interaction={interaction}
         layout={layout}
+        reducedMotion={reducedMotion}
       />
       {manifest.nodes
         .filter((node) => node.kind === 'domain')

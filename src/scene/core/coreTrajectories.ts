@@ -4,11 +4,14 @@ export type CoreTrajectory = {
   readonly id: number;
   readonly points: readonly (readonly [number, number, number])[];
   readonly activationRank: number;
-  readonly route: 'dormant' | 'local' | 'directional' | 'signal';
+  readonly route: 'primary' | 'secondary' | 'ambient' | 'signal';
 };
 
 export type CoreTrajectoryActivation = {
   readonly activeTrajectoryIds: readonly number[];
+  readonly primaryTrajectoryIds: readonly number[];
+  readonly secondaryTrajectoryIds: readonly number[];
+  readonly ambientTrajectoryIds: readonly number[];
   readonly signalTrajectoryIds: readonly number[];
   readonly activeSegmentFraction: number;
   readonly signalSpeed: number;
@@ -17,7 +20,10 @@ export type CoreTrajectoryActivation = {
 type Point = readonly [number, number, number];
 
 const SAMPLE_COUNTS = [4, 6, 5, 7] as const;
-const ROUTES = ['local', 'directional', 'signal', 'dormant'] as const;
+const ROUTES = [
+  'primary', 'primary', 'secondary', 'ambient', 'signal', 'primary',
+  'secondary', 'ambient', 'signal', 'primary', 'secondary', 'signal',
+] as const;
 const MAX_TRAJECTORIES = 24;
 
 function hash(seed: number, index: number): number {
@@ -169,11 +175,15 @@ function selectAlignedTrajectory(
   return selected;
 }
 
-function selectBaselineTrajectories(trajectories: readonly CoreTrajectory[]): readonly CoreTrajectory[] {
+function selectRouteTrajectories(
+  trajectories: readonly CoreTrajectory[],
+  route: CoreTrajectory['route'],
+  count: number,
+): readonly CoreTrajectory[] {
   return trajectories
-    .filter((trajectory) => trajectory.route === 'dormant' || trajectory.route === 'local')
+    .filter((trajectory) => trajectory.route === route)
     .sort((first, second) => first.activationRank - second.activationRank)
-    .slice(0, 2);
+    .slice(0, count);
 }
 
 function idsFor(trajectories: readonly CoreTrajectory[]): readonly number[] {
@@ -192,7 +202,9 @@ export function deriveCoreTrajectoryActivation(
   const intensity = clampUnit(input.intensity);
   const pointerDirection = normalizedInputDirection(input.pointerX, input.pointerY, 0.18, [0.76, 0.1, -0.24]);
   const focusDirection = normalizedInputDirection(input.focusX, input.focusY, input.focusZ, [0.84, 0.12, 0.3]);
-  let active: readonly CoreTrajectory[] = [];
+  let primary: readonly CoreTrajectory[] = [];
+  let secondary: readonly CoreTrajectory[] = [];
+  let ambient: readonly CoreTrajectory[] = [];
   let signals: readonly CoreTrajectory[] = [];
   let activeSegmentFraction = 0;
   let signalSpeed = 0;
@@ -201,39 +213,46 @@ export function deriveCoreTrajectoryActivation(
     case 'dormant':
       break;
     case 'awakening':
-      active = selectBaselineTrajectories(trajectories);
+      primary = selectRouteTrajectories(trajectories, 'primary', 2);
+      secondary = selectRouteTrajectories(trajectories, 'secondary', 1);
       activeSegmentFraction = 0.5 + intensity * 0.16;
       break;
     case 'hover_response': {
-      const local = selectAlignedTrajectory(trajectories, 'local', pointerDirection);
-      active = local ? [local] : selectBaselineTrajectories(trajectories).slice(0, 1);
+      const local = selectAlignedTrajectory(trajectories, 'primary', pointerDirection);
+      primary = local ? [local] : selectRouteTrajectories(trajectories, 'primary', 1);
       activeSegmentFraction = 0.68 + intensity * 0.16;
       break;
     }
     case 'focusing': {
-      const directional = selectAlignedTrajectory(trajectories, 'directional', focusDirection);
-      active = directional ? [directional] : selectBaselineTrajectories(trajectories).slice(0, 1);
+      const directional = selectAlignedTrajectory(trajectories, 'secondary', focusDirection);
+      secondary = directional ? [directional] : selectRouteTrajectories(trajectories, 'secondary', 1);
       activeSegmentFraction = 0.8 + intensity * 0.16;
       break;
     }
     case 'agent_activity':
-      signals = trajectories
-        .filter((trajectory) => trajectory.route === 'signal')
-        .sort((first, second) => first.activationRank - second.activationRank)
-        .slice(0, 3);
-      active = signals.length > 0 ? signals : selectBaselineTrajectories(trajectories).slice(0, 1);
+      primary = selectRouteTrajectories(trajectories, 'primary', 1);
+      secondary = selectRouteTrajectories(trajectories, 'secondary', 1);
+      ambient = selectRouteTrajectories(trajectories, 'ambient', 1);
+      signals = selectRouteTrajectories(trajectories, 'signal', 3);
       activeSegmentFraction = 0.66 + intensity * 0.22;
       signalSpeed = input.reducedMotion ? 0 : 0.42 + intensity * 0.44;
       break;
     case 'idle':
     default:
-      active = selectBaselineTrajectories(trajectories);
+      primary = selectRouteTrajectories(trajectories, 'primary', 2);
+      secondary = selectRouteTrajectories(trajectories, 'secondary', 1);
+      ambient = selectRouteTrajectories(trajectories, 'ambient', 1);
       activeSegmentFraction = 0.32 + intensity * 0.12;
       break;
   }
 
+  const active = [...primary, ...secondary, ...ambient, ...signals];
+
   return {
     activeTrajectoryIds: idsFor(active),
+    primaryTrajectoryIds: idsFor(primary),
+    secondaryTrajectoryIds: idsFor(secondary),
+    ambientTrajectoryIds: idsFor(ambient),
     signalTrajectoryIds: idsFor(signals),
     activeSegmentFraction: clampUnit(activeSegmentFraction),
     signalSpeed: Number.isFinite(signalSpeed) && signalSpeed > 0 ? signalSpeed : 0,
@@ -258,7 +277,7 @@ export function deriveCoreTrajectories(
     const [start, end] = deriveEndpoints(id, normalizedSeed);
     const control = deriveControlPoint(start, end, id, normalizedSeed);
     const sampleCount = SAMPLE_COUNTS[id % SAMPLE_COUNTS.length] ?? SAMPLE_COUNTS[0];
-    const route = ROUTES[id % ROUTES.length] ?? 'local';
+    const route = ROUTES[id % ROUTES.length] ?? 'primary';
 
     return {
       id,

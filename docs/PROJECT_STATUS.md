@@ -1,9 +1,9 @@
 # POLNAREFF SYSTEM Project Status
 
-**As of:** 2026-09-18
-**Repository:** initialized from an empty directory
+**As of:** 2026-09-19
+**Repository:** `Polnareff258/compute-atlas`
 **Current phase:** Phase 1
-**Current stage:** Stage 3.5 — Compute Core Visual Identity V2 complete; Stage 6 Command Palette pending
+**Current stage:** Stage 3.5.1 implementation is ready for review; local screenshot evidence and browser fallback checks remain incomplete. Stage 6 is not started.
 
 ## Confirmed architecture
 
@@ -28,6 +28,7 @@
 | Stage 5 — Command Bus | Complete | Typed synchronous dispatch, graph/quality adapters, structured results and unavailable future commands are verified. |
 | Stage 5.1 — corrective pass | Complete | Hover/focus ownership separated; runtime quality now reaches canvas/R3F DPR; AI handoff added. |
 | Stage 3.5 — Compute Core Visual Identity V2 | Complete | Non-spherical V2 composition, structure-changing states, WebGPU/WebGL2 evidence and fallback correction are complete. |
+| Stage 3.5.1 — Visual Composition Reconstruction | Implementation ready for review; evidence incomplete | Deterministic machine topology, local field, five domain silhouettes and truthful draw-count telemetry are implemented. WebGPU overview/focus/Escape were inspected live; required local screenshots and browser WebGL2/reduced-motion runs were not captured. |
 | Stage 6 — Command Palette | Not started | No palette UI has been added. |
 | Stage 7 — backend/Ollama health | Not started | Browser gateway intentionally remains NOT INITIALIZED until this stage. |
 | Stage 8 — Agent tool calling | Not started | No model or tool call is made from the browser. |
@@ -67,7 +68,7 @@ An agent must read the spec, project status and phase plan before editing. Work 
 
 ## Immediate next action
 
-Begin Stage 6 from the future plan map: build the deterministic Command Palette UI over the existing Command Bus. Keep natural-language parsing and Agent Gateway work out of that slice.
+Visual Review / Sol Review of Stage 3.5.1, with the evidence gaps below resolved or explicitly accepted. Do not begin Stage 6 unless separately requested.
 
 ## Stage 4 implementation
 
@@ -186,3 +187,26 @@ Stage 3.5 replaces the former spherical Core presentation with a structured, GPU
 ### Stage 3.5 handoff
 
 Stage 3.5 is complete. The next isolated slice remains Stage 6 — Command Palette; do not start it as part of this record.
+
+## Stage 3.5.1 — Visual Composition Reconstruction
+
+This corrective slice rebuilds the Core/Graph composition while keeping Stage 0–5.1 ownership boundaries intact. It does not start Stage 6 or introduce palette, parsing, Ollama, Agent Gateway, Trace, Developer Overlay or performance-measurement work.
+
+- `src/scene/core/coreTopology.ts` now exposes deterministic primary, secondary, ambient and signal route classes, structural regions, depth bands and descriptor scales. `CoreTopologyView.tsx` renders primary links as instanced structural members and keeps the quieter route families in separate buffers.
+- `src/scene/core/coreField.ts` builds bounded, anisotropic, zoned field samples with deterministic voids and explicit visible-draw counts. `coreFlowMaterial.ts` consumes the same state through WebGPU NodeMaterial and a simpler WebGL2 material path; reduced-motion behavior freezes travel.
+- `src/scene/core/ComputeCore.tsx` composes the larger layered nucleus, topology, local field, trajectories and budgeted signals without importing Graph, Command or Agent ownership.
+- `src/scene/graph/domainVisuals.ts`, `GraphNode.tsx`, `GraphEdges.tsx` and `src/graph/layout.ts` replace the uniform circular widgets/star edges with five deterministic silhouettes and bent, state-related routes. `SceneHost.tsx` mounts sparse distant atmosphere traces and registers `SphereGeometry` for the related pulse view.
+- Renderer telemetry now separates configured field budget, visible rendered field samples and active signal samples; compatibility `particleCount` reports visible field samples rather than the configured budget.
+- `src/scene/atmosphereDescriptor.ts` defines deterministic background traces. `globals.css` increases masthead readability and reduces renderer-status weight.
+
+### Stage 3.5.1 verification and review status
+
+- `npm.cmd test` — pass: 24 files, 149 tests.
+- `npm.cmd run typecheck` — pass.
+- ESLint over all changed source/test areas — pass. The full repository lint script was not used for this final check.
+- `npm.cmd run build` — pass with Next.js 16.3.5; all routes generated.
+- Codex in-app browser, `?boot=skip&telemetry=1`: `WEBGPU READY`, `Three.js WebGPURenderer`, ULTRA, 1280×720 viewport, DPR 2 and 2560×1440 canvas buffer. Adapter name was unavailable. No sustained performance or hardware metric is claimed.
+- Live WebGPU review showed the overview, GRAPHICS focus/description, and Escape clearing focus; a fresh post-fix console sample contained no errors. Known non-fatal warnings: Three.Clock deprecation and WebGPU PCFSoftShadowMap remapping.
+- Browser WebGL2 fallback and active `prefers-reduced-motion` were not exercised in this in-app session. Their material/state contracts are covered by the passing test suite, but that is not a browser-run substitute.
+- Two live visual iterations were inspected, but the browser URL policy blocked converting the captured screenshot bytes into local downloadable files. No `artifacts/stage351-*.png` files were created; do not treat the older Stage 3.5 screenshots as Stage 3.5.1 evidence.
+- Therefore this is implementation-ready for Visual Review / Sol Review, not an evidence-complete stage closeout. Stage 6 remains not started.

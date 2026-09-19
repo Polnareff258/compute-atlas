@@ -110,6 +110,35 @@ describe('createCoreFlowMaterial', () => {
     handle.dispose();
   });
 
+  it('updates zone targeting and active-zone uniforms without rebuilding the node graph', () => {
+    const handle = createCoreFlowMaterial({
+      color: '#718c86',
+      pointSize: 1.75,
+      webgpuPreferred: true,
+    });
+
+    handle.updateInput({ ...idleInput, targetZone: 3, activeZoneCount: 2 }, 1.25);
+    const uniforms = collectNamedUniformValues(handle.material);
+
+    expect(uniforms.get('coreFlowTargetZone')).toBe(3);
+    expect(uniforms.get('coreFlowActiveZoneCount')).toBe(2);
+    handle.dispose();
+  });
+
+  it('freezes temporal flow in reduced-motion mode while retaining zone controls', () => {
+    const handle = createCoreFlowMaterial({
+      color: '#718c86',
+      pointSize: 1.75,
+      webgpuPreferred: true,
+    });
+
+    handle.updateInput({ ...idleInput, reducedMotion: true, targetZone: 4 }, 9);
+    expect(collectNamedUniformValues(handle.material).get('coreFlowMotionScale')).toBe(0);
+    handle.updateInput({ ...idleInput, reducedMotion: false, targetZone: 4 }, 9);
+    expect(collectNamedUniformValues(handle.material).get('coreFlowMotionScale')).toBe(1);
+    handle.dispose();
+  });
+
   it('normalizes extreme node inputs before they reach material uniforms', () => {
     const handle = createCoreFlowMaterial({
       color: '#718c86',

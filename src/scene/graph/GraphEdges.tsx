@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
+import { useRef } from 'react';
 import * as THREE from 'three';
 
 import { deriveGraphEdgePoints } from '../../graph/layout';
@@ -12,6 +14,7 @@ type GraphEdgesProps = {
   readonly layout: GraphLayout;
   readonly graphDensity: number;
   readonly interaction: GraphInteractionState;
+  readonly reducedMotion: boolean;
 };
 
 function isRelated(
@@ -53,17 +56,21 @@ function GraphEdgeLine({
   layout,
   graphDensity,
   interaction,
+  reducedMotion,
 }: {
   readonly edge: GraphEdge;
   readonly layout: GraphLayout;
   readonly graphDensity: number;
   readonly interaction: GraphInteractionState;
+  readonly reducedMotion: boolean;
 }) {
   const points = useMemo(
     () => deriveGraphEdgePoints(edge, layout, graphDensity),
     [edge, graphDensity, layout],
   );
   const appearance = edgeAppearance(edge, interaction);
+  const related = isRelated(edge, interaction);
+  const pulseRef = useRef<THREE.Mesh>(null);
   const line = useMemo(() => {
     const values = new Float32Array(points.length * 3);
     points.forEach((point, index) => {
@@ -85,6 +92,23 @@ function GraphEdgeLine({
     return nextLine;
   }, [appearance.color, appearance.opacity, points]);
 
+  useFrame((state) => {
+    const pulse = pulseRef.current;
+    if (!pulse || !related || points.length < 2) return;
+    const progress = reducedMotion ? 0.46 : (state.clock.elapsedTime * 0.32 + edge.strength * 0.13) % 1;
+    const scaledProgress = progress * (points.length - 1);
+    const segment = Math.min(points.length - 2, Math.floor(scaledProgress));
+    const local = scaledProgress - segment;
+    const start = points[segment];
+    const end = points[segment + 1];
+    if (!start || !end) return;
+    pulse.position.set(
+      start[0] + (end[0] - start[0]) * local,
+      start[1] + (end[1] - start[1]) * local,
+      start[2] + (end[2] - start[2]) * local,
+    );
+  });
+
   useEffect(() => {
     return () => {
       line.geometry.dispose();
@@ -92,7 +116,15 @@ function GraphEdgeLine({
     };
   }, [line]);
 
-  return <primitive object={line} />;
+  return (
+    <group>
+      <primitive object={line} />
+      <mesh ref={pulseRef} visible={related}>
+        <sphereGeometry args={[0.034 + edge.strength * 0.012, 8, 6]} />
+        <meshBasicMaterial color={appearance.color} depthWrite={false} />
+      </mesh>
+    </group>
+  );
 }
 
 export function GraphEdges({
@@ -100,6 +132,7 @@ export function GraphEdges({
   layout,
   graphDensity,
   interaction,
+  reducedMotion,
 }: GraphEdgesProps) {
   return (
     <group name="graph-edges">
@@ -108,6 +141,7 @@ export function GraphEdges({
           edge={edge}
           graphDensity={graphDensity}
           interaction={interaction}
+          reducedMotion={reducedMotion}
           key={edge.id}
           layout={layout}
         />

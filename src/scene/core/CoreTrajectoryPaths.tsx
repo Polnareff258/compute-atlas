@@ -14,6 +14,7 @@ export type CoreTrajectoryViewProps = {
   readonly trajectories: readonly CoreTrajectory[];
   readonly visualInput: CoreVisualInput;
   readonly reducedMotion: boolean;
+  readonly activeSignalBudget?: number;
 };
 
 export type CoreTrajectoryResources = {
