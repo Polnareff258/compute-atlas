@@ -13,6 +13,7 @@ import {
   deriveDashPhase,
   deriveDashesPerRoute,
   deriveRouteAcross,
+  deriveRouteDashIntensity,
   deriveRouteDashAttributes,
   deriveRouteDashDrawRange,
   deriveRouteDashIndexRange,
@@ -40,6 +41,16 @@ export type RouteDashesProps = {
    */
   readonly flowRef: React.RefObject<RouteFlowState>;
   readonly backend: RendererAdapterBackend;
+  /**
+   * Whether this profile pays for GPU advection.
+   *
+   * Together with the backend this selects the field's implementation, which is
+   * the one thing `coreAdvection` has ever actually meant. It used to be read by
+   * nothing: every WebGPU tier took the node path and every WebGL2 tier took the
+   * instanced one, so the profile's "ULTRA only" claim was false in both
+   * directions.
+   */
+  readonly advection: boolean;
   readonly reducedMotion: boolean;
   /** Highest route class lane the profile exposes. */
   readonly lanes: number;
@@ -143,12 +154,17 @@ export function RouteDashes({
   curves,
   flowRef,
   backend,
+  advection,
   reducedMotion,
   lanes,
   detail,
   seed = DASH_SEED,
 }: RouteDashesProps) {
   const webgpu = backend === 'webgpu';
+  // GPU advection needs a backend that can run it and a profile that asked for
+  // it. Everything else — including WebGPU on SAFE — takes the instanced
+  // fallback, which is what makes the flag observable rather than decorative.
+  const advected = webgpu && advection;
   const boundedDetail = Math.min(1, Math.max(0, Number.isFinite(detail) ? detail : 0));
   const boundedLanes = Math.max(1, Math.round(Number.isFinite(lanes) ? lanes : 1));
 
@@ -156,10 +172,10 @@ export function RouteDashes({
     () =>
       deriveRouteDashAttributes(
         curves,
-        deriveDashesPerRoute(backend, boundedDetail, boundedLanes),
+        deriveDashesPerRoute(advected, boundedDetail, boundedLanes),
         seed,
       ),
-    [backend, boundedDetail, boundedLanes, curves, seed],
+    [advected, boundedDetail, boundedLanes, curves, seed],
   );
   const ribbonGeometry = useMemo(
     () => createRouteRibbonGeometry(curves, boundedDetail),
@@ -195,7 +211,7 @@ export function RouteDashes({
         frustumCulled={false}
         renderOrder={1}
       />
-      {webgpu ? (
+      {advected ? (
         <WebgpuDashField
           attributes={attributes}
           flowRef={flowRef}
@@ -373,6 +389,24 @@ function Webgl2DashField({
       const bent = bendCurve(curve, bendX, bendY, bendZ, scratch.curve);
       const head = compressRouteProgress(cycle, compression);
       const tail = compressRouteProgress(Math.max(cycle - length, 0), compression);
+
+      const routeWeight =
+        (flow.laneWeights[attributes.route[vertex]!] ?? 0) *
+        (flow.groupWeights[attributes.group[vertex]!] ?? 0);
+      const intensity = deriveRouteDashIntensity(
+        deriveDashEnvelope(head, wake),
+        attributes.brightness[vertex]!,
+        routeWeight,
+      );
+
+      // A route that has receded is removed rather than dimmed, and it is
+      // removed before any geometry is built for it, so the fallback and the
+      // vertex shader cull at one threshold rather than two.
+      if (intensity <= 0) {
+        mesh.setMatrixAt(dash, scratch.hidden);
+        continue;
+      }
+
       sampleRoutePoint(bent, tail, scratch.tail);
       sampleRoutePoint(bent, head, scratch.head);
 
@@ -403,10 +437,6 @@ function Webgl2DashField({
       scratch.matrix.setPosition(scratch.position);
       mesh.setMatrixAt(dash, scratch.matrix);
 
-      const envelope = deriveDashEnvelope(head, wake);
-      const laneWeight = flow.laneWeights[attributes.route[vertex]!] ?? 0;
-      const groupWeight = flow.groupWeights[attributes.group[vertex]!] ?? 0;
-      const intensity = envelope * attributes.brightness[vertex]! * laneWeight * groupWeight;
       scratch.color.setRGB(intensity * 0.92, intensity, intensity * 0.97);
       mesh.setColorAt(dash, scratch.color);
     }

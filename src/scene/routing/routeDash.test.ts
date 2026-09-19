@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   compressRouteProgress,
+  deriveDashesPerRoute,
+  deriveRouteDashIntensity,
+  deriveRouteVisibility,
+  ROUTE_VISIBILITY_FLOOR,
   deriveDashEnvelope,
   deriveDashPhase,
   deriveRouteAcross,
@@ -361,5 +365,116 @@ describe('deriveStaticFlowState', () => {
     const state = deriveStaticFlowState({ motionScale: 5 });
 
     expect(state.motionScale).toBe(0);
+  });
+});
+describe('deriveRouteVisibility', () => {
+  it('removes a route that is not participating rather than dimming it', () => {
+    // Dimming alone left every receded route hazing the frame at additive
+    // blending, which is what made "the others recede" read as "everything is
+    // faintly on".
+    expect(deriveRouteVisibility(0)).toBe(0);
+    expect(deriveRouteVisibility(ROUTE_VISIBILITY_FLOOR * 0.5)).toBe(0);
+    expect(deriveRouteVisibility(ROUTE_VISIBILITY_FLOOR)).toBe(0);
+  });
+
+  it('ramps from the floor to a full-weight route on a square root', () => {
+    const half = ROUTE_VISIBILITY_FLOOR + (1 - ROUTE_VISIBILITY_FLOOR) * 0.5;
+
+    expect(deriveRouteVisibility(1)).toBeCloseTo(1, 10);
+    // The root is the difference between a presence curve and a brightness
+    // curve: a linear ramp reads half a route as half a route, and every idle
+    // domain at 0.34 as a fifth, which is how the field disappeared.
+    expect(deriveRouteVisibility(half)).toBeCloseTo(Math.SQRT1_2, 10);
+    expect(deriveRouteVisibility(0.6)).toBeGreaterThan(deriveRouteVisibility(0.3));
+  });
+
+  it('keeps a participating idle route near full rather than near zero', () => {
+    // 0.34 is what every domain carries in the idle composition. It has to read
+    // as present, not as a ghost of itself.
+    expect(deriveRouteVisibility(0.34)).toBeGreaterThan(0.45);
+    // 0.14 is a non-target domain under hover, and 0.05 is one under focus.
+    expect(deriveRouteVisibility(0.14)).toBeLessThan(0.2);
+    expect(deriveRouteVisibility(0.05)).toBe(0);
+  });
+
+  it('stays bounded and finite for inputs that are neither', () => {
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, -4, 99]) {
+      const visibility = deriveRouteVisibility(value);
+      expect(Number.isFinite(visibility)).toBe(true);
+      expect(visibility).toBeGreaterThanOrEqual(0);
+      expect(visibility).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('deriveRouteDashIntensity', () => {
+  it('gives a receded route exactly nothing', () => {
+    // Exactly zero, not nearly zero: the vertex shader collapses the packet on
+    // this same threshold, and the fallback has to agree with it.
+    expect(deriveRouteDashIntensity(1, 1, 0)).toBe(0);
+    expect(deriveRouteDashIntensity(1, 1, ROUTE_VISIBILITY_FLOOR)).toBe(0);
+  });
+
+  it('still scales an active route by its envelope and brightness', () => {
+    const dim = deriveRouteDashIntensity(0.2, 0.5, 1);
+    const bright = deriveRouteDashIntensity(0.9, 1, 1);
+
+    expect(bright).toBeGreaterThan(dim);
+    expect(dim).toBeGreaterThan(0);
+  });
+
+  it('carries a wake boost without exceeding the field ceiling', () => {
+    const plain = deriveRouteDashIntensity(0.5, 0.8, 1);
+    const woken = deriveRouteDashIntensity(0.5, 0.8, 1, 1.6);
+
+    expect(woken).toBeGreaterThan(plain);
+    expect(woken).toBeLessThanOrEqual(1.6);
+  });
+});
+
+describe('deriveDashesPerRoute', () => {
+  it('packs a far denser field for the advected implementation', () => {
+    const advected = deriveDashesPerRoute(true, 1, 4);
+    const instanced = deriveDashesPerRoute(false, 1, 4);
+
+    // Many short packets is the whole point: the field has to stop resolving
+    // into segments of a pipe.
+    expect(advected).toBeGreaterThan(instanced * 4);
+    expect(instanced).toBeLessThanOrEqual(20);
+  });
+
+  it('keeps a sparse channel on the lowest profile', () => {
+    expect(deriveDashesPerRoute(false, 0.12, 2)).toBeLessThanOrEqual(6);
+    expect(deriveDashesPerRoute(true, 0.12, 2)).toBeLessThan(
+      deriveDashesPerRoute(true, 1, 4),
+    );
+  });
+
+  it('never returns a count below what a route needs to read as a flow', () => {
+    for (const detail of [0, 0.4, 1]) {
+      for (const lanes of [1, 4]) {
+        expect(deriveDashesPerRoute(true, detail, lanes)).toBeGreaterThanOrEqual(8);
+        expect(deriveDashesPerRoute(false, detail, lanes)).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+});
+
+describe('packet geometry', () => {
+  it('draws short thin packets rather than long fat segments', () => {
+    const attributes = deriveRouteDashAttributes([curve({ id: 1 })], 64, SEED);
+
+    let longest = 0;
+    let widest = 0;
+    for (let vertex = 0; vertex < attributes.vertexCount; vertex += 4) {
+      longest = Math.max(longest, attributes.length[vertex]!);
+      widest = Math.max(widest, attributes.width[vertex]!);
+    }
+
+    // A packet is a fraction of its route, and its ratio of length to width is
+    // what keeps it a streak rather than a bead.
+    expect(longest).toBeLessThan(0.08);
+    expect(widest).toBeLessThan(0.045);
+    expect(longest / widest).toBeGreaterThan(0.9);
   });
 });

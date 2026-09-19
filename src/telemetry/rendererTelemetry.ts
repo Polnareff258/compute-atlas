@@ -45,7 +45,14 @@ export type RendererTelemetryInput = {
   readonly renderer: RendererInfoSource;
   readonly backend: RendererBackend;
   readonly quality: QualityProfile;
-  readonly particleCount: number;
+  /**
+   * No `particleCount` input.
+   *
+   * The snapshot keeps the field for compatibility, but it is derived from
+   * `renderedFieldSamples` rather than supplied. Both were always set to the
+   * same value by the only caller, so the input was a second name for one
+   * number — and a second name is somewhere for the two to diverge.
+   */
   readonly configuredFieldBudget: number;
   readonly renderedFieldSamples: number;
   readonly activeSignalSamples: number;

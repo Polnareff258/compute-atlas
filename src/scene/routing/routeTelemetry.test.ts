@@ -122,27 +122,29 @@ describe('deriveRouteFieldTelemetryCounts', () => {
     expect(counts.configuredFieldBudget).toBe(72_000);
   });
 
-  it('reports a denser field for the backend that can afford it', () => {
+  it('reports a denser field for the implementation that can afford it', () => {
     const detail = 1;
     const lanes = 4;
-    const webgpu = deriveRouteFieldTelemetryCounts(72_000, [
+    const advected = deriveRouteFieldTelemetryCounts(72_000, [
       {
         curves: SCENE_CURVES,
-        dashesPerRoute: deriveDashesPerRoute('webgpu', detail, lanes),
+        dashesPerRoute: deriveDashesPerRoute(true, detail, lanes),
         lanes,
       },
     ]);
-    const webgl2 = deriveRouteFieldTelemetryCounts(72_000, [
+    const instanced = deriveRouteFieldTelemetryCounts(72_000, [
       {
         curves: SCENE_CURVES,
-        dashesPerRoute: deriveDashesPerRoute('webgl2', detail, lanes),
+        dashesPerRoute: deriveDashesPerRoute(false, detail, lanes),
         lanes,
         capacity: 180,
       },
     ]);
 
-    expect(webgpu.renderedFieldSamples).toBeGreaterThan(webgl2.renderedFieldSamples);
-    expect(webgl2.renderedFieldSamples).toBeLessThanOrEqual(180);
+    expect(advected.renderedFieldSamples).toBeGreaterThan(
+      instanced.renderedFieldSamples,
+    );
+    expect(instanced.renderedFieldSamples).toBeLessThanOrEqual(180);
   });
 
   it('collapses an empty scene to zeros instead of NaN', () => {

@@ -18,6 +18,8 @@ type GraphEdgesProps = {
    */
   readonly flowRef: React.RefObject<RouteFlowState>;
   readonly backend: RendererAdapterBackend;
+  /** Whether this profile pays for GPU advection; selects the field's implementation. */
+  readonly advection: boolean;
   readonly reducedMotion: boolean;
   /** Highest route class lane the quality profile exposes. */
   readonly lanes: number;
@@ -36,6 +38,7 @@ export function GraphEdges({
   curves,
   flowRef,
   backend,
+  advection,
   reducedMotion,
   lanes,
   detail,
@@ -43,6 +46,7 @@ export function GraphEdges({
   return (
     <group name="graph-routes">
       <RouteDashes
+        advection={advection}
         backend={backend}
         curves={curves}
         detail={detail}

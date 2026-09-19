@@ -29,6 +29,8 @@ export type KnowledgeGraphProps = {
   readonly fieldCurves: readonly RouteCurve[];
   readonly flowRef: React.RefObject<RouteFlowState>;
   readonly backend: RendererAdapterBackend;
+  /** Whether this profile pays for GPU advection; selects the field's implementation. */
+  readonly advection: boolean;
   readonly routeLanes: number;
   readonly fieldDetail: number;
   readonly interaction: GraphInteractionState;
@@ -172,6 +174,7 @@ export function KnowledgeGraph({
   fieldCurves,
   flowRef,
   backend,
+  advection,
   routeLanes,
   fieldDetail,
   interaction,
@@ -194,6 +197,7 @@ export function KnowledgeGraph({
         onAction={onAction}
       />
       <GraphEdges
+        advection={advection}
         backend={backend}
         curves={fieldCurves}
         detail={fieldDetail}

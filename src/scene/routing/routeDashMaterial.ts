@@ -10,6 +10,7 @@ import {
   pow,
   saturate,
   select,
+  sqrt,
   time,
   uniform,
   vec3,
@@ -17,7 +18,12 @@ import {
   vertexColor,
 } from 'three/tsl';
 
-import { ROUTE_CLASS_ORDER, type RouteFlowState } from './routeDash';
+import {
+  RIBBON_CHANNEL_GAIN,
+  ROUTE_CLASS_ORDER,
+  ROUTE_VISIBILITY_FLOOR,
+  type RouteFlowState,
+} from './routeDash';
 
 /**
  * Boundary: this factory owns synchronous NodeMaterial allocation, its node
@@ -212,6 +218,27 @@ function createRouteWeightTerm(
   return laneWeight.mul(groupWeight);
 }
 
+/**
+ * The cull, in the shader.
+ *
+ * `saturate` of a negative is zero, so this is `deriveRouteVisibility` written
+ * as one expression: the same floor, the same square root, the same zero. A
+ * packet on a route that has receded contributes exactly nothing, rather than
+ * lingering as a dim streak that still adds into the frame.
+ */
+function createRouteVisibilityTerm(
+  uniforms: RouteFlowUniforms,
+  routeIndex: FloatAttribute,
+  groupIndex: FloatAttribute,
+) {
+  const weight = createRouteWeightTerm(uniforms, routeIndex, groupIndex);
+  return sqrt(
+    saturate(
+      weight.sub(float(ROUTE_VISIBILITY_FLOOR)).div(float(1 - ROUTE_VISIBILITY_FLOOR)),
+    ),
+  );
+}
+
 function createDashColorNode(uniforms: RouteFlowUniforms, baseColor: THREE.Color) {
   const corner = attribute('dashCorner', 'vec2');
   const phase = floatAttribute('dashPhase');
@@ -235,7 +262,7 @@ function createDashColorNode(uniforms: RouteFlowUniforms, baseColor: THREE.Color
 
   const intensity = envelope
     .mul(brightness)
-    .mul(createRouteWeightTerm(uniforms, routeIndex, groupIndex))
+    .mul(createRouteVisibilityTerm(uniforms, routeIndex, groupIndex))
     .mul(wakeBoost);
 
   // Narrow across the ribbon so a dash reads as a stretched streak, and fade the
@@ -258,10 +285,17 @@ function createRibbonColorNode(uniforms: RouteFlowUniforms, baseColor: THREE.Col
   const routeGroup = floatAttribute('routeGroup');
   const weight = createRouteWeightTerm(uniforms, routeClass, routeGroup);
 
+  // The channel is the floor of the field, not its subject: a small fixed gain
+  // keeps the route legible where a packet is not, and nothing more. It is
+  // deliberately not proportional to the route weight alone, because a strong
+  // route would then draw a full-strength pipe under its own packets.
   const intensity = weight.mul(uniforms.motionScale.mul(float(0.25)).add(float(0.75)));
+  // The gain is applied once, to the channel's coverage. Applying it to colour
+  // and alpha both squares it, and a channel at a twentieth of full is not a
+  // weak channel, it is an absent one.
   return vec4(
     vec3(baseColor.r, baseColor.g, baseColor.b).mul(vertexColor().rgb).mul(intensity),
-    saturate(weight.mul(float(1.2))),
+    saturate(weight.mul(float(1.2))).mul(float(RIBBON_CHANNEL_GAIN)),
   );
 }
 
@@ -440,7 +474,7 @@ export function createRouteRibbonMaterial(
     side: THREE.DoubleSide,
     vertexColors: true,
     blending: THREE.AdditiveBlending,
-    opacity: 0.3,
+    opacity: RIBBON_CHANNEL_GAIN,
   });
   let disposed = false;
 
@@ -450,7 +484,9 @@ export function createRouteRibbonMaterial(
     updateFlow: (state) => {
       if (disposed) return;
       const normalized = normalizeSeedState(state);
-      material.opacity = 0.16 + Math.max(...normalized.laneWeights) * 0.26;
+      material.opacity =
+        RIBBON_CHANNEL_GAIN * 0.5 +
+        Math.max(...normalized.laneWeights) * RIBBON_CHANNEL_GAIN;
     },
     dispose: () => {
       if (disposed) return;

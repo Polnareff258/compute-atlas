@@ -13,7 +13,6 @@ describe('sampleRendererTelemetry', () => {
       },
       backend: 'webgpu',
       quality: 'ultra',
-      particleCount: 72_000,
       configuredFieldBudget: 72_000,
       renderedFieldSamples: 8_640,
       activeSignalSamples: 18,
@@ -28,6 +27,8 @@ describe('sampleRendererTelemetry', () => {
       triangles: 1_240,
       geometries: 5,
       textures: 2,
+      // Derived from `renderedFieldSamples` rather than supplied, so the two
+      // names for one number cannot drift apart.
       particleCount: 8_640,
       configuredFieldBudget: 72_000,
       renderedFieldSamples: 8_640,
@@ -43,7 +44,6 @@ describe('sampleRendererTelemetry', () => {
       renderer: {},
       backend: 'unavailable',
       quality: 'safe',
-      particleCount: 6_000,
       configuredFieldBudget: 6_000,
       renderedFieldSamples: 0,
       activeSignalSamples: 0,

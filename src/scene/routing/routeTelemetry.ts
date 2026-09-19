@@ -23,13 +23,13 @@ export type RouteFieldTelemetryCounts = {
 export type RouteFieldSample = {
   /** The field's curves, in the order they were handed to the view. */
   readonly curves: readonly RouteCurve[];
-  /** Dashes packed per curve, as resolved for the active backend and profile. */
+  /** Dashes packed per curve, as resolved for the active implementation. */
   readonly dashesPerRoute: number;
   /** Route classes this field exposes at the current interaction state. */
   readonly lanes: number;
   /**
    * Hard ceiling on dashes actually submitted, matching the view's own cap.
-   * Omit for the unthrottled WebGPU path.
+   * Omitted for the advected field, which has no CPU pass to bound.
    */
   readonly capacity?: number;
 };
@@ -37,9 +37,9 @@ export type RouteFieldSample = {
 /**
  * How a field is configured before backend capacity is applied.
  *
- * The caller supplies the same `detail` and `lanes` it hands the view, and this
- * resolves the rest the one way a field is ever resolved — so telemetry cannot
- * describe a density the renderer was never asked to draw.
+ * The caller supplies the same `advected`, `detail` and `lanes` it hands the
+ * view, and this resolves the rest the one way a field is ever resolved — so
+ * telemetry cannot describe a density the renderer was never asked to draw.
  */
 export type RouteFieldSpec = {
   readonly curves: readonly RouteCurve[];
@@ -48,19 +48,21 @@ export type RouteFieldSpec = {
 };
 
 export function createRouteFieldSample(
-  backend: 'webgpu' | 'webgl2',
+  advected: boolean,
   spec: RouteFieldSpec,
 ): RouteFieldSample {
-  const dashesPerRoute = deriveDashesPerRoute(backend, spec.detail, spec.lanes);
-  if (backend === 'webgl2') {
-    return {
-      curves: spec.curves,
-      dashesPerRoute,
-      lanes: spec.lanes,
-      capacity: WEBGL2_DASH_CEILING,
-    };
+  const dashesPerRoute = deriveDashesPerRoute(advected, spec.detail, spec.lanes);
+  if (advected) {
+    return { curves: spec.curves, dashesPerRoute, lanes: spec.lanes };
   }
-  return { curves: spec.curves, dashesPerRoute, lanes: spec.lanes };
+  // The instanced fallback is the only implementation with a CPU pass, so it is
+  // the only one with a ceiling to report.
+  return {
+    curves: spec.curves,
+    dashesPerRoute,
+    lanes: spec.lanes,
+    capacity: WEBGL2_DASH_CEILING,
+  };
 }
 
 function finiteCount(value: number): number {

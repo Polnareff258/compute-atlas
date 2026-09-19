@@ -150,6 +150,9 @@ export function SceneHost({
   // honest answer, so anything that is not WebGPU takes the fallback route.
   const routeBackend: RendererAdapterBackend =
     backend === 'webgpu' ? 'webgpu' : 'webgl2';
+  // The field's implementation, resolved in one place and read by both the view
+  // and telemetry, so the count that is reported is the count that is drawn.
+  const coreAdvected = routeBackend === 'webgpu' && coreParameters.advection;
   const cameraController = useMemo(
     () => createCameraController({ reducedMotion }),
     [reducedMotion],
@@ -250,12 +253,12 @@ export function SceneHost({
     // Counted from the same descriptors the views are handed, so the reported
     // samples are the dashes on screen rather than a separately maintained guess.
     const counts = deriveRouteFieldTelemetryCounts(coreParameters.configuredFieldBudget, [
-      createRouteFieldSample(routeBackend, {
+      createRouteFieldSample(coreAdvected, {
         curves: circulation.curves,
         detail: coreParameters.structureDetail,
         lanes: coreParameters.routeLanes,
       }),
-      createRouteFieldSample(routeBackend, {
+      createRouteFieldSample(coreAdvected, {
         curves: graphFieldCurves,
         detail: settings.domainDetail,
         lanes: coreParameters.routeLanes,
@@ -267,7 +270,6 @@ export function SceneHost({
         renderer: gl,
         backend,
         quality: sceneQuality,
-        particleCount: counts.renderedFieldSamples,
         configuredFieldBudget: counts.configuredFieldBudget,
         renderedFieldSamples: counts.renderedFieldSamples,
         activeSignalSamples: counts.activeSignalSamples,
@@ -293,6 +295,7 @@ export function SceneHost({
         visualState={coreVisualState}
       />
       <KnowledgeGraph
+        advection={coreAdvected}
         backend={routeBackend}
         environments={environments}
         fieldCurves={graphFieldCurves}

@@ -203,6 +203,69 @@ function boundedWakeOvershoot(proximity: number, wake: number): number {
   return Math.pow(proximity, 2) * wake * 0.55;
 }
 
+/**
+ * Below this combined lane-and-group weight a route is not participating, and
+ * its packets are removed rather than dimmed.
+ *
+ * Dimming alone was not enough at additive blending. A route receded to a
+ * twentieth of its brightness still hazed the frame with every packet it owned,
+ * so "the other domains recede" arrived as "every route is faintly on" — and a
+ * field where everything is faintly on has no subject. A floor makes receding
+ * mean leaving.
+ */
+export const ROUTE_VISIBILITY_FLOOR = 0.12;
+
+/**
+ * Route weight → how much of the route survives, 0 .. 1.
+ *
+ * The square root matters. A plain linear ramp reads 0.34 — the weight every
+ * idle domain carries — as a fifth of full, so every participating route in the
+ * frame is dimmed to a fifth at once and the field disappears. This is a
+ * presence curve, not a brightness curve: a route that is participating should
+ * read at close to full strength, and only a route that is leaving should
+ * vanish. The root keeps the floor and the shape while lifting the middle.
+ *
+ * Both ends are computed as `sqrt` — `Math.sqrt` here, `sqrt` in the shader —
+ * because the two have to agree at the threshold, and a curve only one of them
+ * can express is how they start disagreeing again.
+ */
+export function deriveRouteVisibility(routeWeight: number): number {
+  const bounded = Number.isFinite(routeWeight) ? Math.max(0, routeWeight) : 0;
+  if (bounded <= ROUTE_VISIBILITY_FLOOR) return 0;
+  return Math.sqrt(
+    Math.min(1, (bounded - ROUTE_VISIBILITY_FLOOR) / (1 - ROUTE_VISIBILITY_FLOOR)),
+  );
+}
+
+/**
+ * How much of the continuous channel survives underneath the packets.
+ *
+ * The channel exists to say "the route runs here", not to be the route. At full
+ * strength it was the first thing the eye read, which is most of what made the
+ * field look like glowing pipes that happened to have packets on them.
+ */
+export const RIBBON_CHANNEL_GAIN = 0.28;
+
+/**
+ * One packet's contribution, on whichever backend is drawing it.
+ *
+ * The visibility cull lives here rather than at either call site so a receded
+ * route cannot be removed on the GPU and merely dimmed on the CPU. The vertex
+ * shader reproduces this arithmetic exactly; `routeDashMaterial`'s floor
+ * constant is the same number.
+ */
+export function deriveRouteDashIntensity(
+  envelope: number,
+  brightness: number,
+  routeWeight: number,
+  wakeBoost = 1,
+): number {
+  const amplitude = Number.isFinite(brightness) ? Math.max(0, brightness) : 0;
+  const boost = Number.isFinite(wakeBoost) ? Math.max(0, wakeBoost) : 0;
+
+  return deriveRouteVisibility(routeWeight) * envelope * amplitude * boost;
+}
+
 export type RouteDashAttributes = {
   /** Ribbon-quad attributes, all length = vertexCount. */
   readonly corner: Float32Array;
@@ -288,14 +351,18 @@ export function deriveRouteDashAttributes(
       const phase = hashUnit(normalizedSeed, laneSeed);
       const speed = 0.16 + hashUnit(normalizedSeed, laneSeed + 1) * 0.14;
       // Length is in curve progress, width in world units, and the ratio between
-      // them is what the whole effect reads as: a packet has to be several times
-      // longer than it is wide or it arrives as a speck sliding down a wire
-      // instead of as the stretched dash the signal language is built on. Both
-      // are sized against the channel it rides in — the packet is the brighter
-      // core of the band rather than a bead sitting on a separate line, and the
-      // arrival wake widens it further as it reaches the ingress.
-      const length = 0.1 + hashUnit(normalizedSeed, laneSeed + 2) * 0.12;
-      const width = 0.055 + hashUnit(normalizedSeed, laneSeed + 3) * 0.08;
+      // them is still what a packet reads as: several times longer than it is
+      // wide, or it arrives as a speck sliding down a wire.
+      //
+      // Both are far shorter and thinner than they were, and there are far more
+      // of them — see `deriveDashesPerRoute`. Few long fat packets evenly spaced
+      // along a route read as segments of a pipe, because that is what they are.
+      // Many short thin ones read as flow, because the eye stops resolving
+      // individual packets and starts reading the field's direction and density
+      // instead. The signal language does not change: this is the same dash,
+      // drawn at the scale where a dash stops being an object.
+      const length = 0.022 + hashUnit(normalizedSeed, laneSeed + 2) * 0.05;
+      const width = 0.018 + hashUnit(normalizedSeed, laneSeed + 3) * 0.026;
       const brightness = 0.45 + hashUnit(normalizedSeed, laneSeed + 4) * 0.55;
       const routeIndex = ROUTE_CLASS_INDEX[curve.route];
       const groupIndex = Math.max(
@@ -358,27 +425,37 @@ export function resolveDashCurve(
 }
 
 /**
- * Dashes per route for one backend and profile.
+ * Dashes per route for one implementation and profile.
  *
- * WebGPU evaluates the field in the vertex shader, so density is nearly free and
- * scales with how many route classes the profile exposes. WebGL2 places every
- * dash on the CPU, so it stays a sparse channel carrying the same visual language
- * at lower density.
+ * Takes whether the field is advected, not which backend is running. Those were
+ * the same question until this profile's `coreAdvection` flag turned out to be
+ * consumed by nothing and every WebGPU tier took the same path — the flag now
+ * selects the implementation, so density has to follow the implementation rather
+ * than the backend, or SAFE on WebGPU would pack the GPU field's count into the
+ * CPU fallback.
+ *
+ * An advected field evaluates every packet in the vertex shader, so its count
+ * tracks the interaction's density and the profile's lanes. The instanced
+ * fallback repositions each packet on the CPU every frame, so it stays a sparse
+ * channel carrying the same language rather than the same count.
  *
  * Exported because telemetry must count what the field actually draws, and a
  * second copy of this formula would be a second, drifting answer.
  */
 export function deriveDashesPerRoute(
-  backend: 'webgpu' | 'webgl2',
+  advected: boolean,
   detail: number,
   lanes: number,
 ): number {
   const boundedDetail = Number.isFinite(detail) ? Math.min(1, Math.max(0, detail)) : 0;
   const boundedLanes = Number.isFinite(lanes) ? Math.max(1, Math.round(lanes)) : 1;
-  if (backend === 'webgpu') {
-    return Math.max(2, Math.round(4 + boundedDetail * boundedLanes * 5));
+  // The advected base is deliberately not larger than this: packets overlap once
+  // their count passes the reciprocal of their length, and a stream that never
+  // shows a gap is a pipe again, just a thinner one.
+  if (advected) {
+    return Math.max(8, Math.round(8 + boundedDetail * boundedLanes * 11));
   }
-  return Math.max(1, Math.round(2 + boundedDetail * boundedLanes));
+  return Math.max(2, Math.round(3 + boundedDetail * boundedLanes * 2));
 }
 
 /**
