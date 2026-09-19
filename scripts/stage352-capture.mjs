@@ -27,28 +27,37 @@
  *      invalid/negative buffer sizes, WebGPU validation errors or (unless
  *      allowlisted) console errors.
  *
+ * Provable interaction
+ *   A hover or focus frame is only evidence if the hover or focus happened. The
+ *   harness reads the target domain's label out of the DOM, derives candidate
+ *   pointer positions from that label's real bounding rect, and accepts a
+ *   position only once the DOM reports the expected state class. An input that
+ *   never lands pushes an `interaction-not-landed` failure and *skips* the
+ *   screenshot: a frame that silently shows no response is worse than no frame.
+ *   Passing `--coords` overrides the search with a fixed point, and a fixed
+ *   point that misses now fails the run rather than producing a misleading file.
+ *
  * URL contract used by the app under test
  *   ?boot=skip     skip the boot animation
  *   ?telemetry=1   log renderer telemetry to the console
  *
  * Exit codes
  *   0  every capture was written and no fatal console output was seen
- *   1  capture/readiness failure, or fatal console output
+ *   1  capture/readiness/interaction failure, or fatal console output
  *   2  usage error (unknown flag, unparsable value, empty matrix)
  *   3  the app under test could not be reached or could not be navigated to
  *
  * Examples
- *   # Full matrix for one backend
+ *   # Full matrix for one backend, with the text-hidden and grayscale variants
  *   node scripts/stage352-capture.mjs --base-url http://localhost:3000 \
  *     --out artifacts --backend webgpu --quality ultra \
  *     --sizes 1920x1080,2560x1440 \
  *     --states overview,hover-graphics,focus-graphics,escape \
- *     --coords graphics=1180,640
+ *     --text-hidden --grayscale
  *
  *   # Same matrix for the WebGL2 fallback, reduced motion, with a thumbnail
  *   node scripts/stage352-capture.mjs --backend webgl2 --quality ultra \
- *     --states overview,hover-graphics,focus-graphics,escape \
- *     --coords graphics=1180,640 --reduced-motion --thumb 480x270
+ *     --states overview,hover-graphics,focus-graphics,escape --reduced-motion
  *
  *   # Validate the resolved matrix without launching a browser
  *   node scripts/stage352-capture.mjs --dry-run --backend webgpu \
@@ -74,6 +83,9 @@ const DEFAULT_BASE_URL = 'http://localhost:3000';
 const DEFAULT_OUT_DIR = 'artifacts';
 const DEFAULT_SIZES = '1920x1080,2560x1440';
 const DEFAULT_STATES = 'overview';
+/** The domain the interaction states aim at unless `--domain` names another. */
+const DEFAULT_DOMAIN = 'graphics';
+const DEFAULT_HOVER_TIMEOUT_MS = 1400;
 const DEFAULT_POINT = '960,540';
 const DEFAULT_THUMB = '480x270';
 const DEFAULT_THUMB_STATE = 'overview';
@@ -88,6 +100,50 @@ const DEFAULT_MIN_LIT_FRACTION = 0.01;
 const DEFAULT_GRID = 16;
 const DEFAULT_PARK_POINT = '4,4';
 
+/**
+ * Reads the DOM state of every domain label.
+ *
+ * This is the contract the interaction assertions read, and it exists because a
+ * capture that claims to show a hovered domain has to be able to prove it: a
+ * pointer event that misses every pick radius still produces a perfectly normal
+ * screenshot, which is exactly how a run can report success while showing
+ * nothing. The labels carry the state in their class names, so the check is a
+ * DOM read rather than an inference from pixels.
+ */
+const LABEL_STATE_EXPRESSION = `(() => {
+  const toRect = (rect) =>
+    rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null;
+  return Array.from(document.querySelectorAll('.graph-node-label')).map((element) => {
+    const name = element.querySelector('.graph-node-label__name');
+    const wrapper = element.closest('.graph-node-label-wrapper');
+    return {
+      name: name ? name.textContent.trim() : '',
+      state: element.classList.contains('graph-node-label--focused') ? 'focused'
+        : element.classList.contains('graph-node-label--hovered') ? 'hovered'
+        : element.classList.contains('graph-node-label--dimmed') ? 'dimmed'
+        : 'idle',
+      hasDescription: Boolean(element.querySelector('.graph-node-label__description')),
+      rect: toRect(element.getBoundingClientRect()),
+      wrapper: toRect(wrapper ? wrapper.getBoundingClientRect() : null),
+    };
+  });
+})()`;
+
+const CAPTURE_MODE_STYLE_ID = 'stage352-capture-modes';
+
+/**
+ * Text-hidden proves the composition carries itself without typography, and
+ * grayscale proves the luminance hierarchy is doing the work rather than hue.
+ * Both are CSS on the document root so they apply to the canvas and the overlay
+ * alike, and so a mode change costs one class toggle rather than a re-render.
+ */
+const CAPTURE_MODE_CSS = [
+  'html.capture-text-hidden .system-masthead,',
+  'html.capture-text-hidden .renderer-status,',
+  'html.capture-text-hidden .graph-node-label-wrapper { display: none !important; }',
+  'html.capture-grayscale { filter: grayscale(1); }',
+].join('\n');
+
 /** Readiness expression: the app is done booting when its status stops saying so. */
 const DEFAULT_READY_EXPRESSION = `(() => {
   const canvas = document.querySelector('canvas');
@@ -101,12 +157,16 @@ const DEFAULT_READY_EXPRESSION = `(() => {
   if (label && /INITIALIZING|DEGRADED|UNAVAILABLE/i.test(label)) {
     return { ready: false, reason: 'status:' + label, label };
   }
-  const qualityNode = document.querySelector('.renderer-status__quality');
+  // RendererStatus has no separate quality node; the status line reads
+  // "WEBGPU · ULTRA", so quality is the segment after the separator. Probing a
+  // '.renderer-status__quality' element instead silently reported null forever.
+  const statusText = (document.querySelector('.renderer-status') || {}).textContent || '';
+  const statusMatch = statusText.replace(/\\s+/g, ' ').trim().match(/·\\s*([A-Z]+)/);
   return {
     ready: true,
     reason: label ? 'status:' + label : 'canvas-present',
     label,
-    quality: qualityNode ? qualityNode.textContent.replace(/\\s+/g, ' ').trim() : null,
+    quality: statusMatch ? statusMatch[1] : null,
     width: Math.round(rect.width),
     height: Math.round(rect.height),
     drawingWidth: canvas.width,
@@ -132,6 +192,9 @@ const BOOLEAN_FLAGS = new Set([
   'preflight',
   'allow-unready',
   'browser-log',
+  'text-hidden',
+  'grayscale',
+  'no-assert',
 ]);
 
 const REPEATABLE_FLAGS = new Set(['chrome-arg', 'allow-console-error']);
@@ -164,6 +227,8 @@ const VALUE_FLAGS = new Set([
   'min-spread',
   'min-lit',
   'ready-expression',
+  'domain',
+  'hover-timeout',
 ]);
 
 const STATE_VERBS = new Set(['hover', 'focus', 'click', 'press', 'escape']);
@@ -399,6 +464,15 @@ export function parseArgs(argv) {
       extraChromeArgs: repeatable['chrome-arg'],
       allowConsoleErrorPatterns: repeatable['allow-console-error'],
       readyExpression: raw['ready-expression'] ?? DEFAULT_READY_EXPRESSION,
+      domain: sanitizeSegment(raw.domain ?? DEFAULT_DOMAIN),
+      hoverTimeoutMs: parseInteger(raw['hover-timeout'], {
+        name: 'hover-timeout',
+        min: 100,
+        fallback: DEFAULT_HOVER_TIMEOUT_MS,
+      }),
+      textHidden: raw['text-hidden'] === true,
+      grayscale: raw.grayscale === true,
+      assertInteractions: raw['no-assert'] !== true,
       dryRun: raw['dry-run'] === true,
       verbose: raw.verbose === true,
       reducedMotion: raw['reduced-motion'] === true,
@@ -605,10 +679,193 @@ function resolveStatePoint(state, options, viewport) {
       source: `--coords ${state.name}`,
     };
   }
+
+  // Deliberately no fallback to `--point`. A stale hard-coded coordinate is how
+  // the previous round produced hover and focus screenshots that showed no
+  // hover and no focus: the pointer missed every pick radius and the capture
+  // still looked like a successful frame. With nothing configured the point is
+  // resolved from the live DOM at capture time instead.
+  return null;
+}
+
+/** Case-insensitive label match: `--domain game-analysis` finds `GAME ANALYSIS`. */
+export function findDomainLabel(labels, domain) {
+  const wanted = String(domain).trim().toUpperCase();
+  const collapsed = wanted.replace(/[\s_-]+/g, '');
+  return labels.find((label) => {
+    const name = String(label.name ?? '').trim().toUpperCase();
+    return name === wanted || name.replace(/[\s_-]+/g, '') === collapsed;
+  });
+}
+
+/**
+ * What the DOM currently says about one domain.
+ *
+ * `othersHidden` is the focus contract: a focused domain is the only one that
+ * keeps its text, so the other labels leaving the DOM is evidence the focus
+ * actually landed rather than evidence of a rendering hiccup.
+ */
+export function readDomainState(labels, domain) {
+  const target = findDomainLabel(labels, domain);
   return {
-    ...clamp(resolvePoint(options.point, viewport, '--point')),
-    source: `--point ${options.point}`,
+    found: Boolean(target),
+    state: target?.state ?? null,
+    hasDescription: Boolean(target?.hasDescription),
+    labelCount: labels.length,
+    focusedNames: labels.filter((label) => label.state === 'focused').map((label) => label.name),
+    observed: labels.map((label) => `${label.name}:${label.state}`),
   };
+}
+
+/**
+ * Candidate pointer positions for a domain, nearest first.
+ *
+ * A domain's pick zone is a circle around the projected anchor, and the label
+ * sits beside that anchor rather than on it, so the label's own rect is not
+ * necessarily inside the zone. The candidates walk outward from the label
+ * toward where the anchor must be — labels annotate inward, so the anchor is on
+ * the frame-centre side — and every candidate is verified by a real state flip
+ * before it is used, which is what makes the ordering a speed optimisation
+ * rather than an assumption.
+ */
+export function buildSearchCandidates(label, viewport) {
+  const rects = [label.rect, label.wrapper].filter((rect) => rect && rect.width > 0);
+  const points = [];
+  const seen = new Set();
+  const push = (x, y) => {
+    const roundedX = Math.round(x);
+    const roundedY = Math.round(y);
+    if (roundedX < 1 || roundedY < 1 || roundedX >= viewport.width - 1) return;
+    if (roundedY >= viewport.height - 1) return;
+    const key = `${roundedX},${roundedY}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    points.push({ x: roundedX, y: roundedY });
+  };
+
+  const centre = {
+    x: rects.reduce((sum, rect) => sum + rect.left + rect.width / 2, 0) / rects.length,
+    y: rects.reduce((sum, rect) => sum + rect.top + rect.height / 2, 0) / rects.length,
+  };
+
+  // Where the domain's own body lies relative to its text. In the scene a label
+  // is offset from its anchor toward the core on x and upward on y
+  // (`labelSide = anchor[0] > 0 ? -1 : 1`, offset y = +0.66 * extent), so the
+  // anchor sits outward from the frame centre and below the label.
+  const away = centre.x < viewport.width / 2 ? -1 : 1;
+  const span = Math.max(
+    60,
+    rects.reduce((widest, rect) => Math.max(widest, rect.width), 0),
+  );
+
+  const estimate = {
+    x: centre.x + away * span * 0.75,
+    y: centre.y + span * 0.7,
+  };
+  const radii = [0, 30, 60, 90, 130, 170, 210, 250];
+  const directions = [
+    [0, 0],
+    [0, 1],
+    [away, 1],
+    [away, 0],
+    [away, -1],
+    [0, -1],
+    [-away, 1],
+    [-away, 0],
+    [-away, -1],
+  ];
+
+  const candidates = [];
+  for (const radius of radii) {
+    for (const [dx, dy] of directions) {
+      const scale = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1;
+      candidates.push({
+        x: estimate.x + dx * radius * scale,
+        y: estimate.y + dy * radius * scale,
+      });
+    }
+  }
+  for (const radius of radii) {
+    for (const [dx, dy] of directions) {
+      const scale = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1;
+      candidates.push({
+        x: centre.x + dx * radius * scale,
+        y: centre.y + dy * radius * scale,
+      });
+    }
+  }
+
+  for (const point of candidates) push(point.x, point.y);
+  return points;
+}
+
+/** Compares a DOM observation against what a state is supposed to produce. */
+export function evaluateExpectation(observation, expectation, domain) {
+  const wanted = String(domain).toUpperCase();
+  switch (expectation) {
+    case 'hover': {
+      if (!observation.found) {
+        return { ok: false, reason: `no ${wanted} label in the DOM` };
+      }
+      if (observation.state !== 'hovered' && observation.state !== 'focused') {
+        return {
+          ok: false,
+          reason: `${wanted} is ${observation.state}, not hovered (${observation.observed.join(', ')})`,
+        };
+      }
+      if (!observation.hasDescription) {
+        return { ok: false, reason: `${wanted} is hovered but shows no description` };
+      }
+      return { ok: true, reason: `${wanted} hovered` };
+    }
+    case 'focus': {
+      if (!observation.found) {
+        return { ok: false, reason: `no ${wanted} label in the DOM` };
+      }
+      if (observation.state !== 'focused') {
+        return {
+          ok: false,
+          reason: `${wanted} is ${observation.state}, not focused (${observation.observed.join(', ')})`,
+        };
+      }
+      if (!observation.hasDescription) {
+        return { ok: false, reason: `focused ${wanted} shows no description` };
+      }
+      if (observation.labelCount !== 1) {
+        return {
+          ok: false,
+          reason: `focus left ${observation.labelCount} labels on screen (${observation.observed.join(', ')})`,
+        };
+      }
+      return { ok: true, reason: `${wanted} focused, other labels withdrawn` };
+    }
+    case 'escape': {
+      if (observation.focusedNames.length > 0) {
+        return {
+          ok: false,
+          reason: `Escape left ${observation.focusedNames.join(', ')} focused`,
+        };
+      }
+      if (!observation.found) {
+        return { ok: false, reason: `no ${wanted} label in the DOM after Escape` };
+      }
+      if (observation.state === 'focused') {
+        return { ok: false, reason: `${wanted} is still focused after Escape` };
+      }
+      // Focus is the only state that withdraws the other domains' labels, so a
+      // frame that still shows one label has not left the focus composition.
+      if (observation.labelCount <= 1) {
+        return {
+          ok: false,
+          reason: `only ${observation.labelCount} label(s) on screen after Escape; the focus composition did not release the other domains`,
+        };
+      }
+      return { ok: true, reason: 'Escape cleared focus and the other domains returned' };
+    }
+    case 'none':
+    default:
+      return { ok: true, reason: 'no interaction expected' };
+  }
 }
 
 export function buildCaptureUrl(options) {
@@ -649,19 +906,35 @@ export function formatCaptureName({
     .concat('.png');
 }
 
+/** The variants one state is captured in, so a state is not captured twice. */
+export function captureVariants(options) {
+  const variants = [{ key: 'plain', suffix: '' }];
+  if (options.textHidden) variants.push({ key: 'notext', suffix: '-notext' });
+  if (options.grayscale) variants.push({ key: 'gray', suffix: '-gray' });
+  return variants;
+}
+
 export function resolvePlan(options) {
   const url = buildCaptureUrl(options);
   const jobs = [];
   for (const size of options.sizes) {
     for (const state of options.states) {
-      const point =
-        state.kind === 'none' || state.kind === 'escape'
-          ? null
-          : resolveStatePoint(state, options, size);
+      const interactive = state.kind !== 'none' && state.kind !== 'escape';
+      const point = interactive ? resolveStatePoint(state, options, size) : null;
       jobs.push({
         size,
         state,
         point,
+        // No configured coordinate means the point is discovered in the DOM.
+        dynamicPoint: interactive && point === null,
+        expectation:
+          state.kind === 'none'
+            ? 'none'
+            : state.kind === 'hover'
+              ? 'hover'
+              : state.kind === 'escape'
+                ? 'escape'
+                : 'focus',
         isThumbSource: state.name === options.thumbState,
       });
     }
@@ -1546,8 +1819,97 @@ async function dispatchEscape(client, sessionId) {
   await client.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, sessionId);
 }
 
-async function applyState(client, sessionId, job, options, viewport) {
+/** Injects (or clears) the capture-only stylesheet used by --text-hidden/--grayscale. */
+async function setCaptureMode(client, sessionId, { textHidden, grayscale }) {
+  const expression = `(() => {
+    const id = ${JSON.stringify(CAPTURE_MODE_STYLE_ID)};
+    const existing = document.getElementById(id);
+    if (existing) existing.remove();
+    document.documentElement.classList.remove('capture-text-hidden', 'capture-grayscale');
+    if (${textHidden ? 'true' : 'false'}) {
+      document.documentElement.classList.add('capture-text-hidden');
+    }
+    if (${grayscale ? 'true' : 'false'}) {
+      document.documentElement.classList.add('capture-grayscale');
+    }
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = ${JSON.stringify(CAPTURE_MODE_CSS)};
+    document.head.appendChild(style);
+    return true;
+  })()`;
+  await evaluate(client, sessionId, expression);
+}
+
+async function observeDomains(client, sessionId) {
+  const labels = await evaluate(client, sessionId, LABEL_STATE_EXPRESSION);
+  return Array.isArray(labels) ? labels : [];
+}
+
+/**
+ * Waits for the DOM to reach a state, polling rather than sleeping a fixed
+ * amount: hover and focus both run through damped motion, so the interesting
+ * question is whether the state arrives at all, not when.
+ */
+async function waitForDomainState(client, sessionId, domain, predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let observation = readDomainState([], domain);
+  let labels = [];
+  while (Date.now() < deadline) {
+    labels = await observeDomains(client, sessionId);
+    observation = readDomainState(labels, domain);
+    if (predicate(observation)) return { observation, labels };
+    await delay(60);
+  }
+  return { observation, labels };
+}
+
+/**
+ * Finds a pointer position that provably lands on a domain.
+ *
+ * The old harness trusted `--coords graphics=1180,640`, which missed the pick
+ * zone at 1920x1080 entirely, so the "hover" and "focus" evidence showed an
+ * untouched scene. Here every candidate is confirmed by an actual DOM state
+ * change before it is used, and a miss is a failure rather than a frame.
+ */
+async function resolveDomainPoint(client, sessionId, options, viewport, domain) {
   const park = resolvePoint(options.park, viewport, '--park');
+  const labels = await observeDomains(client, sessionId);
+  const label = findDomainLabel(labels, domain);
+  if (!label) {
+    return { ok: false, reason: `no ${domain.toUpperCase()} label in the DOM (${labels.map((l) => l.name).join(', ') || 'none'})` };
+  }
+
+  const candidates = buildSearchCandidates(label, viewport);
+  for (const [index, point] of candidates.entries()) {
+    await dispatchMouse(client, sessionId, 'mouseMoved', park);
+    await delay(20);
+    await dispatchMouse(client, sessionId, 'mouseMoved', point);
+    const { observation } = await waitForDomainState(
+      client,
+      sessionId,
+      domain,
+      (state) => state.state === 'hovered' || state.state === 'focused',
+      Math.min(options.hoverTimeoutMs, 400),
+    );
+    if (observation.state === 'hovered' || observation.state === 'focused') {
+      return {
+        ok: true,
+        point: { ...point, source: `dom ${index + 1}/${candidates.length}` },
+        observation,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    reason: `${candidates.length} candidate positions around the ${domain.toUpperCase()} label none reached hovered`,
+  };
+}
+
+async function applyState(client, sessionId, job, options, viewport, cache) {
+  const park = resolvePoint(options.park, viewport, '--park');
+  const domain = options.domain;
 
   // Park the pointer and clear focus so each state starts from a known baseline.
   // The escape state keeps the previous focus so it can prove that Escape cleared it.
@@ -1558,26 +1920,92 @@ async function applyState(client, sessionId, job, options, viewport) {
   }
 
   if (job.state.kind === 'none') {
-    return 'no-input';
+    return { text: 'no-input', expectation: 'none', verified: true };
   }
+
   if (job.state.kind === 'escape') {
+    const before = readDomainState(await observeDomains(client, sessionId), domain);
+    // Park first: Escape is supposed to restore the *idle* composition, and a
+    // pointer still resting on the focused domain would leave it hovered and
+    // make the restored frame ambiguous.
+    await dispatchMouse(client, sessionId, 'mouseMoved', park);
+    await delay(60);
     await dispatchEscape(client, sessionId);
-    return 'key Escape';
+    const { observation } = await waitForDomainState(
+      client,
+      sessionId,
+      domain,
+      (state) => state.focusedNames.length === 0,
+      options.hoverTimeoutMs,
+    );
+    const verdict = evaluateExpectation(observation, 'escape', domain);
+    return {
+      text: `key Escape${before.focusedNames.length > 0 ? ` (from focused ${before.focusedNames.join(', ')})` : ' (nothing was focused)'}`,
+      expectation: 'escape',
+      observation,
+      // Escape only proves anything if something was focused for it to clear.
+      vacuous: before.focusedNames.length === 0,
+      verified: verdict.ok,
+      verdict,
+    };
+  }
+
+  // Reuse a point that already provably landed for this domain and viewport.
+  const cacheKey = `${viewport.label}|${domain}`;
+  let point = job.point;
+  let source = point ? point.source : null;
+  if (point === null && cache.has(cacheKey)) {
+    point = cache.get(cacheKey);
+    source = `${point.source} (reused)`;
+  }
+  if (point === null) {
+    const resolved = await resolveDomainPoint(client, sessionId, options, viewport, domain);
+    if (!resolved.ok) {
+      return {
+        text: `no pointer position reached ${domain.toUpperCase()}: ${resolved.reason}`,
+        expectation: job.expectation,
+        verified: false,
+        verdict: { ok: false, reason: resolved.reason },
+      };
+    }
+    point = resolved.point;
+    source = resolved.point.source;
+    cache.set(cacheKey, point);
   }
 
   // Move away first so the browser emits a real pointerover on the canvas.
   await dispatchMouse(client, sessionId, 'mouseMoved', park);
   await delay(40);
-  await dispatchMouse(client, sessionId, 'mouseMoved', job.point);
+  await dispatchMouse(client, sessionId, 'mouseMoved', point);
+
+  let text = `mouseMoved ${point.x},${point.y} (${source})`;
   if (job.state.kind === 'hover') {
-    return `mouseMoved ${job.point.x},${job.point.y} (${job.point.source})`;
+    const { observation } = await waitForDomainState(
+      client,
+      sessionId,
+      domain,
+      (state) => state.state === 'hovered' || state.state === 'focused',
+      options.hoverTimeoutMs,
+    );
+    const verdict = evaluateExpectation(observation, 'hover', domain);
+    return { text, expectation: 'hover', observation, verified: verdict.ok, verdict };
   }
 
   await delay(job.state.verb === 'press' ? 60 : 80);
-  await dispatchMouse(client, sessionId, 'mousePressed', job.point, 'left', 1);
+  await dispatchMouse(client, sessionId, 'mousePressed', point, 'left', 1);
   await delay(60);
-  await dispatchMouse(client, sessionId, 'mouseReleased', job.point, 'left', 0);
-  return `click ${job.point.x},${job.point.y} (${job.point.source})`;
+  await dispatchMouse(client, sessionId, 'mouseReleased', point, 'left', 0);
+  text = `click ${point.x},${point.y} (${source})`;
+
+  const { observation } = await waitForDomainState(
+    client,
+    sessionId,
+    domain,
+    (state) => state.state === 'focused',
+    options.hoverTimeoutMs,
+  );
+  const verdict = evaluateExpectation(observation, 'focus', domain);
+  return { text, expectation: 'focus', observation, verified: verdict.ok, verdict };
 }
 
 /**
@@ -1698,13 +2126,25 @@ function printHelp() {
     '                          Each entry is [<verb>-]<label>[@x,y] where the verb is',
     '                          overview | hover | focus | click | press | escape.',
     '                          e.g. overview,hover-graphics,focus-graphics,escape',
-    '  --point <x,y>           Default pointer target for hover/focus. Default 960,540.',
-    '                          Percentages are allowed, e.g. 62%,58%.',
+    '  --point <x,y>           Fallback pointer target. Percentages are allowed, e.g. 62%,58%.',
+    '                          It is NOT used for hover or focus: a hard-coded point is how',
+    '                          the last round shipped hover and focus frames that showed no',
+    '                          response. Use --coords only to override a known-good point.',
     '  --coords <list>         Per-label coordinates, e.g. graphics=1180,640,ai=30%,40%',
+    '                          A coordinate that does not reach the domain fails the run.',
+    '  --domain <name>         Domain the interaction states must actually engage.',
+    '                          Default graphics. Matched case-insensitively against the labels.',
     '  --park <x,y>            Pointer parking spot used to reset hover. Default 4,4',
     '',
     'Capture flags:',
     '  --reduced-motion        Emulate prefers-reduced-motion: reduce before navigation',
+    '  --text-hidden           Also capture each state with the masthead, status line and',
+    '                          graph labels hidden, to prove the composition holds without text',
+    '  --grayscale             Also capture each state desaturated, to prove the luminance',
+    '                          hierarchy rather than hue is carrying the read',
+    '  --no-assert             Do not fail when an interaction did not land (debugging only;',
+    '                          the frames it writes are not evidence)',
+    '  --hover-timeout <ms>    How long a hover or focus may take to appear. Default 1400',
     '  --thumb <WxH|none>      Downscaled frame via CDP clip.scale. Default 480x270',
     '  --thumb-state <name>    Which state supplies the thumbnail. Default overview',
     '  --name-prefix <text>    File name prefix. Default stage352',
@@ -1748,10 +2188,14 @@ function printHelp() {
     '  node scripts/stage352-capture.mjs --backend webgpu --quality ultra \\',
     '    --sizes 1920x1080,2560x1440 \\',
     '    --states overview,hover-graphics,focus-graphics,escape \\',
-    '    --coords graphics=1180,640',
+    '    --text-hidden --grayscale',
     '',
     '  node scripts/stage352-capture.mjs --backend webgl2 --reduced-motion \\',
     '    --states overview,hover-graphics,focus-graphics,escape',
+    '',
+    'Every hover and focus frame is only written after the DOM confirms the state',
+    'changed; an input that misses now fails the run instead of producing a frame',
+    'that looks like a successful interaction.',
   ];
   console.log(lines.join('\n'));
 }
@@ -1768,7 +2212,16 @@ function printPlan(plan, options) {
   console.log(`  device scale  : ${options.deviceScaleFactor}`);
   console.log(`  thumbnail     : ${options.thumb ? `${options.thumb.label} from state "${options.thumbState}"` : 'none'}`);
   console.log(`  states        : ${options.states.map((state) => state.spec).join(', ')}`);
-  console.log(`  captures      : ${plan.jobs.length}`);
+  console.log(`  domain        : ${options.domain.toUpperCase()} (engagement target)`);
+  console.log(
+    `  assertions    : ${options.assertInteractions ? `on, ${options.hoverTimeoutMs} ms hover window` : 'disabled by --no-assert'}`,
+  );
+  console.log(
+    `  variants      : ${captureVariants(options)
+      .map((variant) => variant.key)
+      .join(', ')}`,
+  );
+  console.log(`  captures      : ${plan.jobs.length * captureVariants(options).length}`);
   for (const job of plan.jobs) {
     const name = formatCaptureName({
       prefix: options.namePrefix,
@@ -1783,8 +2236,10 @@ function printPlan(plan, options) {
         ? 'no input'
         : job.state.kind === 'escape'
           ? 'Escape'
-          : `${job.state.kind} @ ${job.point.x},${job.point.y} (${job.point.source})`;
-    console.log(`    - ${job.size.label} ${job.state.name.padEnd(18)} ${input.padEnd(42)} ${name}`);
+          : job.point === null
+            ? `${job.state.kind} @ resolved from the ${options.domain.toUpperCase()} label's DOM rect`
+            : `${job.state.kind} @ ${job.point.x},${job.point.y} (${job.point.source})`;
+    console.log(`    - ${job.size.label} ${job.state.name.padEnd(18)} ${input.padEnd(58)} ${name}`);
     if (job.isThumbSource && options.thumb) {
       console.log(
         `      + thumbnail ${options.thumb.label} via clip.scale (no re-render) -> ${formatCaptureName({
@@ -2035,14 +2490,47 @@ async function runCapture(options) {
       );
     }
 
+    const variants = captureVariants(options);
+    const pointCache = new Map();
+
     for (const size of plan.sizes) {
       const sizeJobs = plan.jobs.filter((job) => job.size.label === size.label);
       await applyViewport(browser.client, sessionId, size, options);
       await delay(options.settleMs);
 
       for (const job of sizeJobs) {
-        const inputDescription = await applyState(browser.client, sessionId, job, options, size);
+        const outcome = await applyState(
+          browser.client,
+          sessionId,
+          job,
+          options,
+          size,
+          pointCache,
+        );
         await delay(options.settleMs);
+
+        if (outcome.vacuous && job.state.kind === 'escape') {
+          failures.push({
+            kind: 'escape-vacuous',
+            text: `${size.label} ${job.state.name}: ${outcome.text}; Escape cleared nothing, so the frame does not evidence a reset`,
+          });
+        }
+
+        if (!outcome.verified && options.assertInteractions) {
+          failures.push({
+            kind: 'interaction-not-landed',
+            text: `${size.label} ${job.state.name}: ${outcome.verdict?.reason ?? 'the input did not reach the scene'}. No screenshot written, because a frame that shows no response is worse than no frame.`,
+          });
+          console.log(
+            `  SKIPPED ${size.label} ${job.state.name} - interaction did not land: ${outcome.verdict?.reason ?? 'unknown'}`,
+          );
+          continue;
+        }
+        if (!outcome.verified) {
+          console.warn(
+            `  warning: ${size.label} ${job.state.name} interaction unverified (--no-assert): ${outcome.verdict?.reason ?? 'unknown'}`,
+          );
+        }
 
         const stability = await waitForReadyScene(browser.client, sessionId, options);
         if (!stability.ready && !options.allowUnready) {
@@ -2054,73 +2542,93 @@ async function runCapture(options) {
           console.warn(`  warning: ${size.label} ${job.state.name} not ready (${stability.reason})`);
         }
 
-        const png = stability.png ?? (await capturePng(browser.client, sessionId));
-        const image = decodePng(png);
-        const stats = analyzeFrame(image);
-        const name = formatCaptureName({
-          prefix: options.namePrefix,
-          backend: backendLabel(),
-          quality: options.quality,
-          sizeLabel: size.label,
-          stateName: job.state.name,
-          reducedMotion: options.reducedMotion,
-        });
-        const filePath = path.join(options.outDir, name);
-        await writeFile(filePath, png);
+        for (const variant of variants) {
+          if (variant.key !== 'plain') {
+            await setCaptureMode(browser.client, sessionId, {
+              textHidden: variant.key === 'notext',
+              grayscale: variant.key === 'gray',
+            });
+            await delay(options.settleMs);
+          }
 
-        const record = {
-          filePath,
-          name,
-          size: `${image.width}x${image.height}`,
-          state: job.state.name,
-          input: inputDescription,
-          spread: stats.spread,
-          litFraction: stats.litFraction,
-          mean: stats.mean,
-          bytes: png.length,
-        };
-        captures.push(record);
-
-        if (stats.spread < options.minSpread || stats.litFraction < options.minLitFraction) {
-          failures.push({
-            kind: 'flat-frame',
-            text: `${name} looks flat (spread ${stats.spread.toFixed(1)}, lit ${(stats.litFraction * 100).toFixed(2)}%)`,
-          });
-        }
-
-        console.log(
-          `  ${name}  ${record.size}  spread ${stats.spread.toFixed(1)}  lit ${(stats.litFraction * 100).toFixed(2)}%  ${(png.length / 1024).toFixed(0)} KiB  [${inputDescription}]`,
-        );
-
-        if (job.isThumbSource && options.thumb) {
-          const thumbnail = await captureThumbnail(browser.client, sessionId, size, options.thumb);
-          const thumbImage = decodePng(thumbnail.png);
-          const thumbName = formatCaptureName({
+          const png = await capturePng(browser.client, sessionId);
+          const image = decodePng(png);
+          const stats = analyzeFrame(image);
+          const name = formatCaptureName({
             prefix: options.namePrefix,
             backend: backendLabel(),
             quality: options.quality,
             sizeLabel: size.label,
             stateName: job.state.name,
             reducedMotion: options.reducedMotion,
-            suffix: `-thumb-${options.thumb.label}`,
+            suffix: variant.suffix,
           });
-          const thumbPath = path.join(options.outDir, thumbName);
-          await writeFile(thumbPath, thumbnail.png);
-          captures.push({
-            filePath: thumbPath,
-            name: thumbName,
-            size: `${thumbImage.width}x${thumbImage.height}`,
-            state: `${job.state.name} (thumbnail)`,
-            input: `clip.scale ${thumbnail.scale.toFixed(4)}`,
-            bytes: thumbnail.png.length,
-          });
+          const filePath = path.join(options.outDir, name);
+          await writeFile(filePath, png);
+
+          const record = {
+            filePath,
+            name,
+            size: `${image.width}x${image.height}`,
+            state: job.state.name,
+            variant: variant.key,
+            input: outcome.text,
+            spread: stats.spread,
+            litFraction: stats.litFraction,
+            mean: stats.mean,
+            bytes: png.length,
+          };
+          captures.push(record);
+
+          if (stats.spread < options.minSpread || stats.litFraction < options.minLitFraction) {
+            failures.push({
+              kind: 'flat-frame',
+              text: `${name} looks flat (spread ${stats.spread.toFixed(1)}, lit ${(stats.litFraction * 100).toFixed(2)}%)`,
+            });
+          }
+
           console.log(
-            `  ${thumbName}  ${thumbImage.width}x${thumbImage.height}  ${(thumbnail.png.length / 1024).toFixed(0)} KiB  [clip.scale ${thumbnail.scale.toFixed(4)}]`,
+            `  ${name}  ${record.size}  spread ${stats.spread.toFixed(1)}  lit ${(stats.litFraction * 100).toFixed(2)}%  ${(png.length / 1024).toFixed(0)} KiB  [${outcome.text}]`,
           );
-          if (Math.abs(thumbImage.width - options.thumb.width) > 1) {
-            console.warn(
-              `  warning: thumbnail width ${thumbImage.width} does not match the requested ${options.thumb.width}`,
+
+          if (job.isThumbSource && options.thumb && variant.key === 'plain') {
+            const thumbnail = await captureThumbnail(browser.client, sessionId, size, options.thumb);
+            const thumbImage = decodePng(thumbnail.png);
+            const thumbName = formatCaptureName({
+              prefix: options.namePrefix,
+              backend: backendLabel(),
+              quality: options.quality,
+              sizeLabel: size.label,
+              stateName: job.state.name,
+              reducedMotion: options.reducedMotion,
+              suffix: `-thumb-${options.thumb.label}`,
+            });
+            const thumbPath = path.join(options.outDir, thumbName);
+            await writeFile(thumbPath, thumbnail.png);
+            captures.push({
+              filePath: thumbPath,
+              name: thumbName,
+              size: `${thumbImage.width}x${thumbImage.height}`,
+              state: `${job.state.name} (thumbnail)`,
+              variant: 'thumb',
+              input: `clip.scale ${thumbnail.scale.toFixed(4)}`,
+              bytes: thumbnail.png.length,
+            });
+            console.log(
+              `  ${thumbName}  ${thumbImage.width}x${thumbImage.height}  ${(thumbnail.png.length / 1024).toFixed(0)} KiB  [clip.scale ${thumbnail.scale.toFixed(4)}]`,
             );
+            if (Math.abs(thumbImage.width - options.thumb.width) > 1) {
+              console.warn(
+                `  warning: thumbnail width ${thumbImage.width} does not match the requested ${options.thumb.width}`,
+              );
+            }
+          }
+
+          if (variant.key !== 'plain') {
+            await setCaptureMode(browser.client, sessionId, {
+              textHidden: false,
+              grayscale: false,
+            });
           }
         }
       }
