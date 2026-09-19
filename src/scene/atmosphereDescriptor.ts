@@ -33,7 +33,7 @@ const BACKDROP: readonly StructureFormPart[] = [
   {
     shape: 'form',
     tier: 'recess',
-    membrane: false,
+    surface: 'recess',
     position: [0, 0, -21],
     rotation: [0, 0.06, 0.03],
     scale: [60, 34, 0.6],
@@ -41,7 +41,7 @@ const BACKDROP: readonly StructureFormPart[] = [
   {
     shape: 'form',
     tier: 'recess',
-    membrane: false,
+    surface: 'recess',
     position: [-2.4, 1.2, -14.5],
     rotation: [0.02, -0.05, -0.04],
     scale: [48, 27, 0.5],
@@ -49,7 +49,7 @@ const BACKDROP: readonly StructureFormPart[] = [
   {
     shape: 'form',
     tier: 'recess',
-    membrane: false,
+    surface: 'recess',
     position: [3.2, -0.8, -10.2],
     rotation: [-0.03, 0.04, 0.05],
     scale: [40, 23, 0.4],

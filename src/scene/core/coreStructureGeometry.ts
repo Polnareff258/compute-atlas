@@ -19,20 +19,18 @@ export type CoreStructureGeometry = BakedStructureGeometry;
  * vocabulary.
  *
  * The Core keeps `band` and `fade` because it uses them for its own layering and
- * for membrane openness; the baker only needs tier, orientation and whether a
- * member is a membrane, so that is all this passes on.
+ * for membrane openness; the baker needs the tier, the finish and the shape, so
+ * that is all this passes on.
  */
 function toStructureParts(
   members: readonly CoreStructureMember[],
 ): StructurePart[] {
   return members.map((member): StructurePart => {
-    const membrane = member.shape === 'membrane';
-
     if (member.shape === 'hull') {
       return {
         shape: 'hull',
         tier: member.tier,
-        membrane,
+        surface: member.surface,
         start: member.start,
         end: member.end,
         facets: member.facets,
@@ -41,11 +39,25 @@ function toStructureParts(
       };
     }
 
+    if (member.shape === 'path') {
+      return {
+        shape: 'path',
+        tier: member.tier,
+        surface: member.surface,
+        points: member.points,
+        closed: member.closed,
+        halfWidth: member.halfWidth,
+        halfHeight: member.halfHeight,
+        chamfer: member.chamfer,
+        reference: member.reference,
+      };
+    }
+
     if (member.shape === 'beam') {
       return {
         shape: 'span',
         tier: member.tier,
-        membrane,
+        surface: member.surface,
         start: member.start,
         end: member.end,
         width: member.width,
@@ -56,7 +68,7 @@ function toStructureParts(
     return {
       shape: 'form',
       tier: member.tier,
-      membrane,
+      surface: member.surface,
       position: member.position,
       rotation: member.rotation,
       scale: member.scale,
@@ -65,7 +77,7 @@ function toStructureParts(
 }
 
 /**
- * Merges the whole structure into a solid mass and its membranes.
+ * Merges the whole structure into one geometry per finish.
  *
  * Ports are excluded: they are drawn individually so the active source zone can
  * light up on its own.
@@ -98,7 +110,11 @@ export function buildPortGeometry(port: CoreStructurePort): THREE.BufferGeometry
   return buildPartGeometry({
     shape: 'span',
     tier: 'primary',
-    membrane: false,
+    // A socket is baked in the accent finish because it is a small, bright,
+    // precisely placed element and that is what the accent class means. Its
+    // material role is `port`: the socket answers state through the port curve
+    // while its baked colour comes from the accent finish.
+    surface: 'accent',
     start: [
       center[0] - unit[0] * half,
       center[1] - unit[1] * half,

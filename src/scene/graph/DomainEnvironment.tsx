@@ -10,6 +10,7 @@ import { createSurfaceMaterial } from '../materials/surfaceMaterial';
 import {
   buildPartGeometry,
   buildStructureGeometry,
+  usedSurfaceClasses,
 } from '../materials/structureGeometry';
 import { easeApproach } from '../routing/routeFlow';
 import type { DomainEnvironment } from './domainEnvironments';
@@ -89,45 +90,40 @@ export function DomainEnvironmentView({
    */
   const labelVerticalSide = environment.anchor[1] > 0 ? 1 : -1;
   const geometry = useMemo(() => buildStructureGeometry(environment.parts), [environment]);
+  const classes = useMemo(() => usedSurfaceClasses(environment.parts), [environment]);
   const movableGeometries = useMemo(
     () => environment.movables.map((movable) => buildPartGeometry(movable.part)),
     [environment],
   );
 
-  const materials = useMemo(() => {
-    return {
-      solid: createSurfaceMaterial({
-        role: 'volume',
-        color: '#ffffff',
-      }),
-      // The one role that is genuinely a different *surface* rather than a
-      // different response, so it is the one that keeps a tint of its own.
-      membrane: createSurfaceMaterial({
-        role: 'membrane',
-        color: MACHINE_PALETTE.membrane,
-        baseFade: 0.3,
-      }),
+  const materials = useMemo(
+    () =>
+      classes.map((surface) =>
+        createSurfaceMaterial({
+          role: surface,
+          // A membrane's tint is its own palette entry; every solid class renders
+          // white and lets the tier colour baked into its geometry carry the
+          // value. These used to be tinted with the palette's port colours, so
+          // every moving layer rendered as `portQuiet * tier` — two mid-tones
+          // multiplied into a dark olive, which is why a focused GRAPHICS was a
+          // small dark-green mass under a bright Core instead of the subject of
+          // its own frame.
+          color: surface === 'membrane' ? MACHINE_PALETTE.membrane : '#ffffff',
+          ...(surface === 'membrane' ? { baseFade: 0.3 } : {}),
+        }),
+      ),
+    [classes],
+  );
+
+  const movableMaterials = useMemo(
+    () => ({
       // The domain's own machinery, not a socket: it rests deep and answers
       // hardest, so a working domain lights from the inside out.
-      //
-      // White, because a surface material's colour multiplies the tier colour
-      // already baked into the geometry. These were tinted with the palette's
-      // port colours, so every moving layer and every socket rendered as
-      // `portQuiet * tier` — two mid-tones multiplied into a dark olive, which
-      // is why a focused GRAPHICS was a small dark-green mass under a bright
-      // Core instead of the subject of its own frame. The role's identity is its
-      // response curve (see `machinePalette`), and the tier baked into the
-      // geometry is what carries the colour.
-      interior: createSurfaceMaterial({
-        role: 'interior',
-        color: '#ffffff',
-      }),
-      ingress: createSurfaceMaterial({
-        role: 'port',
-        color: '#ffffff',
-      }),
-    };
-  }, []);
+      interior: createSurfaceMaterial({ role: 'accent', color: '#ffffff' }),
+      ingress: createSurfaceMaterial({ role: 'port', color: '#ffffff' }),
+    }),
+    [],
+  );
 
   const meshesRef = useRef<(THREE.Mesh | null)[]>([]);
   /** Eased locally, so the surfaces settle at the rate the routes do. */
@@ -143,12 +139,11 @@ export function DomainEnvironmentView({
     () => () => {
       geometry.dispose();
       for (const movable of movableGeometries) movable.dispose();
-      materials.solid.dispose();
-      materials.membrane.dispose();
-      materials.interior.dispose();
-      materials.ingress.dispose();
+      for (const material of materials) material.dispose();
+      movableMaterials.interior.dispose();
+      movableMaterials.ingress.dispose();
     },
-    [geometry, materials, movableGeometries],
+    [geometry, materials, movableGeometries, movableMaterials],
   );
 
   useFrame((_, delta) => {
@@ -180,24 +175,33 @@ export function DomainEnvironmentView({
     // second ranking competing with the subject.
     const shown = dimmed ? RECEDED_DOMAIN_PRESENCE : resting + (1 - resting) * pose;
 
-    materials.solid.updateInput({
-      activity: pose,
-      focus: pose * pose,
-      presence: shown,
-    });
-    materials.membrane.updateInput({
-      activity: pose * 0.9,
-      focus: pose,
-      presence: shown,
-    });
-    materials.interior.updateInput({
+    // Each finish answers at its own depth. The shell holds the silhouette and
+    // barely moves; the recesses and the accents carry the engagement, which is
+    // what makes a working domain read as lit from inside rather than as one
+    // that has been turned up.
+    for (let index = 0; index < classes.length; index += 1) {
+      const surface = classes[index];
+      const material = materials[index];
+      if (!surface || !material) continue;
+      const drive = surface === 'shell' ? pose * 0.35 : surface === 'recess' ? 0.3 + pose * 0.7 : pose;
+      material.updateInput({
+        activity: drive,
+        focus: pose * pose,
+        proximity: pose * 0.8,
+        presence: shown,
+      });
+    }
+
+    movableMaterials.interior.updateInput({
       activity: 0.25 + pose * 0.75,
       focus: pose,
+      proximity: pose,
       presence: shown,
     });
-    materials.ingress.updateInput({
+    movableMaterials.ingress.updateInput({
       activity: 0.3 + pose * 0.7,
       focus: pose,
+      proximity: pose,
       presence: shown,
     });
   });
@@ -211,12 +215,18 @@ export function DomainEnvironmentView({
         environment.anchor[2],
       ]}
     >
-      <mesh geometry={geometry.solid} material={materials.solid.material} renderOrder={0} />
-      <mesh
-        geometry={geometry.membrane}
-        material={materials.membrane.material}
-        renderOrder={3}
-      />
+      {classes.map((surface, index) => {
+        const material = materials[index];
+        if (!material) return null;
+        return (
+          <mesh
+            geometry={geometry.surfaces[surface]}
+            key={surface}
+            material={material.material}
+            renderOrder={surface === 'membrane' ? 3 : 0}
+          />
+        );
+      })}
       {environment.movables.map((movable, index) => {
         const movableGeometry = movableGeometries[index];
         if (!movableGeometry) return null;
@@ -226,8 +236,8 @@ export function DomainEnvironmentView({
             key={movable.id}
             material={
               movable.role === 'ingress'
-                ? materials.ingress.material
-                : materials.interior.material
+                ? movableMaterials.ingress.material
+                : movableMaterials.interior.material
             }
             ref={(mesh) => {
               meshesRef.current[index] = mesh;

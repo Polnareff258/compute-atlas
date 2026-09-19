@@ -8,23 +8,51 @@ export const CAMERA_FOV_DEGREES = 48;
 const HALF_FOV_TAN = Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 360);
 
 /**
- * Idle camera distance. The hero is framed to read at roughly half the frame.
+ * Idle camera distance, and the number the whole composition is set against.
  *
- * Re-derived when the Core was rebuilt from lofted hulls: the new body is
- * several units across where the old assembly of slabs was under two, and a
- * distance that framed the old one put the new one over four fifths of the
- * frame with its shoulders covering three domains. This is the number that keeps
- * the documented intent true rather than the number that was true once.
+ * The Core is a monolith several world units across, and this distance is what
+ * makes it read at 55–65% of the frame — the band at which the page is a
+ * computational environment rather than a diagram of one. It is deliberately
+ * tied to `CORE_SCALE` rather than to the layout: the ratio of the two is what
+ * sets the fraction of the frame the mass occupies, so rescaling the hero
+ * without moving the camera here would silently change the composition, and
+ * that is the failure this comment exists to prevent.
  */
-export const BASE_CAMERA_DISTANCE = 7.6;
+export const BASE_CAMERA_DISTANCE = 9.1;
 /** Where the camera sits when nothing is bound: negative, so the Core reads right of centre. */
-const IDLE_CAMERA_OFFSET_X = -0.42;
-/** Half-frames either side of the pivot the active route has to fit inside. */
+const IDLE_CAMERA_OFFSET_X = -0.55;
+/**
+ * Half-frames either side of the pivot the active route has to fit inside.
+ *
+ * This is the number that puts the two ends of the active route on the thirds,
+ * and it is worth being explicit about why, because it looks like a taste
+ * setting and is not one. The camera slides half way to the bound domain and
+ * pulls back until the frame holds `FOCUS_HALF_FRAMES · reach` either side of
+ * that midpoint; the origin is then `reach/2` from the optical axis and the
+ * frame's half-width is `FOCUS_HALF_FRAMES · reach`, so the Core lands at
+ * `1/(2 · FOCUS_HALF_FRAMES)` of the half-frame. At 1.5 that is exactly a third.
+ *
+ * It was tried at 1.15 while the hero was being rebuilt, on the reasoning that a
+ * tighter frame is the dolly-in the choreography calls for. The arithmetic says
+ * otherwise on both counts: 1/2.3 puts the Core at 0.43 of the half-frame, which
+ * with a Core half a frame wide leaves its whole left side outside the frame,
+ * and the pair stops reading as a diagonal and becomes a close-up of the hero.
+ * The subject of a focus frame is the Core *and* the domain, so the frame has to
+ * be wide enough for both, and the movement toward the subject is the camera's
+ * own slide along the route rather than a change of distance.
+ */
 const FOCUS_HALF_FRAMES = 1.5;
 /** Where the frame centres along the route. Half way puts the ends on the two thirds. */
 const FOCUS_PIVOT_FRACTION = 0.5;
-const MIN_CAMERA_DISTANCE = 4;
-const MAX_CAMERA_DISTANCE = 14;
+const MIN_CAMERA_DISTANCE = 5;
+/**
+ * The backstop on the dolly, twice the idle distance.
+ *
+ * No legal focus resolves anywhere near it — the furthest of the five domains
+ * asks for 11.7 against an idle 9.1 — so this exists only to keep a hostile or
+ * future input from dissolving the composition into a wide shot.
+ */
+const MAX_CAMERA_DISTANCE = 18;
 /** Handheld response to the pointer, in world units at full response. */
 const POINTER_SWING_X = 0.13;
 const POINTER_SWING_Y = 0.1;

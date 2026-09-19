@@ -4,7 +4,10 @@ import type { JSX } from 'react';
 import { useEffect, useMemo } from 'react';
 
 import { createSurfaceMaterial } from './materials/surfaceMaterial';
-import { buildStructureGeometry } from './materials/structureGeometry';
+import {
+  buildStructureGeometry,
+  usedSurfaceClasses,
+} from './materials/structureGeometry';
 import { deriveAtmosphereDescriptor } from './atmosphereDescriptor';
 
 /**
@@ -22,35 +25,43 @@ import { deriveAtmosphereDescriptor } from './atmosphereDescriptor';
 export function Atmosphere(): JSX.Element {
   const descriptor = useMemo(() => deriveAtmosphereDescriptor(), []);
   const geometry = useMemo(() => buildStructureGeometry(descriptor.parts), [descriptor]);
-  const material = useMemo(
+  const classes = useMemo(() => usedSurfaceClasses(descriptor.parts), [descriptor]);
+  const materials = useMemo(
     () =>
-      createSurfaceMaterial({
-        role: 'volume',
-        color: '#ffffff',
-      }),
-    [],
+      classes.map((surface) =>
+        createSurfaceMaterial({ role: surface, color: '#ffffff' }),
+      ),
+    [classes],
   );
 
   useEffect(
     () => () => {
       geometry.dispose();
-      material.dispose();
+      for (const material of materials) material.dispose();
     },
-    [geometry, material],
+    [geometry, materials],
   );
 
   useEffect(() => {
     // The backdrop carries no activity of its own: it is the one surface in the
     // scene that is not allowed to move.
-    material.updateInput({ activity: 0, focus: 0 });
-  }, [material]);
+    for (const material of materials) material.updateInput({ activity: 0, focus: 0 });
+  }, [materials]);
 
   return (
-    <mesh
-      geometry={geometry.solid}
-      material={material.material}
-      name="scene-atmosphere"
-      renderOrder={-1}
-    />
+    <group name="scene-atmosphere">
+      {classes.map((surface, index) => {
+        const material = materials[index];
+        if (!material) return null;
+        return (
+          <mesh
+            geometry={geometry.surfaces[surface]}
+            key={surface}
+            material={material.material}
+            renderOrder={-1}
+          />
+        );
+      })}
+    </group>
   );
 }

@@ -2,6 +2,7 @@ import type { GraphPosition } from '../../graph/types';
 import type {
   StructurePart,
   StructureTier,
+  SurfaceClass,
 } from '../materials/structureGeometry';
 import type { DomainIngress, DomainVisualNodeId } from '../routing/graphRoutes';
 
@@ -79,9 +80,9 @@ function form(
   position: Vector,
   scale: Vector,
   rotation: Vector = [0, 0, 0],
-  membrane = false,
+  surface: SurfaceClass = 'shell',
 ): StructurePart {
-  return { shape: 'form', tier, membrane, position, rotation, scale };
+  return { shape: 'form', tier, surface, position, rotation, scale };
 }
 
 function span(
@@ -90,9 +91,9 @@ function span(
   end: Vector,
   width: number,
   depth = width,
-  membrane = false,
+  surface: SurfaceClass = 'shell',
 ): StructurePart {
-  return { shape: 'span', tier, membrane, start, end, width, depth };
+  return { shape: 'span', tier, surface, start, end, width, depth };
 }
 
 /** Thin vertical plate: a membrane in the machine's own idiom. */
@@ -102,7 +103,7 @@ function plate(
   scale: Vector,
   rotation: Vector = [0, 0, 0],
 ): StructurePart {
-  return form(tier, position, scale, rotation, true);
+  return form(tier, position, scale, rotation, 'membrane');
 }
 
 function normalize(vector: Vector): Vector {
@@ -550,7 +551,7 @@ function trimForDetail(
     frame:
       bounded >= PAIRED_INTERIOR_DETAIL
         ? frame
-        : frame.filter((part) => !part.membrane || part.tier !== 'detail'),
+        : frame.filter((part) => part.surface !== 'membrane' || part.tier !== 'detail'),
     movables: movables.filter((movable) => movable.role === 'ingress').concat(
       movables.filter((movable) => movable.role === 'interior').slice(0, kept),
     ),

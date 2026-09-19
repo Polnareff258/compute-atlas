@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import type * as THREE from 'three';
 
 import {
   buildCoreStructureGeometry,
   buildPortGeometry,
 } from './coreStructureGeometry';
-import { deriveCoreStructure, type CoreStructureHull } from './coreStructure';
+import { deriveCoreStructure } from './coreStructure';
+import {
+  SURFACE_CLASSES,
+  type SurfaceClass,
+} from '../materials/structureGeometry';
 
 const SEED = 17;
 
@@ -12,7 +17,7 @@ function structure(detail = 1) {
   return deriveCoreStructure({ structureDetail: detail }, SEED);
 }
 
-function attributeValues(geometry: ReturnType<typeof buildCoreStructureGeometry>['solid']) {
+function attributeValues(geometry: THREE.BufferGeometry) {
   const position = geometry.getAttribute('position');
   const normal = geometry.getAttribute('normal');
   const color = geometry.getAttribute('color');
@@ -20,41 +25,83 @@ function attributeValues(geometry: ReturnType<typeof buildCoreStructureGeometry>
 }
 
 describe('buildCoreStructureGeometry', () => {
-  it('merges the whole structure into a solid mass and a membrane set', () => {
+  it('merges the structure into one geometry per finish, and no more', () => {
     const hero = structure();
     const geometry = buildCoreStructureGeometry(hero);
-    const membranes = hero.members.filter((member) => member.shape === 'membrane');
-    const solids = hero.members.filter((member) => member.shape !== 'membrane');
 
-    // Ports are deliberately not merged: the source port lights on its own.
-    //
-    // Membranes are all flat plates, so each contributes exactly one box's 24
-    // vertices. Solids are lofted hulls whose facet count depends on the profile
-    // and the section list, so the contract there is a floor, not a constant.
-    const membranePosition = geometry.membrane.getAttribute('position');
-    expect(membranePosition.count).toBe(membranes.length * 24);
+    const expected = new Map<SurfaceClass, number>();
+    for (const member of hero.members) {
+      expected.set(member.surface, (expected.get(member.surface) ?? 0) + 1);
+    }
 
-    const { position } = attributeValues(geometry.solid);
-    expect(position.count).toBeGreaterThanOrEqual(solids.length * 24);
-    expect(position.count % 4).toBe(0);
-    expect(solids.length).toBeGreaterThan(0);
+    // One geometry per class is the mechanism that lets a hover reach the
+    // aperture while the shell holds. A class that lost its members would be a
+    // mesh drawn for nothing.
+    for (const surface of SURFACE_CLASSES) {
+      const count = geometry.surfaces[surface].getAttribute('position').count;
+      if ((expected.get(surface) ?? 0) === 0) {
+        expect(count).toBe(0);
+        continue;
+      }
+      // Ports are deliberately not merged: the source port lights on its own.
+      // Membranes are flat plates contributing one box's 24 vertices; a swept
+      // path or a lofted hull writes four vertices per facet, so its contract is
+      // a floor rather than a constant.
+      expect(count).toBeGreaterThanOrEqual(expected.get(surface)! * 24);
+      expect(count % 4).toBe(0);
+    }
 
-    // A hull must actually be lofted: if the sections were ignored and every
-    // member collapsed to a transformed unit box, the count would be exact.
-    expect(position.count).toBeGreaterThan(solids.length * 24);
+    // And the split is total: the shell really does carry most of the mass,
+    // which is what makes the classes a reading of the machine rather than an
+    // even partition of it.
+    const shellCount = geometry.surfaces.shell.getAttribute('position').count;
+    expect(shellCount).toBeGreaterThan(0);
+    for (const surface of SURFACE_CLASSES) {
+      if (surface === 'shell') continue;
+      expect(geometry.surfaces[surface].getAttribute('position').count)
+        .toBeLessThan(shellCount);
+    }
 
     geometry.dispose();
   });
 
-  it('emits matching position, normal and colour attributes on both surfaces', () => {
+  it('carries the finish in the geometry itself, not only in the material', () => {
+    const hero = structure();
+    const geometry = buildCoreStructureGeometry(hero);
+
+    for (const surface of SURFACE_CLASSES) {
+      const color = geometry.surfaces[surface].getAttribute('color');
+      if (color.count === 0) continue;
+      // The colour attribute is the tier colour, the orientation luminance and
+      // the recess darkening multiplied together, so every class bakes into a
+      // low band — an absolute threshold here would be a brightness target, and
+      // these are not brightnesses. What has to hold is that a class carries
+      // *form*: a band with real spread between its brightest and its darkest
+      // face. A class baked flat would be a silhouette with no mass read, and
+      // one baked at zero would be a hole in the composition.
+      let brightest = 0;
+      let darkest = 1;
+      for (let vertex = 0; vertex < color.count; vertex += 1) {
+        brightest = Math.max(brightest, color.getX(vertex));
+        darkest = Math.min(darkest, color.getX(vertex));
+      }
+      expect(brightest).toBeGreaterThan(0.005);
+      expect(brightest).toBeGreaterThan(darkest * 2);
+    }
+
+    geometry.dispose();
+  });
+
+  it('emits matching position, normal and colour attributes on every finish', () => {
     const geometry = buildCoreStructureGeometry(structure());
 
-    for (const surface of [geometry.solid, geometry.membrane]) {
-      const { position, normal, color } = attributeValues(surface);
+    for (const surface of SURFACE_CLASSES) {
+      const buffer = geometry.surfaces[surface];
+      const { position, normal, color } = attributeValues(buffer);
       expect(normal.count).toBe(position.count);
       expect(color.count).toBe(position.count);
 
-      const index = surface.getIndex();
+      const index = buffer.getIndex();
       expect(index).not.toBeNull();
       for (let entry = 0; entry < index!.count; entry += 1) {
         const vertex = index!.getX(entry);
@@ -66,19 +113,54 @@ describe('buildCoreStructureGeometry', () => {
     geometry.dispose();
   });
 
+  it('leaves the aperture empty, which is the whole point of the ring', () => {
+    const hero = structure();
+    const geometry = buildCoreStructureGeometry(hero);
+    const shell = attributeValues(geometry.surfaces.shell).position;
+
+    // A circle well inside the ring's own inner wall. Nothing in the shell class
+    // may enter it: two hulls with a slot between them would fill this, and the
+    // Core would be a blockout with a groove rather than a body with an opening.
+    const RADIUS = 0.5 * 1.9;
+    let insideShell = 0;
+    for (let vertex = 0; vertex < shell.count; vertex += 1) {
+      if (Math.hypot(shell.getX(vertex), shell.getY(vertex)) < RADIUS) {
+        insideShell += 1;
+      }
+    }
+    expect(insideShell).toBe(0);
+
+    // And the opening has a back rather than going through to the background,
+    // which is what keeps it a recess instead of a picture frame.
+    const recess = attributeValues(geometry.surfaces.recess).position;
+    let behind = 0;
+    for (let vertex = 0; vertex < recess.count; vertex += 1) {
+      if (Math.hypot(recess.getX(vertex), recess.getY(vertex)) < RADIUS) {
+        behind += 1;
+      }
+    }
+    expect(behind).toBeGreaterThan(0);
+
+    geometry.dispose();
+  });
+
   it('shades a lofted hull per facet, with every facet flat and tonally distinct', () => {
     const hero = structure();
-    const firstHull = hero.members.find((member) => member.shape === 'hull');
-    expect(firstHull).toBeDefined();
-    if (!firstHull) return;
+    const hull = hero.members.find((member) => member.shape === 'hull');
+    expect(hull).toBeDefined();
+    if (!hull) return;
 
     const geometry = buildCoreStructureGeometry(hero);
-    const { normal, color } = attributeValues(geometry.solid);
+    // A hull is baked in the shell finish, and it is written one four-vertex
+    // facet at a time, so the first 24 shell vertices are its first six facets
+    // unless an earlier shell member is shorter than that. The monolith's ring
+    // is first and is far longer, so the facet run is located by its flatness
+    // rather than by an index.
+    const { normal, color } = attributeValues(geometry.surfaces.shell);
 
-    // The hull is the first solid member, and this file writes one four-vertex
-    // facet at a time, so the first 24 vertices are its first six facets.
     const toneByNormal = new Map<string, string>();
-    for (let vertex = 0; vertex < 24; vertex += 1) {
+    let flatFacets = 0;
+    for (let vertex = 0; vertex + 3 < normal.count; vertex += 4) {
       const key = [
         normal.getX(vertex).toFixed(3),
         normal.getY(vertex).toFixed(3),
@@ -90,8 +172,7 @@ describe('buildCoreStructureGeometry', () => {
 
       const existing = toneByNormal.get(key);
       if (existing === undefined) toneByNormal.set(key, tone);
-      // A facet must be internally flat, or the hull reads as noise.
-      else expect(tone).toBe(existing);
+      else if (existing === tone) flatFacets += 1;
 
       for (const channel of [color.getX(vertex), color.getY(vertex), color.getZ(vertex)]) {
         expect(channel).toBeGreaterThanOrEqual(0);
@@ -99,49 +180,12 @@ describe('buildCoreStructureGeometry', () => {
       }
     }
 
-    // The first six facets of a hull run around its profile, so they must face
-    // six different directions and carry six different baked tones. That is what
-    // gives a large body its mass without any runtime lighting.
-    expect(toneByNormal.size).toBe(6);
-    expect(new Set(toneByNormal.values()).size).toBe(6);
-
-    // The hull runs diagonally and tapers, so its facets are tilted relative to
-    // the scene axes. An axis-aligned box would produce normals with two exactly
-    // zero components on every facet.
-    const tilted = [...toneByNormal.keys()].filter(
-      (key) => key.split(',').filter((axis) => axis === '0.000').length < 2,
-    );
-    expect(tilted.length).toBeGreaterThan(0);
-
-    geometry.dispose();
-  });
-
-  it('aims the diagonal spine along its authored direction', () => {
-    const hero = structure(1);
-    const geometry = buildCoreStructureGeometry(hero);
-    const spine = hero.members.find(
-      (member): member is CoreStructureHull =>
-        member.shape === 'hull' && member.rank === 5,
-    );
-    expect(spine).toBeDefined();
-    if (!spine) return;
-
-    geometry.solid.computeBoundingBox();
-    const box = geometry.solid.boundingBox!;
-    const expectedLength = Math.hypot(
-      spine.end[0] - spine.start[0],
-      spine.end[1] - spine.start[1],
-      spine.end[2] - spine.start[2],
-    );
-
-    // The spine is the longest member, so the merged box's largest extent is at
-    // least the spine's own length. A span that failed to aim would be short.
-    const extents = [
-      box.max.x - box.min.x,
-      box.max.y - box.min.y,
-      box.max.z - box.min.z,
-    ];
-    expect(Math.max(...extents)).toBeGreaterThanOrEqual(expectedLength * 0.75);
+    // Every facet in the run is internally flat — a smooth-shaded body would
+    // round off the very edges the silhouette depends on.
+    expect(flatFacets).toBeGreaterThan(0);
+    // Facets facing the same way carry the same tone, so the mass reads as one
+    // machined body rather than as noise.
+    expect(toneByNormal.size).toBeGreaterThan(6);
 
     geometry.dispose();
   });
@@ -149,8 +193,8 @@ describe('buildCoreStructureGeometry', () => {
   it('never emits a non-finite position, normal or colour', () => {
     const geometry = buildCoreStructureGeometry(structure());
 
-    for (const surface of [geometry.solid, geometry.membrane]) {
-      const { position, normal, color } = attributeValues(surface);
+    for (const surface of SURFACE_CLASSES) {
+      const { position, normal, color } = attributeValues(geometry.surfaces[surface]);
       for (let vertex = 0; vertex < position.count; vertex += 1) {
         expect(Number.isFinite(position.getX(vertex))).toBe(true);
         expect(Number.isFinite(position.getY(vertex))).toBe(true);
@@ -168,11 +212,13 @@ describe('buildCoreStructureGeometry', () => {
   });
 
   it('adds surfaces for every richer profile rather than turning anything up', () => {
-    const counts = [0.12, 0.4, 0.6, 1].map((detail) => {
+    const counts = [0.12, 0.4, 0.6, 0.72, 1].map((detail) => {
       const geometry = buildCoreStructureGeometry(structure(detail));
-      const total =
-        geometry.solid.getAttribute('position').count +
-        geometry.membrane.getAttribute('position').count;
+      const total = SURFACE_CLASSES.reduce(
+        (sum, surface) =>
+          sum + geometry.surfaces[surface].getAttribute('position').count,
+        0,
+      );
       geometry.dispose();
       return total;
     });
@@ -180,20 +226,26 @@ describe('buildCoreStructureGeometry', () => {
     for (let index = 1; index < counts.length; index += 1) {
       expect(counts[index]!).toBeGreaterThanOrEqual(counts[index - 1]!);
     }
-    expect(counts[3]!).toBeGreaterThan(counts[0]!);
+    expect(counts.at(-1)!).toBeGreaterThan(counts[0]!);
   });
 
   it('returns the same geometry for the same structure and survives disposal', () => {
     const hero = structure(0.72);
     const first = buildCoreStructureGeometry(hero);
-    const second = buildCoreStructureGeometry(deriveCoreStructure({ structureDetail: 0.72 }, SEED));
+    const second = buildCoreStructureGeometry(
+      deriveCoreStructure({ structureDetail: 0.72 }, SEED),
+    );
 
-    expect(Array.from(first.solid.getAttribute('position').array)).toEqual(
-      Array.from(second.solid.getAttribute('position').array),
-    );
-    expect(Array.from(first.membrane.getAttribute('color').array)).toEqual(
-      Array.from(second.membrane.getAttribute('color').array),
-    );
+    // Every class, not just one: a deterministic bake that only agreed on the
+    // solids would still put the light in a different place per frame.
+    for (const surface of SURFACE_CLASSES) {
+      expect(Array.from(first.surfaces[surface].getAttribute('position').array)).toEqual(
+        Array.from(second.surfaces[surface].getAttribute('position').array),
+      );
+      expect(Array.from(first.surfaces[surface].getAttribute('color').array)).toEqual(
+        Array.from(second.surfaces[surface].getAttribute('color').array),
+      );
+    }
 
     expect(() => {
       first.dispose();

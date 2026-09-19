@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { GRAPH_MANIFEST } from '../../graph/graphManifest';
 import { deriveGraphLayout } from '../../graph/layout';
 import type { GraphNodeId } from '../../graph/types';
+import { deriveCoreStructure } from '../core/coreStructure';
 import {
   BASE_CAMERA_DISTANCE,
   CAMERA_FOV_DEGREES,
@@ -234,16 +235,27 @@ describe('deriveCameraFraming', () => {
     expect(focused.positionZ).not.toBe(idle.positionZ);
   });
 
-  it('keeps the hero at roughly half the frame at the idle distance', () => {
-    // The Core's own span, measured from the built structure rather than
-    // guessed: this is the number the idle distance has to be derived against,
-    // and the reason it moved when the Core was rebuilt.
-    const CORE_HALF_WIDTH = 2.6;
+  it('keeps the hero at three fifths of the frame at the idle distance', () => {
+    // Both numbers are read rather than guessed: the Core's own half-extent
+    // comes from the built structure, and the frame's from the rig. This is the
+    // composition contract the idle distance is derived against — the reason
+    // `BASE_CAMERA_DISTANCE` moved when the Core was rebuilt — so a test holding
+    // yesterday's constants would go on passing while describing a frame the
+    // page no longer draws.
+    const hero = deriveCoreStructure({ structureDetail: 1 }, 17);
     const halfWidth = BASE_CAMERA_DISTANCE * HALF_FOV_TAN * ASPECT;
-    const fraction = CORE_HALF_WIDTH / halfWidth;
+    const fraction = hero.bounds[0] / halfWidth;
 
-    expect(fraction).toBeGreaterThan(0.3);
-    expect(fraction).toBeLessThan(0.55);
+    expect(fraction).toBeGreaterThan(0.5);
+    expect(fraction).toBeLessThan(0.68);
+
+    // And the reframe distance the bound domains ask for stays inside the rig's
+    // own range, so the thirds are never broken by the clamp.
+    for (const nodeId of DOMAIN_IDS) {
+      const framing = framingForDomain(nodeId);
+      expect(framing.positionZ).toBeGreaterThan(BASE_CAMERA_DISTANCE * 0.6);
+      expect(framing.positionZ).toBeLessThan(BASE_CAMERA_DISTANCE * 2);
+    }
   });
 
   it('keeps the dolly inside a usable range at every aspect and distance', () => {
@@ -263,8 +275,12 @@ describe('deriveCameraFraming', () => {
 
         expect(Number.isFinite(framing.positionX)).toBe(true);
         expect(Number.isFinite(framing.positionY)).toBe(true);
+        // The rig's usable range, stated against the composition rather than as
+        // a bare number: the dolly never comes closer than three fifths of the
+        // idle distance and never pulls back further than twice it, which keeps
+        // the Core somewhere between a quarter and three fifths of the frame.
         expect(framing.positionZ).toBeGreaterThanOrEqual(BASE_CAMERA_DISTANCE * 0.6);
-        expect(framing.positionZ).toBeLessThanOrEqual(14);
+        expect(framing.positionZ).toBeLessThanOrEqual(BASE_CAMERA_DISTANCE * 2);
       }
     }
   });

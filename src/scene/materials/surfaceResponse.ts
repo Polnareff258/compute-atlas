@@ -15,6 +15,17 @@ export type SurfaceInput = {
   readonly activity: number;
   readonly focus: number;
   /**
+   * How much of the routing field is running across this surface, 0..1.
+   *
+   * Separate from `activity` because the two are genuinely different facts: a
+   * structure can be busy while the field is somewhere else in it, and the
+   * field can cross a surface of a structure that is doing nothing at all. It
+   * is what lets a manifold light where the flow is rather than everywhere at
+   * once, which is the difference between an internal energy gradient and a
+   * structure that has been turned up.
+   */
+  readonly proximity?: number;
+  /**
    * How much of this surface the composition is showing, 0..1, default 1.
    *
    * This is the one input that can take a surface *below* its resting response,
@@ -22,7 +33,7 @@ export type SurfaceInput = {
    * cannot express: `gainAtRest` is a floor, so a receded surface handed
    * `activity: 0` renders exactly as a rested one does. Presence is a property of
    * the composition, not of the surface's own state, so it scales the resolved
-   * response rather than serving as a third increment alongside activity.
+   * response rather than serving as an increment alongside activity.
    */
   readonly presence?: number;
 };
@@ -75,12 +86,14 @@ export function deriveSurfaceResponse(
   const curve = responseCurveFor(role);
   const activity = boundedUnit(input.activity);
   const focus = boundedUnit(input.focus);
+  const proximity = input.proximity === undefined ? 0 : boundedUnit(input.proximity);
   const presence = input.presence === undefined ? 1 : boundedUnit(input.presence);
 
   const gain =
     (curve.gainAtRest +
       curve.gainFromActivity * activity +
-      curve.gainFromFocus * focus) *
+      curve.gainFromFocus * focus +
+      curve.gainFromProximity * proximity) *
     presence;
 
   if (role !== 'membrane') {
@@ -90,7 +103,8 @@ export function deriveSurfaceResponse(
   const fade = boundedUnit(
     boundedUnit(baseFade) * presence +
       curve.fadeFromActivity * activity +
-      curve.fadeFromFocus * focus,
+      curve.fadeFromFocus * focus +
+      curve.fadeFromProximity * proximity,
   );
 
   return { gain, alpha: deriveMembraneOpacity(fade) };

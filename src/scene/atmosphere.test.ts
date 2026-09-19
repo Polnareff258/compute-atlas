@@ -8,6 +8,15 @@ import { CAMERA_FOV_DEGREES } from './camera/cameraController';
 const ASPECT = 16 / 9;
 const HALF_FOV_TAN = Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 360);
 /** The widest the camera rig ever sits: the reframe dolly at full reach. */
+/**
+ * The widest the camera rig ever sits: the reframe dolly at full reach.
+ *
+ * A bound rather than a measurement. The reframe resolves to about 8.9 world
+ * units for the furthest domain, which is very slightly *nearer* than the idle
+ * distance, so this is a deliberate over-estimate — the backdrop has to cover
+ * the frame under any legal rig state, and being a little too large is free
+ * while being a little too small leaves a hole at the edge of the frame.
+ */
 const FARTHEST_CAMERA = 12;
 
 function depthOf(part: StructureFormPart): number {
@@ -35,7 +44,10 @@ describe('deriveAtmosphereDescriptor', () => {
 
   it('stays in the recessed tier, so nothing behind the scene competes with it', () => {
     for (const part of deriveAtmosphereDescriptor().parts) {
-      expect(part.membrane).toBe(false);
+      // Recessed, not membrane: the backdrop is an opaque depth read with no
+      // activity of its own, and a blending tier would let the void show through
+      // it and re-open the empty canvas this backdrop replaced.
+      expect(part.surface).toBe('recess');
       expect(resolveStructureTier(part.tier)).toBe('interior');
       expect(depthOf(part)).toBeGreaterThan(3.5);
     }

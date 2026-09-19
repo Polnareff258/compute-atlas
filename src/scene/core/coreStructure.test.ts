@@ -4,9 +4,11 @@ import {
   deriveCorePortActivation,
   deriveCoreStructure,
   selectCorePortForDirection,
+  type CoreStructure,
   type CoreStructureForm,
   type CoreStructureHull,
   type CoreStructureMember,
+  type CoreStructurePath,
 } from './coreStructure';
 import type { CoreVisualInput } from './coreTypes';
 
@@ -26,8 +28,12 @@ function baseInput(overrides: Partial<CoreVisualInput> = {}): CoreVisualInput {
   };
 }
 
-function shapesOf(members: readonly CoreStructureMember[]): string[] {
-  return members.map((member) => member.shape);
+type Vector = readonly [number, number, number];
+
+function pathsOf(members: readonly CoreStructureMember[]): readonly CoreStructurePath[] {
+  return members.filter(
+    (member): member is CoreStructurePath => member.shape === 'path',
+  );
 }
 
 /** `filter` cannot narrow a union on its own, so the narrowing happens here. */
@@ -46,24 +52,26 @@ function hullsOf(members: readonly CoreStructureMember[]): readonly CoreStructur
   );
 }
 
-function hullByRank(
-  members: readonly CoreStructureMember[],
-  rank: number,
-): CoreStructureHull | undefined {
-  return hullsOf(members).find((member) => member.rank === rank);
+/** The one closed path: the ring of material the aperture is cut through. */
+function monolithOf(structure: CoreStructure): CoreStructurePath {
+  const closed = pathsOf(structure.members).filter((member) => member.closed);
+  expect(closed).toHaveLength(1);
+  return closed[0]!;
 }
 
-/** An interior point of a hull, used where a member's location is all we need. */
-function hullCentre(hull: CoreStructureHull): readonly [number, number, number] {
-  return [
-    (hull.start[0] + hull.end[0]) / 2,
-    (hull.start[1] + hull.end[1]) / 2,
-    (hull.start[2] + hull.end[2]) / 2,
-  ];
+/** A profile extent, which a path may carry per point rather than as one value. */
+function extentsOf(value: number | readonly number[]): readonly number[] {
+  return typeof value === 'number' ? [value] : value;
+}
+
+/** The half-thickness the ring's wall carries at each of its points. */
+function wallProfile(ring: CoreStructurePath): readonly number[] {
+  const widths = extentsOf(ring.halfWidth);
+  return widths.length === 1 ? ring.points.map(() => widths[0]!) : widths;
 }
 
 /** Where a member sits, whatever shape it is. */
-function memberCentre(member: CoreStructureMember): readonly [number, number, number] {
+function memberCentre(member: CoreStructureMember): Vector {
   if (member.shape === 'hull' || member.shape === 'beam') {
     return [
       (member.start[0] + member.end[0]) / 2,
@@ -71,165 +79,286 @@ function memberCentre(member: CoreStructureMember): readonly [number, number, nu
       (member.start[2] + member.end[2]) / 2,
     ];
   }
+  if (member.shape === 'path') {
+    const total = member.points.reduce<[number, number, number]>(
+      (sum, point) => [sum[0] + point[0], sum[1] + point[1], sum[2] + point[2]],
+      [0, 0, 0],
+    );
+    const count = Math.max(1, member.points.length);
+    return [total[0] / count, total[1] / count, total[2] / count];
+  }
   return member.position;
 }
 
-/** The widest and narrowest half-height in a hull's section list. */
-function sectionSpread(hull: CoreStructureHull): { widest: number; narrowest: number } {
-  const heights = hull.sections.map((section) => section.halfHeight);
-  return { widest: Math.max(...heights), narrowest: Math.min(...heights) };
+/**
+ * The three dimensions a member's own bounding box has, whatever shape it is.
+ *
+ * Sections come from the member's own numbers rather than from its bake, which
+ * is what makes these readable as authored sizes: a form is its scale, a span or
+ * a hull is its cross-section plus its run, and a swept path is its profile plus
+ * its run.
+ */
+function extentsOfMember(member: CoreStructureMember): readonly number[] {
+  if (member.shape === 'path') {
+    return [
+      largest(extentsOf(member.halfWidth)) * 2,
+      largest(extentsOf(member.halfHeight)) * 2,
+      runLength(member.points),
+    ];
+  }
+  if (member.shape === 'hull' || member.shape === 'beam') {
+    const run = Math.hypot(
+      member.end[0] - member.start[0],
+      member.end[1] - member.start[1],
+      member.end[2] - member.start[2],
+    );
+    if (member.shape === 'hull') {
+      const widest = Math.max(...member.sections.map((section) => section.halfWidth));
+      return [widest * 2, widest * 2, run];
+    }
+    return [
+      Math.max(member.width, member.depth),
+      Math.min(member.width, member.depth),
+      run,
+    ];
+  }
+  return [...member.scale].sort((left, right) => right - left);
 }
 
 /**
- * The hull's centre line and half-height at a point along x.
+ * The second-largest dimension, which is how big a member reads as a *part*.
  *
- * The hulls run mostly along x, so this is how the tests measure the opening
- * between them: a real window has a measurable vertical extent at the x where
- * both hulls exist.
+ * A wafer is two units across and a liner is six units long, but both are thin:
+ * the longest dimension of a thin member measures the space it crosses rather
+ * than its presence in it. The second dimension is what tells a fitted part
+ * apart from the mass it is fitted into, so it is the number the composition's
+ * scale contrast is checked against.
  */
-function hullAt(hull: CoreStructureHull, x: number): { centreY: number; halfHeight: number } {
-  const forward = hull.start[0] <= hull.end[0];
-  const from = forward ? hull.start : hull.end;
-  const to = forward ? hull.end : hull.start;
-  const t = Math.min(1, Math.max(0, (x - from[0]) / (to[0] - from[0])));
-
-  const sections = hull.sections;
-  let index = 0;
-  for (let cursor = 0; cursor < sections.length - 1; cursor += 1) {
-    if (sections[cursor + 1]!.t <= t) index = cursor + 1;
-  }
-  const a = sections[index]!;
-  const b = sections[Math.min(sections.length - 1, index + 1)]!;
-  const span = b.t - a.t;
-  const mix = span < 1e-6 ? 0 : (t - a.t) / span;
-
-  return {
-    centreY: from[1] + (to[1] - from[1]) * t + a.offset[1] + (b.offset[1] - a.offset[1]) * mix,
-    halfHeight: a.halfHeight + (b.halfHeight - a.halfHeight) * mix,
-  };
+function sectionOf(member: CoreStructureMember): number {
+  const sorted = [...extentsOfMember(member)].sort((left, right) => right - left);
+  return sorted[1] ?? 0;
 }
 
-describe('deriveCoreStructure', () => {
-  it('keeps the hero hulls, the spine that carries them and the ports at every detail level', () => {
-    for (const structureDetail of [0, 0.12, 0.5, 1]) {
-      const structure = deriveCoreStructure({ structureDetail }, SEED);
-      const hulls = hullsOf(structure.members);
+function largest(values: readonly number[]): number {
+  return values.length === 0 ? 0 : Math.max(...values);
+}
 
-      // Two processing hulls, two end yokes, the void wall and the spine.
-      expect(hulls.length).toBeGreaterThanOrEqual(6);
+function runLength(points: readonly Vector[]): number {
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const from = points[index - 1] ?? [0, 0, 0];
+    const to = points[index] ?? [0, 0, 0];
+    total += Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  }
+  return total;
+}
+
+/**
+ * Whether a point lies inside a closed polygon, by ray casting in the view plane.
+ *
+ * The hero is authored flat against the view axis and the question here is
+ * whether a member sits inside the aperture's *outline*, so the x/y plane is the
+ * plane the question is asked in.
+ */
+function insideOutline(polygon: readonly Vector[], point: Vector): boolean {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+    const a = polygon[index]!;
+    const b = polygon[previous]!;
+    if (a[1] > point[1] !== b[1] > point[1]) {
+      const x = a[0] + ((point[1] - a[1]) / (b[1] - a[1])) * (b[0] - a[0]);
+      if (point[0] < x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+const DETAILS = [0, 0.25, 0.5, 0.72, 0.9, 1] as const;
+
+describe('deriveCoreStructure', () => {
+  it('keeps the monolith, its aperture, both folds and the exits at every detail level', () => {
+    for (const structureDetail of DETAILS) {
+      const structure = deriveCoreStructure({ structureDetail }, SEED);
+
+      // One closed ring and two open folds. The ring is the whole main mass, so
+      // a tier that dropped it would drop the subject of the frame.
+      expect(pathsOf(structure.members).filter((member) => member.closed)).toHaveLength(1);
+      expect(pathsOf(structure.members).filter((member) => !member.closed).length)
+        .toBeGreaterThanOrEqual(2);
+      // The floor behind the aperture is what makes the opening a recess rather
+      // than a hole through to the background.
+      expect(formsOf(structure.members, 'volume').length).toBeGreaterThanOrEqual(1);
       expect(structure.ports.length).toBeGreaterThanOrEqual(3);
     }
   });
 
-  it('builds the processing hulls from their own sections rather than scaled boxes', () => {
-    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const upper = hullByRank(structure.members, 0);
-    const lower = hullByRank(structure.members, 1);
+  it('cuts the aperture through a ring of walking wall thickness, not a frame of constant section', () => {
+    const ring = monolithOf(deriveCoreStructure({ structureDetail: 1 }, SEED));
 
-    for (const hull of [upper, lower]) {
-      expect(hull).toBeDefined();
-      if (!hull) continue;
-      // A lofted hull is defined by sections that differ along its axis. A
-      // transformed unit box has one cross-section for its whole length, which
-      // is exactly what made the old mass read as slabs.
-      expect(hull.sections.length).toBeGreaterThanOrEqual(4);
-      const { widest, narrowest } = sectionSpread(hull);
+    expect(ring.points.length).toBeGreaterThanOrEqual(6);
+    expect(ring.chamfer).toBeGreaterThan(0);
+    // Depth along the view axis is what makes the aperture a recess with a wall
+    // you can see into rather than a hole cut in a card.
+    expect(Math.min(...extentsOf(ring.halfHeight))).toBeGreaterThan(0.15);
+
+    // A wall that carries one thickness all the way round a closed path is an
+    // extruded picture frame. A machined body that happens to have an opening
+    // through it is heavy at the foot and thin at the shoulder.
+    const walls = wallProfile(ring);
+    expect(walls.length).toBe(ring.points.length);
+    expect(Math.max(...walls)).toBeGreaterThan(Math.min(...walls) * 1.6);
+  });
+
+  it('encloses the aperture instead of leaving a gap in the silhouette', () => {
+    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
+    const ring = monolithOf(structure);
+    const centre: Vector = [0, 0, 0];
+
+    // The opening only exists if the ring goes *around* its own centre. Two
+    // stacked hulls with a slot between them leaves the centre outside every
+    // member, which is a gap rather than an aperture.
+    expect(insideOutline(ring.points, centre)).toBe(true);
+
+    // And the opening has exactly one back, at the body's own scale: the floor
+    // that makes it a recess rather than a hole through to the background.
+    const ringWidth =
+      Math.max(...ring.points.map((point) => point[0])) -
+      Math.min(...ring.points.map((point) => point[0]));
+    const enclosed = structure.members.filter(
+      (member) => member !== ring && insideOutline(ring.points, memberCentre(member)),
+    );
+    const atBodyScale = enclosed.filter(
+      (member) => sectionOf(member) > ringWidth * 0.4,
+    );
+
+    expect(atBodyScale).toHaveLength(1);
+    expect(atBodyScale[0]?.surface).toBe('recess');
+  });
+
+  it('stands both folds off the ring, on opposite sides, so the silhouette is layered', () => {
+    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
+    const ring = monolithOf(structure);
+    const folds = pathsOf(structure.members).filter((member) => !member.closed);
+    const ringTop = Math.max(...ring.points.map((point) => point[1]));
+    const ringBottom = Math.min(...ring.points.map((point) => point[1]));
+
+    let above = 0;
+    let below = 0;
+    for (const fold of folds) {
+      const top = Math.max(...fold.points.map((point) => point[1]));
+      const bottom = Math.min(...fold.points.map((point) => point[1]));
+      if (top > ringTop) above += 1;
+      if (bottom < ringBottom) below += 1;
+    }
+
+    // Each fold has to leave the outline at its own end, or the mass is one
+    // extruded block with a ribbon lying on its face.
+    expect(above + below).toBeGreaterThanOrEqual(2);
+    // One corner is heavy and the other is open: a symmetric pair of folds is
+    // the reactor the brief rules out.
+    expect(above).toBeGreaterThanOrEqual(1);
+    expect(below).toBeGreaterThanOrEqual(1);
+  });
+
+  it('embeds the routing manifolds in the body they leave', () => {
+    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
+    const ring = monolithOf(structure);
+    // The foreground blade is also a swept edge-class path, and it is a
+    // compositional slice in front of the body rather than a channel in it.
+    const manifolds = pathsOf(structure.members).filter(
+      (member) => member.surface === 'edge' && member.band !== 'foreground',
+    );
+
+    expect(manifolds).toHaveLength(3);
+
+    // The field is not a line drawn to the Core: it is carried in a channel that
+    // starts inside the aperture and crosses the ring's own wall on its way out.
+    for (const manifold of manifolds) {
+      const start = manifold.points[0];
+      expect(start).toBeDefined();
+      expect(insideOutline(ring.points, start!)).toBe(true);
+    }
+
+    const leaving = manifolds.filter((manifold) => {
+      const end = manifold.points[manifold.points.length - 1];
+      return end !== undefined && !insideOutline(ring.points, end);
+    });
+    expect(leaving).toHaveLength(2);
+  });
+
+  it('keeps the local density small, so scale is read as contrast rather than repetition', () => {
+    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
+    const ring = monolithOf(structure);
+    const ringWidth =
+      Math.max(...ring.points.map((point) => point[0])) -
+      Math.min(...ring.points.map((point) => point[0]));
+
+    const fitted = structure.members.filter(
+      (member) =>
+        member !== ring &&
+        insideOutline(ring.points, memberCentre(member)) &&
+        sectionOf(member) <= ringWidth * 0.4,
+    );
+
+    // A dense local region at the aperture is what gives the eye something to
+    // read against a body several units across. Wafers, dies, membranes, a
+    // manifold passing through and the edge liner over the mouth.
+    expect(fitted.length).toBeGreaterThanOrEqual(6);
+
+    // And every one of them is small: the aperture is a place where the machine
+    // does fine work, not a hole with a second body inside it.
+    for (const member of fitted) {
+      expect(sectionOf(member)).toBeLessThan(ringWidth * 0.4);
+    }
+  });
+
+  it('builds the assemblies from their own sections rather than scaled boxes', () => {
+    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
+
+    for (const hull of hullsOf(structure.members)) {
+      expect(hull.sections.length).toBeGreaterThanOrEqual(3);
+      const heights = hull.sections.map((section) => section.halfHeight);
+      const widest = Math.max(...heights);
+      const narrowest = Math.min(...heights);
+
       // Tapered, but closing on a *face*: the narrowest section is still most of
       // the widest one. A section that collapses toward a tip is a leaf, and two
-      // leaves hung on a stick is what the hero was, not a housing. This is the
-      // invariant that keeps the chamfer at the end of the body rather than the
-      // whole body being one.
+      // leaves hung on a stick is what the hero was, not a housing.
       expect(narrowest).toBeGreaterThan(widest * 0.5);
-      // And the end really is narrower than the middle, or the sections are not
-      // shaping anything.
       expect(narrowest).toBeLessThan(widest * 0.8);
-      // A machined chamfer, not a rounded blob: a corner cut is a fraction of the
-      // section, and cutting more than a third of it is a fillet.
-      expect(hull.chamfer).toBeGreaterThan(0);
-      expect(hull.chamfer).toBeLessThanOrEqual(0.3);
+      // A machined part either carries a chamfer or is a faceted prism. Both are
+      // a cut corner; neither is a fillet.
+      if (hull.facets === 0) {
+        expect(hull.chamfer).toBeGreaterThan(0);
+        expect(hull.chamfer).toBeLessThanOrEqual(0.3);
+      } else {
+        expect(hull.facets).toBeGreaterThanOrEqual(3);
+      }
     }
   });
 
-  it('runs the spine through both processing hulls instead of past them', () => {
-    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const spine = hullByRank(structure.members, 5);
-    const upper = hullByRank(structure.members, 0);
-    const lower = hullByRank(structure.members, 1);
+  it('splits the mass across finishes, so one state can reach inside it', () => {
+    // A single merged mass has exactly one lever: everything about it moves
+    // together or nothing does. The classes are what let a hover reach the
+    // aperture while the shell holds.
+    const safe = deriveCoreStructure({ structureDetail: 0 }, SEED);
+    const safeClasses = new Set(safe.members.map((member) => member.surface));
+    expect(safeClasses.has('shell')).toBe(true);
+    expect(safeClasses.has('recess')).toBe(true);
+    expect(safeClasses.size).toBeGreaterThanOrEqual(2);
 
-    expect(spine).toBeDefined();
-    expect(upper).toBeDefined();
-    expect(lower).toBeDefined();
-    if (!spine || !upper || !lower) return;
-
-    // The spine's own endpoints reach past both hulls' centre lines, so it is a
-    // member the mass is hung on rather than a rod laid alongside it.
-    for (const hull of [upper, lower]) {
-      const centre = hullCentre(hull);
-      const toCentre = Math.hypot(
-        centre[0] - spine.start[0],
-        centre[1] - spine.start[1],
-        centre[2] - spine.start[2],
-      );
-      const span = Math.hypot(
-        spine.end[0] - spine.start[0],
-        spine.end[1] - spine.start[1],
-        spine.end[2] - spine.start[2],
-      );
-      expect(toCentre).toBeLessThan(span);
-    }
-  });
-
-  it('holds an explicit void between the hulls and closes it on both sides', () => {
-    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const upper = hullByRank(structure.members, 0);
-    const lower = hullByRank(structure.members, 1);
-    const leftYoke = hullByRank(structure.members, 2);
-    const rightYoke = hullByRank(structure.members, 3);
-
-    expect(upper).toBeDefined();
-    expect(lower).toBeDefined();
-    expect(leftYoke).toBeDefined();
-    expect(rightYoke).toBeDefined();
-    if (!upper || !lower || !leftYoke || !rightYoke) return;
-
-    // The window is what the two yokes hold open, so that is where it is
-    // measured: an opening outside the end walls would be a gap in the
-    // silhouette, not a void cut through the body.
-    const leftWall = hullCentre(leftYoke)[0];
-    const rightWall = hullCentre(rightYoke)[0];
-    expect(rightWall - leftWall).toBeGreaterThan(1.2);
-    expect(rightWall).toBeGreaterThan(leftWall);
-
-    // Half the Core's own height is the ceiling: past that the opening stops
-    // being a void cut through a body and becomes the frame itself.
-    const openings: number[] = [];
-    for (const fraction of [0.25, 0.5, 0.75]) {
-      const x = leftWall + (rightWall - leftWall) * fraction;
-      const top = hullAt(upper, x);
-      const bottom = hullAt(lower, x);
-      const gap = top.centreY - top.halfHeight - (bottom.centreY + bottom.halfHeight);
-      openings.push(gap);
-
-      // A window you can see through, not a seam between two touching slabs...
-      expect(gap).toBeGreaterThan(0.3);
-      // ...and never the dominant feature of the composition.
-      expect(gap).toBeLessThan(structure.bounds[1] * 2 * 0.55);
-    }
-    // It is a shaped opening, not a constant slot: the body tapers around it.
-    expect(Math.max(...openings) - Math.min(...openings)).toBeGreaterThan(0.15);
-
-    // Both hulls have to still be present across the whole opening, otherwise
-    // the "window" is just the end of the structure.
-    for (const hull of [upper, lower]) {
-      const spanStart = Math.min(hull.start[0], hull.end[0]);
-      const spanEnd = Math.max(hull.start[0], hull.end[0]);
-      expect(spanStart).toBeLessThan(leftWall);
-      expect(spanEnd).toBeGreaterThan(rightWall);
-    }
+    const ultra = deriveCoreStructure({ structureDetail: 1 }, SEED);
+    const ultraClasses = new Set(ultra.members.map((member) => member.surface));
+    expect(ultraClasses.size).toBeGreaterThanOrEqual(4);
+    // The accent is rare by construction: a class that most of the structure
+    // belonged to would not be an accent.
+    const accent = ultra.members.filter((member) => member.surface === 'accent');
+    expect(accent.length).toBeGreaterThan(0);
+    expect(accent.length).toBeLessThan(ultra.members.length / 2);
   });
 
   it('adds surfaces monotonically as detail rises instead of turning anything up', () => {
-    const counts = [0, 0.25, 0.5, 0.72, 0.9, 1].map(
+    const counts = DETAILS.map(
       (structureDetail) =>
         deriveCoreStructure({ structureDetail }, SEED).members.length,
     );
@@ -242,22 +371,36 @@ describe('deriveCoreStructure', () => {
     expect(counts.at(-1)!).toBeGreaterThan(counts[0]! + 5);
   });
 
-  it('introduces membranes, pockets, layers and the foreground chip at their tiers', () => {
-    expect(shapesOf(deriveCoreStructure({ structureDetail: 0 }, SEED).members))
-      .not.toContain('membrane');
-    expect(shapesOf(deriveCoreStructure({ structureDetail: 0.25 }, SEED).members))
-      .toContain('membrane');
+  it('introduces the manifolds, the layered membranes and the dies at their own tiers', () => {
+    const at = (structureDetail: number) => deriveCoreStructure({ structureDetail }, SEED);
+    const countOf = (structureDetail: number, surface: string): number =>
+      at(structureDetail).members.filter((member) => member.surface === surface).length;
 
-    const hullCountAt = (structureDetail: number): number =>
-      hullsOf(deriveCoreStructure({ structureDetail }, SEED).members).length;
-    // The pockets arrive at the secondary tier, the background rail at tertiary.
-    expect(hullCountAt(0.25)).toBeLessThan(hullCountAt(0.5));
-    expect(hullCountAt(0.5)).toBeLessThan(hullCountAt(0.9));
+    // Each gate adds its own kind of surface and nothing below it does. Reading
+    // these as a table rather than as four loose inequalities is the point: the
+    // classes are what the response is written against, so a class that arrived
+    // at the wrong tier would be a hover answering in the wrong place.
+    expect(countOf(0.25, 'membrane')).toBe(0);
+    expect(countOf(0.6, 'membrane')).toBe(2);
+    expect(countOf(0.25, 'edge')).toBe(1);
+    expect(countOf(0.45, 'edge')).toBe(3);
+    expect(countOf(0.6, 'accent')).toBe(2);
+    expect(countOf(0.72, 'accent')).toBe(3);
+    expect(countOf(0.9, 'accent')).toBe(6);
+  });
 
-    expect(shapesOf(deriveCoreStructure({ structureDetail: 0.5 }, SEED).members))
-      .not.toContain('slice');
-    expect(shapesOf(deriveCoreStructure({ structureDetail: 0.72 }, SEED).members))
-      .toContain('slice');
+  it('adds detail inside the aperture rather than more body around it', () => {
+    const ringWidth = (structureDetail: number): number => {
+      const ring = monolithOf(deriveCoreStructure({ structureDetail }, SEED));
+      return (
+        Math.max(...ring.points.map((point) => point[0])) -
+        Math.min(...ring.points.map((point) => point[0]))
+      );
+    };
+
+    // The mass's own width is the same at every tier: a richer profile is more
+    // work inside the machine, not a bigger machine in the frame.
+    expect(ringWidth(1)).toBeCloseTo(ringWidth(0), 6);
   });
 
   it('separates bands so the composition has front, middle and back', () => {
@@ -271,45 +414,46 @@ describe('deriveCoreStructure', () => {
 
   it('varies member scale classes rather than repeating one body size', () => {
     const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const hulls = hullsOf(structure.members);
-    const lengths = hulls.map((hull) =>
-      Math.hypot(
-        hull.end[0] - hull.start[0],
-        hull.end[1] - hull.start[1],
-        hull.end[2] - hull.start[2],
-      ),
-    );
+    const sections = structure.members.map(sectionOf);
 
-    expect(Math.max(...lengths)).toBeGreaterThan(Math.min(...lengths) * 2.5);
+    // The body, its folds, its assemblies and the fitted parts inside the
+    // aperture span more than a factor of ten, which is what makes the aperture
+    // read as dense local detail against a large mass rather than as more of the
+    // same machine at a smaller size.
+    expect(Math.max(...sections)).toBeGreaterThan(Math.min(...sections) * 10);
   });
 
-  it('holds exactly one small low-contrast element in the foreground', () => {
+  it('holds only small, low-contrast elements in the foreground', () => {
     const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const slices = formsOf(structure.members, 'slice');
+    const bodyDepth = structure.bounds[2];
+    const inFront = structure.members.filter(
+      (member) => memberCentre(member)[2] > bodyDepth,
+    );
 
     // The previous round used two plates over a world unit across, which
-    // swallowed a third of the frame at 1920 and flattened 2560 entirely.
-    expect(slices).toHaveLength(1);
-    const [chip] = slices;
-    expect(chip).toBeDefined();
-    if (!chip) return;
+    // swallowed a third of the frame at 1920 and flattened 2560 entirely. One
+    // compositional slice is allowed, in the deepest tier, and it is small.
+    expect(inFront).toHaveLength(1);
+    const [blade] = inFront;
+    expect(blade).toBeDefined();
+    if (!blade) return;
 
-    expect(chip.position[2]).toBeGreaterThan(1);
-    expect(chip.scale[0] * chip.scale[1]).toBeLessThan(0.12);
+    expect(blade.band).toBe('foreground');
     // It has to be the darkest thing in the frame, not a bright overlay.
-    expect(chip.tier).toBe('recess');
+    expect(blade.tier).toBe('recess');
+    expect(sectionOf(blade)).toBeLessThan(structure.bounds[0] * 0.12);
   });
 
   it('is asymmetric: no member mirrors another across the origin', () => {
     const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const positions = structure.members.map((member) => memberCentre(member));
+    const centres = structure.members.map(memberCentre);
 
-    for (const position of positions) {
-      const mirrored = positions.find(
+    for (const centre of centres) {
+      const mirrored = centres.find(
         (candidate) =>
-          Math.abs(candidate[0] + position[0]) < 0.02 &&
-          Math.abs(candidate[1] + position[1]) < 0.02 &&
-          Math.abs(candidate[2] + position[2]) < 0.02,
+          Math.abs(candidate[0] + centre[0]) < 0.02 &&
+          Math.abs(candidate[1] + centre[1]) < 0.02 &&
+          Math.abs(candidate[2] + centre[2]) < 0.02,
       );
       expect(mirrored).toBeUndefined();
     }
@@ -337,7 +481,15 @@ describe('deriveCoreStructure', () => {
             ]
           : member.shape === 'beam'
             ? [...member.start, ...member.end, member.width, member.depth]
-            : [...member.position, ...member.rotation, ...member.scale];
+            : member.shape === 'path'
+              ? [
+                  ...member.points.flatMap((point) => [...point]),
+                  ...extentsOf(member.halfWidth),
+                  ...extentsOf(member.halfHeight),
+                  member.chamfer,
+                  ...member.reference,
+                ]
+              : [...member.position, ...member.rotation, ...member.scale];
       for (const value of values) expect(Number.isFinite(value)).toBe(true);
     }
 
@@ -345,9 +497,7 @@ describe('deriveCoreStructure', () => {
       for (const value of [...port.position, ...port.direction]) {
         expect(Number.isFinite(value)).toBe(true);
       }
-      expect(
-        Math.hypot(...port.direction),
-      ).toBeCloseTo(1, 5);
+      expect(Math.hypot(...port.direction)).toBeCloseTo(1, 5);
     }
   });
 
@@ -360,21 +510,42 @@ describe('deriveCoreStructure', () => {
     }
   });
 
-  it('points the spine axis along its own endpoints as a unit direction', () => {
+  it('points the aperture axis along the mass it opens through, as a unit direction', () => {
     const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const spine = hullByRank(structure.members, 5);
+    const ring = monolithOf(structure);
+    const axis = structure.spineAxis;
 
-    expect(spine).toBeDefined();
-    if (!spine) return;
+    expect(Math.hypot(...axis)).toBeCloseTo(1, 5);
 
-    const dx = spine.end[0] - spine.start[0];
-    const dy = spine.end[1] - spine.start[1];
-    const dz = spine.end[2] - spine.start[2];
-    const length = Math.hypot(dx, dy, dz);
+    // The aperture is wider than it is tall, so its long axis is the body's long
+    // axis: the flow inside the opening runs the way the opening runs. This is a
+    // reading of the opening rather than a member — nothing crosses the body.
+    const project = (point: Vector): number =>
+      point[0] * axis[0] + point[1] * axis[1] + point[2] * axis[2];
+    const along = ring.points.map(project);
+    const alongSpread = Math.max(...along) - Math.min(...along);
+    const acrossSpread = Math.max(...ring.points.map((point) => point[1])) -
+      Math.min(...ring.points.map((point) => point[1]));
+    expect(alongSpread).toBeGreaterThan(acrossSpread);
 
-    expect(structure.spineAxis[0]).toBeCloseTo(dx / length, 5);
-    expect(structure.spineAxis[1]).toBeCloseTo(dy / length, 5);
-    expect(structure.spineAxis[2]).toBeCloseTo(dz / length, 5);
+    // And nothing crosses the body. The old hero was hung on a thick diagonal
+    // beam that ran the whole width of the mass and destroyed its formal unity,
+    // so the invariant is that every end-defined member is trim: thinner than
+    // the thinnest part of the ring's own wall, and shorter than the body is
+    // wide. The one thing this cannot show is that they are *outside* the
+    // opening — that is checked against the baked geometry, where the shell
+    // class is proved to hold nothing inside the aperture's mouth.
+    const thinnestWall = Math.min(...wallProfile(ring)) * 2;
+    for (const member of structure.members) {
+      if (member.shape !== 'beam') continue;
+      expect(member.width).toBeLessThan(thinnestWall);
+      expect(member.depth).toBeLessThan(thinnestWall);
+      expect(Math.hypot(
+        member.end[0] - member.start[0],
+        member.end[1] - member.start[1],
+        member.end[2] - member.start[2],
+      )).toBeLessThan(structure.bounds[0] * 2);
+    }
   });
 
   it('exposes every port, identically, at full detail regardless of seed', () => {
@@ -407,7 +578,7 @@ describe('deriveCoreStructure', () => {
   });
 
   it('keeps partial-detail exits ordered and in range so draw ranges stay valid', () => {
-    for (const structureDetail of [0, 0.25, 0.5, 0.72, 1]) {
+    for (const structureDetail of DETAILS) {
       for (const seed of [1, 17, 999]) {
         const ports = deriveCoreStructure({ structureDetail }, seed).ports;
         const ids = ports.map((port) => port.id);
@@ -425,9 +596,7 @@ describe('deriveCoreStructure', () => {
 describe('selectCorePortForDirection', () => {
   it('resolves an inbound direction to the best-aligned local port', () => {
     const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const leftmost = structure.ports.find(
-      (port) => port.direction[0] < -0.9,
-    );
+    const leftmost = structure.ports.find((port) => port.direction[0] < -0.9);
     expect(leftmost).toBeDefined();
 
     const selected = selectCorePortForDirection(structure, [-1, 0, 0]);

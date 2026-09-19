@@ -6,11 +6,21 @@ import { SURFACE_RESPONSE_CURVES, type SurfaceRole } from './machinePalette';
 import { createSurfaceMaterial } from './surfaceMaterial';
 
 const ROLES: readonly SurfaceRole[] = [
-  'volume',
-  'beam',
-  'port',
-  'interior',
+  'shell',
+  'edge',
+  'recess',
+  'accent',
   'membrane',
+  'port',
+];
+
+/** The opaque tier, which is the one whose whole vocabulary is colour. */
+const SOLID_ROLES: readonly SurfaceRole[] = [
+  'shell',
+  'edge',
+  'recess',
+  'accent',
+  'port',
 ];
 
 function create(role: SurfaceRole, overrides: Record<string, unknown> = {}) {
@@ -58,8 +68,8 @@ describe('createSurfaceMaterial', () => {
   });
 
   it('takes no backend argument, so it cannot draw two different images', () => {
-    const first = create('volume');
-    const second = create('volume');
+    const first = create('shell');
+    const second = create('shell');
 
     // Same config, same result: there is no branch left to disagree about.
     expect(first.material.color.getHex()).toBe(second.material.color.getHex());
@@ -69,7 +79,7 @@ describe('createSurfaceMaterial', () => {
   });
 
   it('answers state through the colour multiplier on opaque roles', () => {
-    for (const role of ['volume', 'beam', 'port', 'interior'] as const) {
+    for (const role of SOLID_ROLES) {
       const handle = create(role);
       const material = handle.material;
 
@@ -88,13 +98,55 @@ describe('createSurfaceMaterial', () => {
 
       const curve = SURFACE_RESPONSE_CURVES[role];
       expect(rest).toBeCloseTo(curve.gainAtRest, 6);
+      // The base colour is white here, so the multiplier is the red channel
+      // exactly. It is *not* clamped: the response is a bounded ramp and a
+      // clipping term would be a second, invisible one.
       expect(active).toBeCloseTo(
-        Math.min(1.2, curve.gainAtRest + curve.gainFromActivity + curve.gainFromFocus),
+        curve.gainAtRest + curve.gainFromActivity + curve.gainFromFocus,
         6,
       );
 
       handle.dispose();
     }
+  });
+
+  it('answers a routing field arriving without any other state', () => {
+    // This is what lets a manifold light where the flow is, rather than lighting
+    // whole because the structure it belongs to is busy.
+    for (const role of SOLID_ROLES) {
+      const handle = create(role);
+
+      handle.updateInput({ activity: 0, focus: 0 });
+      const rest = handle.material.color.r;
+
+      handle.updateInput({ activity: 0, focus: 0, proximity: 1 });
+      const arriving = handle.material.color.r;
+
+      expect(arriving).toBeGreaterThan(rest);
+      expect(arriving - rest).toBeCloseTo(
+        SURFACE_RESPONSE_CURVES[role].gainFromProximity,
+        6,
+      );
+
+      handle.dispose();
+    }
+  });
+
+  it('recedes below its resting response when the composition gives it less room', () => {
+    const handle = create('recess');
+
+    handle.updateInput({ activity: 0, focus: 0 });
+    const rest = handle.material.color.r;
+
+    handle.updateInput({ activity: 0, focus: 0, presence: 0.25 });
+    const receded = handle.material.color.r;
+
+    // `gainAtRest` is a floor on every other input, so presence is the only one
+    // that can draw a dormant domain's silhouette back into the depth.
+    expect(receded).toBeLessThan(rest);
+    expect(receded).toBeCloseTo(rest * 0.25, 6);
+
+    handle.dispose();
   });
 
   it('keeps structural solids depth-writing and membranes blended', () => {
@@ -168,7 +220,7 @@ describe('createSurfaceMaterial', () => {
   });
 
   it('sanitizes non-finite scalar inputs on solid roles', () => {
-    const handle = create('beam', { color: '#546a67' });
+    const handle = create('edge', { color: '#546a67' });
 
     handle.updateInput({
       activity: Number.NaN,

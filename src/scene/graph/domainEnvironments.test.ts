@@ -42,16 +42,34 @@ function environmentFor(
  */
 function structuralFrame(environment: DomainEnvironment) {
   return environment.frame
-    .filter((part) => !part.membrane || part.tier !== 'detail')
-    .map((part) => `${part.shape}:${part.tier}:${part.membrane}`);
+    .filter((part) => part.surface !== 'membrane' || part.tier !== 'detail')
+    .map((part) => `${part.shape}:${part.tier}:${part.surface}`);
+}
+
+/** The largest value of a profile extent, which may be constant or per point. */
+function largest(extent: number | readonly number[]): number {
+  return typeof extent === 'number' ? extent : Math.max(...extent);
+}
+
+/**
+ * How far a run of points travels, which is the long axis of a swept member.
+ */
+function runLength(points: readonly (readonly [number, number, number])[]): number {
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const from = points[index - 1] ?? [0, 0, 0];
+    const to = points[index] ?? [0, 0, 0];
+    total += Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  }
+  return total;
 }
 
 /**
  * The two largest dimensions of a part, which is what a member's section is.
  *
- * A plate is thin in one axis by design and a span is thin in two, so the
- * smallest dimension says nothing. What decides whether something reads as a
- * manufactured volume is whether it has two axes with real size.
+ * A plate is thin in one axis by design, and a span and a swept path are thin in
+ * two, so the smallest dimension says nothing. What decides whether something
+ * reads as a manufactured volume is whether it has two axes with real size.
  */
 function sectionOf(part: StructurePart): [number, number] {
   if (part.shape === 'hull') throw new Error('domains are built from forms and spans');
@@ -66,7 +84,13 @@ function sectionOf(part: StructurePart): [number, number] {
             part.end[2] - part.start[2],
           ),
         ]
-      : [...part.scale];
+      : part.shape === 'path'
+        ? [
+            largest(part.halfWidth) * 2,
+            largest(part.halfHeight) * 2,
+            runLength(part.points),
+          ]
+        : [...part.scale];
   const sorted = dims.slice().sort((a, b) => b - a);
   return [sorted[0] ?? 0, sorted[1] ?? 0];
 }

@@ -5,37 +5,39 @@ import type { GraphLayout, GraphManifest, GraphNodeId } from './types';
  *
  * An earlier revision mirrored the domains in near-identical pairs, which is
  * exactly what makes a graph read as a diagram rather than a place. Each domain
- * now sits at its own distance, height and depth so the composition has a near
- * side and a far side, and GRAPHICS sits clearly to the left of the Core: it is
- * the domain the focus choreography reframes against.
+ * sits at its own distance, height and depth so the composition has a near side
+ * and a far side, and GRAPHICS sits clearly to the left of the Core: it is the
+ * domain the focus choreography reframes against.
  *
- * The radii are set against the Core rather than against each other. The hero
- * rebuild made the Core a body several units across, and at the original 2.5–3.4
- * unit radii its shoulders physically covered GAME ANALYSIS, SYSTEMS and
- * RESEARCH — the domains were being occluded by the subject instead of arranged
- * around it. Everything moved out to 2.6–4.7 so the Core has air on every side
- * at the idle framing and the outer domains leave the frame edge alone.
+ * The radii are set against the Core rather than against each other, and they
+ * have now been moved twice for the same reason. A Core that fills three fifths
+ * of the frame has a half-width of about four and a half world units, so a ring
+ * of domains at four units is a ring of domains *inside* the subject. These sit
+ * at 5.8–7.0, which clears the mass on every side and leaves the outer two
+ * clipped by the frame at the idle framing.
+ *
+ * That clipping is the composition rather than a defect. Idle is meant to read
+ * as a large computed body with bays arranged around it, not as five icons on a
+ * ring: two or three domains are legible at rest, the rest are in depth or
+ * partly outside the frame, and the focus choreography is what brings one of
+ * them fully into view.
  *
  * The Core stays at the semantic origin. Its off-centre placement in the frame
  * is a camera concern, so it is not encoded here.
  */
 const NODE_LAYOUT: GraphLayout = {
   core: [0, 0, 0],
-  graphics: [-4.55, -0.72, 0.42],
-  ai: [-3.55, 1.95, -1.25],
+  graphics: [-6.15, -0.9, 0.5],
+  ai: [-4.8, 2.5, -1.6],
   // Held lower and further back than its original height: at the idle framing a
-  // domain at y 2.35 sits within one domain-extent of the top edge, so the
-  // assembly arrived as a box cut in half with its label off the frame. Depth
-  // also keeps it in the far group, which is where the file's spread is checked.
-  'game-analysis': [1.25, 2.15, 0.62],
-  systems: [4.15, 0.95, -0.85],
-  // Pulled in from [3.15, -2.15, 1.25]. At the idle framing the extra height and
-  // radius put the lattice across the bottom-right frame corner: its lower
-  // members were cut off by the frame itself, so the domain read as a bundle of
-  // loose sticks rather than as a structure. It is still the lowest and the
-  // nearest thing on that side, which is what the spread in the layout test
-  // reads; it is no longer half outside the composition.
-  research: [2.85, -1.75, 1.1],
+  // domain near the top edge arrived as an assembly cut in half with its label
+  // off the frame. It is still the highest thing in the composition, which is
+  // what the spread in the layout test reads.
+  'game-analysis': [1.7, 2.85, 0.8],
+  systems: [5.55, 1.25, -1.1],
+  // The lowest and the nearest thing on its side, kept out of the bottom-right
+  // frame corner so its lower members are not cut off by the frame itself.
+  research: [3.85, -2.3, 1.4],
 };
 
 /**
