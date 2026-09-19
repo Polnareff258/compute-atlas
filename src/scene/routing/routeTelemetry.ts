@@ -1,7 +1,8 @@
 import {
   ROUTE_CLASS_ORDER,
   WEBGL2_DASH_CEILING,
-  deriveDashesPerRoute,
+  deriveCurveDashCounts,
+  deriveRouteDashDensity,
   type RouteCurve,
 } from './routeDash';
 
@@ -23,8 +24,8 @@ export type RouteFieldTelemetryCounts = {
 export type RouteFieldSample = {
   /** The field's curves, in the order they were handed to the view. */
   readonly curves: readonly RouteCurve[];
-  /** Dashes packed per curve, as resolved for the active implementation. */
-  readonly dashesPerRoute: number;
+  /** Packets per world unit of route, for the active implementation. */
+  readonly density: number;
   /** Route classes this field exposes at the current interaction state. */
   readonly lanes: number;
   /**
@@ -51,15 +52,15 @@ export function createRouteFieldSample(
   advected: boolean,
   spec: RouteFieldSpec,
 ): RouteFieldSample {
-  const dashesPerRoute = deriveDashesPerRoute(advected, spec.detail, spec.lanes);
+  const density = deriveRouteDashDensity(advected, spec.detail);
   if (advected) {
-    return { curves: spec.curves, dashesPerRoute, lanes: spec.lanes };
+    return { curves: spec.curves, density, lanes: spec.lanes };
   }
   // The instanced fallback is the only implementation with a CPU pass, so it is
   // the only one with a ceiling to report.
   return {
     curves: spec.curves,
-    dashesPerRoute,
+    density,
     lanes: spec.lanes,
     capacity: WEBGL2_DASH_CEILING,
   };
@@ -76,42 +77,35 @@ function finiteCount(value: number): number {
  * samples several times a second, and packing the field just to count it would
  * allocate the whole ribbon buffer on every sample.
  *
- * The packing is class-major, so walking the classes in `ROUTE_CLASS_ORDER` and
- * spending the capacity as it goes reproduces the draw range exactly. That
- * equivalence is pinned by a test against the packed attributes, so the two
- * cannot drift apart silently.
+ * The packing is class-major, so the revealed subset is a walk of the classes in
+ * `ROUTE_CLASS_ORDER` up to the active lane count. That equivalence is pinned by
+ * a test against the packed attributes, so the two cannot drift apart silently.
  */
 export function countFieldDashes(field: RouteFieldSample): {
   readonly rendered: number;
   readonly signal: number;
 } {
-  // Mirrors the packing exactly: a non-finite or zero stride packs no dashes at
-  // all, so it must count as none rather than being floored up to one.
-  const perRoute = Number.isFinite(field.dashesPerRoute)
-    ? Math.max(0, Math.floor(field.dashesPerRoute))
-    : 0;
-  const capacity = field.capacity === undefined ? Infinity : finiteCount(field.capacity);
+  // The counts come from the same function the packer calls, so this cannot
+  // describe a field the renderer was not asked to draw. Reproducing the density
+  // formula here instead is what the previous version did, and a second copy of a
+  // formula is a second answer waiting to drift.
+  const counts = deriveCurveDashCounts(field.curves, field.density, field.capacity);
   const revealedClasses = Number.isFinite(field.lanes)
     ? Math.max(0, Math.min(ROUTE_CLASS_ORDER.length, Math.floor(field.lanes)))
     : 0;
 
-  let remaining = capacity;
   let rendered = 0;
   let signal = 0;
 
   for (let laneIndex = 0; laneIndex < revealedClasses; laneIndex += 1) {
     const routeClass = ROUTE_CLASS_ORDER[laneIndex]!;
-    let curveCount = 0;
-    for (const curve of field.curves) {
-      if (curve.route === routeClass) curveCount += 1;
-    }
+    let drawn = 0;
+    field.curves.forEach((curve, index) => {
+      if (curve.route === routeClass) drawn += counts[index] ?? 0;
+    });
 
-    const drawn = Math.min(curveCount * perRoute, remaining);
     rendered += drawn;
     if (routeClass === 'signal') signal += drawn;
-    remaining -= drawn;
-
-    if (remaining <= 0) break;
   }
 
   return { rendered, signal };

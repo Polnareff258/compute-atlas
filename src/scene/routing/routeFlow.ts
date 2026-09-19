@@ -100,10 +100,16 @@ export function createRouteFlowState(): RouteFlowState {
  * Only discrete semantic states reach this function: hover, focus and the
  * absence of both. Continuous time, intensity and progress never travel through
  * React state, they are eased in `advanceRouteFlow` from these targets.
+ *
+ * `restingProminence` is the idle composition's ranking. It is optional because
+ * a caller that has no ranking to offer gets the unranked field it had before
+ * the ranking existed, rather than a field that silently collapses to the
+ * dormant floor.
  */
 export function deriveRouteFlowTarget(
   routing: GraphRouting,
   interaction: GraphInteractionState,
+  restingProminence?: Readonly<Record<DomainVisualNodeId, number>>,
 ): RouteFlowTarget {
   const activeDomainId = interaction.focusedNodeId ?? interaction.hoveredNodeId;
   const focused = interaction.focusedNodeId !== null;
@@ -118,6 +124,8 @@ export function deriveRouteFlowTarget(
       activeDomainId: activeDomainId === 'core' ? null : activeDomainId,
       focused,
       coreWeight: focused ? 0.92 : hasTarget ? 0.56 : 0.3,
+      // Only read at rest; `deriveGraphGroupWeights` says why.
+      ...(restingProminence === undefined ? {} : { restingProminence }),
     }),
     // Idle circulates slowly; focus commits a continuous source-to-target flow.
     advectionSpeed: focused ? 1.35 : hasTarget ? 1 : 0.55,
@@ -229,8 +237,9 @@ export function advanceRouteFlow(
 export function freezeRouteFlow(
   routing: GraphRouting,
   interaction: GraphInteractionState,
+  restingProminence?: Readonly<Record<DomainVisualNodeId, number>>,
 ): RouteFlowState {
-  const target = deriveRouteFlowTarget(routing, interaction);
+  const target = deriveRouteFlowTarget(routing, interaction, restingProminence);
   return deriveStaticFlowState({
     laneWeights: ROUTE_CLASS_ORDER.map((routeClass) => target.laneWeights[routeClass]),
     groupWeights: Array.from(deriveRouteGroupWeights(target.groupWeights)),

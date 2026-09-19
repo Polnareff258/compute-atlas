@@ -1,4 +1,5 @@
 import { hashUnit, normalizeSeed } from '../seedRandom';
+import { MAX_ROUTE_GROUPS } from './routeContract';
 
 /**
  * One route primitive for the whole scene.
@@ -27,8 +28,8 @@ export type RouteCurve = {
   readonly end: Vector;
 };
 
-/** Groups are packed into two vec4 uniforms, so eight is the ceiling. */
-export const MAX_ROUTE_GROUPS = 8;
+/** The group ceiling is part of the routing contract, not of the dash maths. */
+export { MAX_ROUTE_GROUPS } from './routeContract';
 
 /** In-house order matters: it defines the contiguous draw-range layout. */
 export const ROUTE_CLASS_ORDER: readonly RouteClass[] = [
@@ -47,6 +48,49 @@ export const ROUTE_CLASS_INDEX: Readonly<Record<RouteClass, number>> = Object.fr
 
 const TANGENT_EPSILON = 0.0001;
 const UP: Vector = [0, 1, 0];
+
+/**
+ * The direction the whole field is authored against.
+ *
+ * Every band and every packet is a flat quad, so it only exists on screen if it
+ * faces the viewer. The across-axis used to be `cross(tangent, worldUp)`, which
+ * is *always horizontal* — and the camera looks along -Z, so each band was seen
+ * exactly edge-on. That is why a channel 0.2 world units wide, thirty pixels at
+ * this framing, resolved to the one-pixel scratches the entire routing field
+ * read as, and why widening it changed nothing.
+ *
+ * It is a constant rather than the live camera direction because the camera
+ * never rotates: it translates and dollies and keeps one presentation (see
+ * `cameraController`), so a baked axis is exactly as correct as a per-frame one
+ * and costs the CPU fallback nothing.
+ */
+export const ROUTE_FACING_AXIS: Vector = [0, 0, 1];
+
+/**
+ * How far a tangent must be off the view axis before the facing axis carries the
+ * whole across-axis.
+ *
+ * A route running straight down the view axis has no screen-space width to give
+ * — the cross product collapses — so it has to fall back to a second axis rather
+ * than degenerate to a point. This is the top of that handover: below it the
+ * fallback is mixed in, above it the facing axis is used alone.
+ *
+ * It is a *blend*, not a switch, and that is not a refinement. The two axes are a
+ * quarter turn apart, so picking one or the other with a comparison tears the
+ * ribbon at whatever tangent happens to sit on the threshold — which is where the
+ * hooks and loops that made the hero look scribbled on came from. Shared with the
+ * vertex shader, which blends between the same two axes over the same band.
+ */
+export const ROUTE_FACING_EPSILON = 0.2;
+
+/**
+ * How much of the fallback survives at the threshold.
+ *
+ * The handover has to be finished by the time the facing axis is genuinely
+ * usable, so the blend starts from a degenerate tangent and reaches the facing
+ * axis here.
+ */
+export const ROUTE_FACING_BLEND_FLOOR = 0.02;
 
 function quadratic(
   start: Vector,
@@ -126,7 +170,17 @@ export function sampleRouteTangent(
   target[offset + 2] = target[offset + 2]! / length;
 }
 
-/** Stable across-axis for the ribbon quad, derived from one up reference. */
+/**
+ * Stable across-axis for a ribbon quad: the direction the quad is widened in.
+ *
+ * Taken against the view axis so the quad faces the camera; a tangent parallel to
+ * that axis has no width to project, so the world-up fallback is *mixed in* as
+ * the facing axis degenerates rather than swapped for it. The two are a quarter
+ * turn apart, and a comparison between them cuts whichever ribbon is sitting on
+ * the threshold — the axis flips between two planes along the curve and the band
+ * folds. Both backends blend over the same band, so a channel and its packets
+ * cannot lie in different planes.
+ */
 export function deriveRouteAcross(
   tangent: Float32Array | number[],
   offset: number,
@@ -136,16 +190,46 @@ export function deriveRouteAcross(
   const tx = tangent[offset]!;
   const ty = tangent[offset + 1]!;
   const tz = tangent[offset + 2]!;
-  let ax = ty * UP[2] - tz * UP[1];
-  let ay = tz * UP[0] - tx * UP[2];
-  let az = tx * UP[1] - ty * UP[0];
-  let length = Math.hypot(ax, ay, az);
 
-  if (length < TANGENT_EPSILON) {
-    ax = 1;
-    ay = 0;
-    az = 0;
-    length = 1;
+  // Across the view axis, in the plane the camera can actually see.
+  const primaryX = ty * ROUTE_FACING_AXIS[2] - tz * ROUTE_FACING_AXIS[1];
+  const primaryY = tz * ROUTE_FACING_AXIS[0] - tx * ROUTE_FACING_AXIS[2];
+  const primaryZ = tx * ROUTE_FACING_AXIS[1] - ty * ROUTE_FACING_AXIS[0];
+  const primaryLength = Math.hypot(primaryX, primaryY, primaryZ);
+
+  // Across world up: defined exactly where the first one collapses.
+  const fallbackX = ty * UP[2] - tz * UP[1];
+  const fallbackY = tz * UP[0] - tx * UP[2];
+  const fallbackZ = tx * UP[1] - ty * UP[0];
+  const fallbackLength = Math.hypot(fallbackX, fallbackY, fallbackZ);
+
+  const faceX = primaryLength > TANGENT_EPSILON ? primaryX / primaryLength : 0;
+  const faceY = primaryLength > TANGENT_EPSILON ? primaryY / primaryLength : 0;
+  const faceZ = primaryLength > TANGENT_EPSILON ? primaryZ / primaryLength : 0;
+
+  const backX = fallbackLength > TANGENT_EPSILON ? fallbackX / fallbackLength : 0;
+  const backY = fallbackLength > TANGENT_EPSILON ? fallbackY / fallbackLength : 0;
+  const backZ = fallbackLength > TANGENT_EPSILON ? fallbackZ / fallbackLength : 1;
+
+  // 0 at a degenerate tangent, 1 once the facing axis is fully usable.
+  const raw =
+    (primaryLength - ROUTE_FACING_BLEND_FLOOR) /
+    (ROUTE_FACING_EPSILON - ROUTE_FACING_BLEND_FLOOR);
+  const clamped = raw < 0 ? 0 : raw > 1 ? 1 : raw;
+  const blend = clamped * clamped * (3 - 2 * clamped);
+
+  // The two unit vectors are orthogonal wherever both are defined, so the mix is
+  // never the zero vector: its length runs from 1 down to 1/sqrt(2).
+  const ax = backX + (faceX - backX) * blend;
+  const ay = backY + (faceY - backY) * blend;
+  const az = backZ + (faceZ - backZ) * blend;
+  const length = Math.hypot(ax, ay, az);
+
+  if (!(length > TANGENT_EPSILON)) {
+    target[targetOffset] = 1;
+    target[targetOffset + 1] = 0;
+    target[targetOffset + 2] = 0;
+    return;
   }
 
   target[targetOffset] = ax / length;
@@ -289,7 +373,8 @@ export type RouteDashAttributes = {
    * consumer needs to walk it is exposed here rather than re-derived by callers.
    */
   readonly orderedCurves: readonly RouteCurve[];
-  readonly dashesPerRoute: number;
+  /** Packets packed for each entry of `orderedCurves`, in the same order. */
+  readonly orderedDashCounts: readonly number[];
   readonly vertexCount: number;
   readonly dashCount: number;
 };
@@ -306,27 +391,42 @@ const QUAD_INDICES = [0, 1, 2, 0, 2, 3];
  * Packs one ribbon quad per dash, ordered by route class so a draw range can
  * reveal lanes progressively. Attributes are written once and never mutated;
  * motion comes entirely from uniform time in the material.
+ *
+ * How many dashes each curve gets is decided per curve, from its own world
+ * length; see `deriveCurveDashCounts`.
  */
 export function deriveRouteDashAttributes(
   curves: readonly RouteCurve[],
-  dashesPerRoute: number,
+  density: number,
   seed = 17,
+  capacity?: number,
 ): RouteDashAttributes {
   const normalizedSeed = normalizeSeed(seed);
-  const lanes = Math.max(0, Math.floor(Number.isFinite(dashesPerRoute) ? dashesPerRoute : 0));
+  const counts = deriveCurveDashCounts(curves, density, capacity);
+  const buckets = ROUTE_CLASS_ORDER.map(() => [] as { curve: RouteCurve; count: number }[]);
+  curves.forEach((curve, index) => {
+    buckets[ROUTE_CLASS_INDEX[curve.route]]!.push({
+      curve,
+      count: counts[index] ?? 0,
+    });
+  });
+
   const ordered: RouteCurve[] = [];
+  const orderedCounts: number[] = [];
   const routeOffsets = new Uint32Array(ROUTE_CLASS_ORDER.length + 1);
+  let vertexCount = 0;
 
   for (const routeClass of ROUTE_CLASS_ORDER) {
-    routeOffsets[ROUTE_CLASS_INDEX[routeClass]] = ordered.length * lanes * 4;
-    for (const curve of curves) {
-      if (curve.route === routeClass) ordered.push(curve);
+    routeOffsets[ROUTE_CLASS_INDEX[routeClass]] = vertexCount;
+    for (const entry of buckets[ROUTE_CLASS_INDEX[routeClass]]!) {
+      ordered.push(entry.curve);
+      orderedCounts.push(entry.count);
+      vertexCount += entry.count * 4;
     }
   }
-  routeOffsets[ROUTE_CLASS_ORDER.length] = ordered.length * lanes * 4;
+  routeOffsets[ROUTE_CLASS_ORDER.length] = vertexCount;
 
-  const dashCount = ordered.length * lanes;
-  const vertexCount = dashCount * 4;
+  const dashCount = vertexCount / 4;
   const IndexArray = vertexCount > 65_535 ? Uint32Array : Uint16Array;
   const indices = new IndexArray(dashCount * QUAD_INDICES.length);
 
@@ -345,24 +445,36 @@ export function deriveRouteDashAttributes(
   };
 
   let dashIndex = 0;
-  for (const curve of ordered) {
-    for (let lane = 0; lane < lanes; lane += 1) {
+  for (let curveIndex = 0; curveIndex < ordered.length; curveIndex += 1) {
+    const curve = ordered[curveIndex]!;
+    const packets = orderedCounts[curveIndex] ?? 0;
+    // Length is in curve progress, width in world units. Progress is the wrong
+    // unit for a packet's size: one curve is a two-and-a-half unit trunk and the
+    // next is an eight-tenths loop inside the Core, so a fixed slice of progress
+    // is a fifteen-pixel streak on one and a five-pixel blob on the other — which
+    // is exactly what a Core full of blobs and a field of thin lines was. The
+    // size is fixed in world units here and divided by the curve's own length, so
+    // a packet is the same streak wherever it runs.
+    const curveLength = deriveRouteCurveLength(curve);
+    const packetLength = Math.min(
+      ROUTE_PACKET_LENGTH,
+      curveLength / PACKET_LENGTH_CURVE_SHARE,
+    );
+
+    for (let lane = 0; lane < packets; lane += 1) {
       const laneSeed = curve.id * 131 + lane * 17 + 7;
       const phase = hashUnit(normalizedSeed, laneSeed);
       const speed = 0.16 + hashUnit(normalizedSeed, laneSeed + 1) * 0.14;
-      // Length is in curve progress, width in world units, and the ratio between
-      // them is still what a packet reads as: several times longer than it is
-      // wide, or it arrives as a speck sliding down a wire.
-      //
-      // Both are far shorter and thinner than they were, and there are far more
-      // of them — see `deriveDashesPerRoute`. Few long fat packets evenly spaced
-      // along a route read as segments of a pipe, because that is what they are.
-      // Many short thin ones read as flow, because the eye stops resolving
-      // individual packets and starts reading the field's direction and density
-      // instead. The signal language does not change: this is the same dash,
-      // drawn at the scale where a dash stops being an object.
-      const length = 0.022 + hashUnit(normalizedSeed, laneSeed + 2) * 0.05;
-      const width = 0.018 + hashUnit(normalizedSeed, laneSeed + 3) * 0.026;
+      // Sizes are set from the framing rather than from taste. At the idle
+      // distance a world unit is roughly 160 pixels on a 1920 frame, so this
+      // lands at fourteen to twenty pixels long and three to five wide: long
+      // enough that a packet reads as a streak with a direction, short enough
+      // that the eye stops resolving single packets and starts reading the
+      // field's density instead.
+      const length =
+        (packetLength * (0.8 + hashUnit(normalizedSeed, laneSeed + 2) * 0.5)) /
+        curveLength;
+      const width = 0.016 + hashUnit(normalizedSeed, laneSeed + 3) * 0.014;
       const brightness = 0.45 + hashUnit(normalizedSeed, laneSeed + 4) * 0.55;
       const routeIndex = ROUTE_CLASS_INDEX[curve.route];
       const groupIndex = Math.max(
@@ -407,65 +519,181 @@ export function deriveRouteDashAttributes(
     indices,
     routeOffsets,
     orderedCurves: ordered,
-    dashesPerRoute: lanes,
+    orderedDashCounts: orderedCounts,
     vertexCount,
     dashCount,
   };
 }
 
-/** The curve a packed dash index belongs to. */
+/**
+ * The curve a packed dash index belongs to.
+ *
+ * The walk is a prefix sum over the per-curve counts rather than a division,
+ * because the counts differ: the packing is still contiguous per curve, so the
+ * curve owning a dash index is the first one whose running total passes it.
+ */
 export function resolveDashCurve(
-  attributes: Pick<RouteDashAttributes, 'orderedCurves' | 'dashesPerRoute'>,
+  attributes: Pick<RouteDashAttributes, 'orderedCurves' | 'orderedDashCounts'>,
   dashIndex: number,
 ): RouteCurve | undefined {
-  const perRoute = Math.max(1, attributes.dashesPerRoute);
-  const curveIndex = Math.floor(dashIndex / perRoute);
-  if (!Number.isFinite(curveIndex) || curveIndex < 0) return undefined;
-  return attributes.orderedCurves[curveIndex];
+  if (!Number.isFinite(dashIndex) || dashIndex < 0) return undefined;
+
+  let running = 0;
+  for (let index = 0; index < attributes.orderedDashCounts.length; index += 1) {
+    running += attributes.orderedDashCounts[index] ?? 0;
+    if (dashIndex < running) return attributes.orderedCurves[index];
+  }
+
+  return undefined;
+}
+
+/** Packet length in world units. See the sizing note in the packer. */
+export const ROUTE_PACKET_LENGTH = 0.1;
+
+/**
+ * A route with almost no length still gets a mark, or it is not a route.
+ *
+ * The Core's shortest runs — an ingress reach, a cross-link — are a sixth of a
+ * world unit long, and a per-unit-length density alone would round them to one
+ * packet or none. A route the field visits once is a dot, and a dot is not a
+ * direction.
+ *
+ * Deliberately one, and not the three this used to be. A count floor is a floor
+ * on *coverage* as much as on count: the reach is short, so its packet is
+ * already capped to a third of it, and three of those light the reach end to
+ * end. A saturated reach is not a sparse one; it renders as a solid bar, and a
+ * bent one renders as the white hook this constant was raising over the hull.
+ * Short runs are supposed to be the *sparsest* part of the field — the density
+ * is per world unit, so a short route carrying less ink than a trunk is the
+ * model working, not a route that has gone dark.
+ */
+const MIN_PACKETS_PER_CURVE = 1;
+
+/**
+ * The largest share of its own route a single packet may cover.
+ *
+ * The cap that keeps a mark a mark. The Core's ingress reaches are a sixth of a
+ * world unit long and carry the same nominal packet as a two-and-a-half unit
+ * trunk, so without this the packet overhung both ends of its own route and the
+ * reach rendered as a white hook laid across the hull.
+ */
+const PACKET_LENGTH_CURVE_SHARE = 3;
+
+/**
+ * World length of a quadratic route curve.
+ *
+ * The average of the control polygon and the chord, which is exact for a straight
+ * curve and within a couple of percent for the arcs a route actually is.
+ * Precision is not the point: this decides how many packets a route is worth, and
+ * being close to the arc length is all that buys.
+ */
+export function deriveRouteCurveLength(curve: RouteCurve): number {
+  const { start, control, end } = curve;
+  const chord = Math.hypot(end[0] - start[0], end[1] - start[1], end[2] - start[2]);
+  const polygon =
+    Math.hypot(control[0] - start[0], control[1] - start[1], control[2] - start[2]) +
+    Math.hypot(end[0] - control[0], end[1] - control[1], end[2] - control[2]);
+  const length = (chord + polygon) * 0.5;
+
+  return Number.isFinite(length) && length > 0.0001 ? length : 0.0001;
 }
 
 /**
- * Dashes per route for one implementation and profile.
+ * Packets per world unit of route, for one implementation and profile.
  *
- * Takes whether the field is advected, not which backend is running. Those were
- * the same question until this profile's `coreAdvection` flag turned out to be
- * consumed by nothing and every WebGPU tier took the same path — the flag now
+ * Per *unit of route*, not per route, and that is the whole point of the number.
+ * A count per curve makes ink proportional to the count, so a two-and-a-half unit
+ * trunk and an eight-tenths loop inside the Core carried identical coverage — and
+ * coverage is what a route reads as. The Core's short runs saturated into solid
+ * bright hooks while the trunks thinned into wire, which is the opposite of the
+ * density structure a flowfield is supposed to have, and nothing in the field
+ * said so.
+ *
+ * Measured per unit of length the structure comes out by itself: the Core is
+ * small and its circulation is long, so the same linear density is a much higher
+ * density *in the frame* there, and the long routes between domains read as
+ * streams. No special case is needed to make the Core the dense end of the field.
+ *
+ * It takes whether the field is advected, not which backend is running. Those
+ * were the same question until the profile's `coreAdvection` flag turned out to
+ * be consumed by nothing and every WebGPU tier took the same path — the flag now
  * selects the implementation, so density has to follow the implementation rather
- * than the backend, or SAFE on WebGPU would pack the GPU field's count into the
+ * than the backend, or SAFE on WebGPU would pack the GPU field's density into the
  * CPU fallback.
- *
- * An advected field evaluates every packet in the vertex shader, so its count
- * tracks the interaction's density and the profile's lanes. The instanced
- * fallback repositions each packet on the CPU every frame, so it stays a sparse
- * channel carrying the same language rather than the same count.
  *
  * Exported because telemetry must count what the field actually draws, and a
  * second copy of this formula would be a second, drifting answer.
  */
-export function deriveDashesPerRoute(
-  advected: boolean,
-  detail: number,
-  lanes: number,
-): number {
+export function deriveRouteDashDensity(advected: boolean, detail: number): number {
   const boundedDetail = Number.isFinite(detail) ? Math.min(1, Math.max(0, detail)) : 0;
-  const boundedLanes = Number.isFinite(lanes) ? Math.max(1, Math.round(lanes)) : 1;
-  // The advected base is deliberately not larger than this: packets overlap once
-  // their count passes the reciprocal of their length, and a stream that never
-  // shows a gap is a pipe again, just a thinner one.
-  if (advected) {
-    return Math.max(8, Math.round(8 + boundedDetail * boundedLanes * 11));
-  }
-  return Math.max(2, Math.round(3 + boundedDetail * boundedLanes * 2));
+
+  // An advected field evaluates every packet in the vertex shader, so its density
+  // is chosen for the read: about one and a half packet-lengths of ink per unit
+  // of route at full detail, which is a stream with packets running over each
+  // other rather than a dotted line with the route's own channel showing through
+  // the gaps. Below about one, the field reads as a dashed wire — which is what a
+  // count *per curve* produced, because a count per curve is a coverage of
+  // three and a half on one route and a fifth on the next.
+  //
+  // The instanced fallback repositions each packet on the CPU every frame, so it
+  // carries the same language at a bit over a third of the density: enough to
+  // read a route's direction and to see the field respond, not enough to be the
+  // same field. That difference is the point of the backend.
+  return advected ? 2 + boundedDetail * 11 : 1 + boundedDetail * 4;
+}
+
+/**
+ * Packets per curve, each proportional to its own world length.
+ *
+ * Returns one count per curve in the order given — not in packing order — so a
+ * caller that only needs the counts does not have to reproduce the class-major
+ * packing to read them. The packer and telemetry both go through here, which is
+ * what keeps the reported count equal to the drawn one by construction.
+ *
+ * `capacity` bounds the *whole field*, which is how the CPU fallback's ceiling is
+ * spent. Scaling every curve by one factor keeps the field's shape — which routes
+ * are dense and which are sparse — where truncating a packed order cut the tail
+ * routes off entirely, and spending the ceiling per curve instead flattened every
+ * route to the same handful of packets. Neither of those is a lower-density
+ * fallback; this is.
+ */
+export function deriveCurveDashCounts(
+  curves: readonly RouteCurve[],
+  density: number,
+  capacity?: number,
+): number[] {
+  const perUnit = Number.isFinite(density) ? Math.max(0, density) : 0;
+  // Zero density means the field is off, not that every route gets its minimum.
+  // The floor below is a readability guarantee for a field that exists.
+  const counts =
+    perUnit <= 0
+      ? curves.map(() => 0)
+      : curves.map((curve) =>
+          Math.max(MIN_PACKETS_PER_CURVE, Math.round(perUnit * deriveRouteCurveLength(curve))),
+        );
+
+  const budget =
+    capacity === undefined || !Number.isFinite(capacity)
+      ? Infinity
+      : Math.max(0, Math.floor(capacity));
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  if (total <= budget || total === 0) return counts;
+
+  const scale = budget / total;
+  return counts.map((count) => Math.max(1, Math.floor(count * scale)));
 }
 
 /**
  * Hard ceiling on the WebGL2 instanced field.
  *
- * WebGL2 repositions every dash on the CPU each frame, so its count is capped
- * rather than scaled. Shared with telemetry so the reported sample count matches
- * the instances actually submitted.
+ * The ceiling is a budget for the whole field rather than for one route (see
+ * `deriveCurveDashCounts`), and it is generous because the floor is what matters:
+ * a cap so low that the density has to be flattened to meet it stops being a
+ * sparser field and becomes a different one. 360 is a trivial per-frame cost — it
+ * is one matrix composition per packet — and the field's real density on this
+ * backend lands well under it, so the ceiling is a guard rather than a governor.
  */
-export const WEBGL2_DASH_CEILING = 180;
+export const WEBGL2_DASH_CEILING = 360;
 
 /**
  * Draw range for the first `activeLaneCount` route classes. Idle exposes only

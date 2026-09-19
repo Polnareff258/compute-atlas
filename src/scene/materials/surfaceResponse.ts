@@ -14,6 +14,17 @@ import { deriveMembraneOpacity } from './surfaceGeometry';
 export type SurfaceInput = {
   readonly activity: number;
   readonly focus: number;
+  /**
+   * How much of this surface the composition is showing, 0..1, default 1.
+   *
+   * This is the one input that can take a surface *below* its resting response,
+   * which is what "the other domains recede" needs and what brightness alone
+   * cannot express: `gainAtRest` is a floor, so a receded surface handed
+   * `activity: 0` renders exactly as a rested one does. Presence is a property of
+   * the composition, not of the surface's own state, so it scales the resolved
+   * response rather than serving as a third increment alongside activity.
+   */
+  readonly presence?: number;
 };
 
 /** What a surface should actually show. */
@@ -50,6 +61,11 @@ export function responseCurveFor(role: SurfaceRole): SurfaceResponseCurve {
  * membranes and a domain's membranes layer over different amounts of structure
  * and were tuned apart; the curve supplies only the increments, so the resting
  * openness has exactly one home.
+ *
+ * Presence multiplies the whole resolved response — colour gain and membrane
+ * openness alike — so a receded surface loses its interior *and* its light
+ * together. Scaling only one of the two would leave a domain that reads as a
+ * bright sliver, which is the opposite of receding.
  */
 export function deriveSurfaceResponse(
   role: SurfaceRole,
@@ -59,17 +75,20 @@ export function deriveSurfaceResponse(
   const curve = responseCurveFor(role);
   const activity = boundedUnit(input.activity);
   const focus = boundedUnit(input.focus);
+  const presence = input.presence === undefined ? 1 : boundedUnit(input.presence);
 
-  const gain = curve.gainAtRest +
-    curve.gainFromActivity * activity +
-    curve.gainFromFocus * focus;
+  const gain =
+    (curve.gainAtRest +
+      curve.gainFromActivity * activity +
+      curve.gainFromFocus * focus) *
+    presence;
 
   if (role !== 'membrane') {
     return { gain, alpha: 1 };
   }
 
   const fade = boundedUnit(
-    boundedUnit(baseFade) +
+    boundedUnit(baseFade) * presence +
       curve.fadeFromActivity * activity +
       curve.fadeFromFocus * focus,
   );

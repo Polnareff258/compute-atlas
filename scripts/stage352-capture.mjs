@@ -704,6 +704,13 @@ export function findDomainLabel(labels, domain) {
  * `othersHidden` is the focus contract: a focused domain is the only one that
  * keeps its text, so the other labels leaving the DOM is evidence the focus
  * actually landed rather than evidence of a rendering hiccup.
+ *
+ * `hoveredNames` is the *idle* contract. A parked pointer that never reaches
+ * the canvas leaves the last hovered domain hovered, and a hovered domain
+ * still drives the routing flow target, so a frame captured in that state is a
+ * hover frame with an idle camera. Escape has to prove it cleared that too,
+ * which means the observation has to carry the hovered set rather than only
+ * the focused one.
  */
 export function readDomainState(labels, domain) {
   const target = findDomainLabel(labels, domain);
@@ -713,6 +720,7 @@ export function readDomainState(labels, domain) {
     hasDescription: Boolean(target?.hasDescription),
     labelCount: labels.length,
     focusedNames: labels.filter((label) => label.state === 'focused').map((label) => label.name),
+    hoveredNames: labels.filter((label) => label.state === 'hovered').map((label) => label.name),
     observed: labels.map((label) => `${label.name}:${label.state}`),
   };
 }
@@ -749,9 +757,12 @@ export function buildSearchCandidates(label, viewport) {
   };
 
   // Where the domain's own body lies relative to its text. In the scene a label
-  // is offset from its anchor toward the core on x and upward on y
-  // (`labelSide = anchor[0] > 0 ? -1 : 1`, offset y = +0.66 * extent), so the
-  // anchor sits outward from the frame centre and below the label.
+  // is offset from its anchor toward the frame centre on x
+  // (`labelSide = anchor[0] > 0 ? -1 : 1`) and *away from the Core* on y
+  // (`labelVerticalSide = anchor[1] > 0 ? 1 : -1`), so the anchor sits outward
+  // from the frame centre and on the Core's side of the label. Which vertical
+  // side that is depends on the domain, so the estimate is a seed for the
+  // verified search below rather than an answer: both signs are walked.
   const away = centre.x < viewport.width / 2 ? -1 : 1;
   const span = Math.max(
     60,
@@ -860,7 +871,17 @@ export function evaluateExpectation(observation, expectation, domain) {
           reason: `only ${observation.labelCount} label(s) on screen after Escape; the focus composition did not release the other domains`,
         };
       }
-      return { ok: true, reason: 'Escape cleared focus and the other domains returned' };
+      // Idle is the other half of the claim. A pointer left on a domain keeps
+      // that domain hovered, which bends the routing field toward it and opens
+      // its ingress, so the frame would show an interacted field under an idle
+      // camera and prove nothing about the restored composition.
+      if (observation.hoveredNames.length > 0) {
+        return {
+          ok: false,
+          reason: `Escape left ${observation.hoveredNames.join(', ')} hovered; the pointer never left the scene (${observation.observed.join(', ')})`,
+        };
+      }
+      return { ok: true, reason: 'Escape cleared focus and hover, and the other domains returned' };
     }
     case 'none':
     default:
@@ -1468,6 +1489,22 @@ export function analyzeFrame(image, { samples = 24_000 } = {}) {
   };
 }
 
+/**
+ * Byte equality of two decoded frames.
+ *
+ * The reduced-motion readiness bar. A coarse signature answers "is the frame
+ * still moving much", which is the right question for an animated scene and the
+ * wrong one for a scene that claims to have stopped: an asymptotically easing
+ * camera moves less than one signature cell between samples and passes. Two
+ * captures taken that way came back differing on 174 pixels, which is exactly
+ * the amount of motion the criterion exists to rule out.
+ */
+export function buffersEqual(left, right) {
+  if (left === null || right === null) return false;
+  if (left.length !== right.length) return false;
+  return Buffer.from(left).equals(Buffer.from(right));
+}
+
 /** Coarse 16x16 luminance signature used for "are consecutive frames stable". */
 export function frameSignature(image, grid = DEFAULT_GRID) {
   const { width, height, channels, data } = image;
@@ -1618,11 +1655,38 @@ export function createConsoleCollector({ allowPatterns = [], onEntry } = {}) {
       const owns = (incoming) => sessionId === null || incoming === sessionId;
       client.on('Runtime.consoleAPICalled', (params, incoming) => {
         if (!owns(incoming)) return;
-        const text = (params.args ?? []).map(formatRemoteObject).join(' ');
-        record(
-          { text: text.length > 0 ? text : `[${params.type}]` },
-          { kind: 'console', level: params.type === 'error' ? 'error' : params.type },
+        const args = params.args ?? [];
+        // A preview is truncated, and the renderer's telemetry snapshot is the
+        // one console object whose *whole* value is the evidence: which backend
+        // took which path, how many field samples were actually asked for, what
+        // the quality tier resolved to. Expanding it over the object handle is
+        // the difference between logging that telemetry exists and being able to
+        // check what it said.
+        const expand = args.map((argument) =>
+          isPlainObject(argument) && typeof argument.objectId === 'string'
+            ? client
+                .send(
+                  'Runtime.callFunctionOn',
+                  {
+                    objectId: argument.objectId,
+                    functionDeclaration: 'function () { return JSON.stringify(this); }',
+                    returnByValue: true,
+                  },
+                  sessionId,
+                )
+                .then((result) => result?.result?.value ?? null)
+                .catch(() => null)
+            : Promise.resolve(null),
         );
+        Promise.all(expand).then((expanded) => {
+          const text = args
+            .map((argument, index) => expanded[index] ?? formatRemoteObject(argument))
+            .join(' ');
+          record(
+            { text: text.length > 0 ? text : `[${params.type}]` },
+            { kind: 'console', level: params.type === 'error' ? 'error' : params.type },
+          );
+        });
       });
       client.on('Runtime.exceptionThrown', (params, incoming) => {
         if (!owns(incoming)) return;
@@ -1907,6 +1971,56 @@ async function resolveDomainPoint(client, sessionId, options, viewport, domain) 
   };
 }
 
+/**
+ * Candidate park positions, in the order they are tried.
+ *
+ * The configured `--park` comes first so an explicit override still governs.
+ * (4,4) — the default — sits in the corner the header bar covers, and a
+ * pointermove the canvas never receives leaves R3F holding its last hovered
+ * node, so the alternates are positions that are unambiguously inside the
+ * canvas and away from any domain anchor. Whichever one lands is reported.
+ */
+function parkCandidates(park, viewport) {
+  const fallbacks = ['50%,94%', '94%,94%'].map((raw) =>
+    resolvePoint(raw, viewport, 'park fallback'),
+  );
+  const seen = new Set([`${park.x},${park.y}`]);
+  return [park, ...fallbacks].filter((point) => {
+    const key = `${point.x},${point.y}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Parks the pointer and proves the scene saw it leave.
+ *
+ * Parking without checking is how a capture can claim to show the idle
+ * composition while showing an interacted one: the routing flow target reads
+ * hover as well as focus, so a still-hovered domain keeps the field bent toward
+ * it and its ingress open even after Escape. Every candidate is confirmed by
+ * the hovered set going empty, and a park that never lands is a failure rather
+ * than a frame.
+ */
+async function parkPointer(client, sessionId, park, viewport, domain) {
+  const candidates = parkCandidates(park, viewport);
+  let last = readDomainState(await observeDomains(client, sessionId), domain);
+  for (const point of candidates) {
+    await dispatchMouse(client, sessionId, 'mouseMoved', point);
+    const { observation } = await waitForDomainState(
+      client,
+      sessionId,
+      domain,
+      (state) => state.hoveredNames.length === 0 && state.focusedNames.length === 0,
+      400,
+    );
+    last = observation;
+    if (observation.hoveredNames.length === 0) return { ok: true, observation, point };
+  }
+  return { ok: false, observation: last, tried: candidates };
+}
+
 async function applyState(client, sessionId, job, options, viewport, cache) {
   const park = resolvePoint(options.park, viewport, '--park');
   const domain = options.domain;
@@ -1914,7 +2028,7 @@ async function applyState(client, sessionId, job, options, viewport, cache) {
   // Park the pointer and clear focus so each state starts from a known baseline.
   // The escape state keeps the previous focus so it can prove that Escape cleared it.
   if (job.state.resetsFocus) {
-    await dispatchMouse(client, sessionId, 'mouseMoved', park);
+    await parkPointer(client, sessionId, park, viewport, domain);
     await dispatchEscape(client, sessionId);
     await delay(Math.min(options.settleMs, 150));
   }
@@ -1925,10 +2039,23 @@ async function applyState(client, sessionId, job, options, viewport, cache) {
 
   if (job.state.kind === 'escape') {
     const before = readDomainState(await observeDomains(client, sessionId), domain);
-    // Park first: Escape is supposed to restore the *idle* composition, and a
-    // pointer still resting on the focused domain would leave it hovered and
-    // make the restored frame ambiguous.
-    await dispatchMouse(client, sessionId, 'mouseMoved', park);
+    // Park first, and prove the park landed: Escape is supposed to restore the
+    // *idle* composition, and a pointer still resting on the focused domain
+    // would leave it hovered, which keeps the routing field bent toward it and
+    // its ingress open even though focus is gone.
+    const parked = await parkPointer(client, sessionId, park, viewport, domain);
+    if (!parked.ok) {
+      return {
+        text: `key Escape (park failed)`,
+        expectation: 'escape',
+        observation: parked.observation,
+        verified: false,
+        verdict: {
+          ok: false,
+          reason: `the pointer never left the scene: ${parked.tried.map((p) => `${p.x},${p.y}`).join(' and ')} all left a domain hovered (${parked.observation.observed.join(', ')})`,
+        },
+      };
+    }
     await delay(60);
     await dispatchEscape(client, sessionId);
     const { observation } = await waitForDomainState(
@@ -2011,10 +2138,19 @@ async function applyState(client, sessionId, job, options, viewport, cache) {
 /**
  * Readiness = the DOM probe says ready, the frame is not one flat colour, and
  * consecutive signatures have stopped moving for `stableFrames` samples.
+ *
+ * Under `--reduced-motion` the bar is equality rather than a threshold. Reduced
+ * motion claims the scene has stopped, and a coarse signature that has stopped
+ * *changing much* is a weaker statement: a camera still easing asymptotically
+ * moves less than one grid cell between samples and passes it, which is how two
+ * reduced-motion captures came back differing on 174 pixels. Waiting for two
+ * consecutive byte-identical frames asserts the actual claim, and it converges
+ * because the scene really does stop.
  */
 async function waitForReadyScene(client, sessionId, options) {
   const deadline = Date.now() + options.readyTimeoutMs;
   let previousSignature = null;
+  let previousFrame = null;
   let stableCount = 0;
   let lastProbe = null;
   let lastStats = null;
@@ -2042,15 +2178,19 @@ async function waitForReadyScene(client, sessionId, options) {
     if (!hasSpread) {
       stableCount = 0;
       previousSignature = signature;
+      previousFrame = image.data;
       await delay(options.settleMs);
       continue;
     }
 
+    const unchanged = previousFrame !== null && buffersEqual(previousFrame, image.data);
     if (previousSignature) {
       const delta = signatureDelta(previousSignature, signature);
-      stableCount = delta <= options.stabilityThreshold ? stableCount + 1 : 0;
+      const settled = options.reducedMotion ? unchanged : delta <= options.stabilityThreshold;
+      stableCount = settled ? stableCount + 1 : 0;
     }
     previousSignature = signature;
+    previousFrame = image.data;
 
     if (stableCount >= options.stableFrames - 1) {
       return { ready: true, probe: lastProbe, stats: lastStats, attempts, png };

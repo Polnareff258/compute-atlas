@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { GRAPH_MANIFEST } from './graphManifest';
-import { deriveGraphLayout } from './layout';
+import {
+  NAMED_DOMAIN_PROMINENCE,
+  deriveGraphLayout,
+  deriveGraphProminence,
+} from './layout';
 import type { GraphNodeId } from './types';
 
 const DOMAIN_IDS: readonly GraphNodeId[] = [
@@ -98,5 +102,60 @@ describe('deriveGraphLayout', () => {
     };
 
     expect(() => deriveGraphLayout(incomplete)).toThrow(/unknown-domain/);
+  });
+});
+
+describe('deriveGraphProminence', () => {
+  it('ranks the Core first and keeps every value a bounded unit', () => {
+    const prominence = deriveGraphProminence(GRAPH_MANIFEST);
+
+    expect(prominence.core).toBe(1);
+    for (const id of ['core', ...DOMAIN_IDS] as const) {
+      expect(prominence[id]).toBeGreaterThanOrEqual(0);
+      expect(prominence[id]).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('leaves exactly two domains dormant, so idle spends three names', () => {
+    const prominence = deriveGraphProminence(GRAPH_MANIFEST);
+    const named = DOMAIN_IDS.filter((id) => prominence[id] >= NAMED_DOMAIN_PROMINENCE);
+
+    // The brief's "never all labels at once" is enforced here rather than in the
+    // view: text is a budget the composition spends, and this is the budget.
+    expect(named.length).toBe(3);
+    expect(named).toContain('graphics');
+  });
+
+  it('holds the dormant domains above the noise floor', () => {
+    const prominence = deriveGraphProminence(GRAPH_MANIFEST);
+    const dormant = DOMAIN_IDS.filter((id) => prominence[id] < NAMED_DOMAIN_PROMINENCE);
+
+    for (const id of dormant) {
+      // Presence multiplies the whole response, so a dormant domain's rendered
+      // luminance is roughly `prominence * tier colour`. Below about a fifth the
+      // body drops under the background's own noise and only the brightest edge
+      // of a member survives — which is a silhouette that has stopped being
+      // whole, and reads as a scratch rather than as a machine in the depth.
+      expect(prominence[id]).toBeGreaterThan(0.2);
+    }
+  });
+
+  it('gives every domain a distinct ranking rather than a shared level', () => {
+    const prominence = deriveGraphProminence(GRAPH_MANIFEST);
+    const levels = DOMAIN_IDS.map((id) => prominence[id]);
+
+    expect(new Set(levels).size).toBe(levels.length);
+  });
+
+  it('throws rather than rendering a domain at zero presence', () => {
+    const incomplete = {
+      ...GRAPH_MANIFEST,
+      nodes: [
+        ...GRAPH_MANIFEST.nodes,
+        { ...GRAPH_MANIFEST.nodes[0]!, id: 'unknown-domain' as GraphNodeId },
+      ],
+    };
+
+    expect(() => deriveGraphProminence(incomplete)).toThrow(/unknown-domain/);
   });
 });

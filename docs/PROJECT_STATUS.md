@@ -3,7 +3,7 @@
 **As of:** 2026-09-19
 **Repository:** `Polnareff258/compute-atlas`
 **Current phase:** Phase 1
-**Current stage:** Stage 3.5.2 visual reconstruction is implemented and captured on both backends; local screenshot evidence for 3.5.1 is superseded by 3.5.2. One known, localised material divergence is documented rather than fixed. Stage 6 is not started.
+**Current stage:** Stage 3.5.3 visual convergence is implemented and captured on both backends. It supersedes 3.5.2's visual layer: the 3.5.2 entry checks passed but its visual review did not. The material divergence 3.5.2 documented is fixed and measured (see `docs/STAGE353_REVIEW_BRIEF.md` §5). Stage 6 is not started.
 
 ## Confirmed architecture
 
@@ -29,7 +29,8 @@
 | Stage 5.1 — corrective pass | Complete | Hover/focus ownership separated; runtime quality now reaches canvas/R3F DPR; AI handoff added. |
 | Stage 3.5 — Compute Core Visual Identity V2 | Complete | Non-spherical V2 composition, structure-changing states, WebGPU/WebGL2 evidence and fallback correction are complete. |
 | Stage 3.5.1 — Visual Composition Reconstruction | Superseded by Stage 3.5.2 | Deterministic machine topology, local field, five domain silhouettes and truthful draw-count telemetry were introduced here. Its own screenshot pass was never captured in-browser; Stage 3.5.2 rebuilt the visual layer and produced the evidence instead. |
-| Stage 3.5.2 — Visual Reconstruction | Implemented; captured on WebGPU and WebGL2 | Rebuilt hero Core, semantic routing flowfield, five domain sub-environments, unified surface material and reduced-motion fix. 31 local evidence PNGs (plus the 7 historical V2 files), error 0 / fatal 0 on both backends. One known node-material mid-tone divergence is documented below. |
+| Stage 3.5.3 — Visual Convergence | Implemented; captured on WebGPU and WebGL2 | Rebuilt the routing flowfield's density model (per world unit of route rather than per curve), blunted the hero Core's hulls so they close on a face instead of a point, unfolded the focused GRAPHICS stack into real layers, added `routeContract.ts` and `SurfaceInput.presence`, and closed two holes in the capture harness's own interaction evidence. Reviewed in `docs/STAGE353_REVIEW_BRIEF.md`. |
+| Stage 3.5.2 — Visual Reconstruction | Superseded by Stage 3.5.3 | Rebuilt hero Core, semantic routing flowfield, five domain sub-environments, unified surface material and reduced-motion fix. 31 local evidence PNGs (plus the 7 historical V2 files), error 0 / fatal 0 on both backends. One known node-material mid-tone divergence is documented below. |
 | Stage 6 — Command Palette | Not started | No palette UI has been added. |
 | Stage 7 — backend/Ollama health | Not started | Browser gateway intentionally remains NOT INITIALIZED until this stage. |
 | Stage 8 — Agent tool calling | Not started | No model or tool call is made from the browser. |
@@ -250,3 +251,92 @@ The WebGPU node material path renders the machine's mid-tones darker than the st
 ### Stage 3.5.2 handoff
 
 Stage 3.5.2 is implemented and captured. The next isolated slice remains Stage 6 — Command Palette; do not start it as part of this record.
+
+## Stage 3.5.3 — Visual Convergence
+
+This slice responds to the 3.5.2 **visual** review, which did not pass: the frame
+still read as scattered rectangles, one dominant dark slab, segmented glowing
+curves, five abstract icons and every label at once. It does not start Stage 6 and
+adds no palette, parser, Ollama, Agent Gateway, Trace or Developer Overlay.
+
+Full review brief: `docs/STAGE353_REVIEW_BRIEF.md`. It supersedes
+`docs/STAGE352_REVIEW_BRIEF.md` for regeneration, and corrects two claims in it.
+
+- `src/scene/routing/routeDash.ts` — density is **per world unit of route**.
+  `deriveDashesPerRoute` counted packets per curve, which made coverage (count ×
+  packet length) constant at 3.4 packet-lengths on every route regardless of its
+  length: the Core's short loops saturated into bright hooks while the long trunks
+  thinned into wire. `deriveRouteDashDensity`, `deriveCurveDashCounts` and
+  `deriveRouteCurveLength` replace it; `ROUTE_PACKET_LENGTH` is a world-unit
+  quantity divided by the curve's own length, capped so a packet is never more
+  than a third of its route (`PACKET_LENGTH_CURVE_SHARE`); the count floor is 1
+  rather than 3, because on a short reach a count floor is a *coverage* floor.
+- `src/scene/routing/routeContract.ts` — graph-neutral routing contract
+  (`CORE_ROUTE_GROUP`, `DOMAIN_ROUTE_GROUP_BASE`, `TRUNK_ROUTE_GROUP_BASE`,
+  `MAX_ROUTE_GROUPS`), so `coreCirculation.ts` no longer imports `graphRoutes.ts`.
+- `src/scene/core/coreStructure.ts` — the main hulls close on a face. Their
+  sections used to collapse toward a tip over the whole length under a 0.34–0.40
+  chamfer, so the body was two pointed lenses on a stick; the taper now lives in
+  the last eighth, where a machined chamfer lives, and the chamfers are 0.22–0.26.
+- `src/scene/graph/domainEnvironments.ts` — GRAPHICS' four framebuffer layers lost
+  the `anchor` tier and were brought to near-equal size with real cant. The front
+  plate had been both the largest and the brightest baked colour, so a focused
+  GRAPHICS read as one blank white card with three edges behind it.
+- `src/scene/materials/surfaceResponse.ts` — `SurfaceInput.presence`, the one
+  input that can take a surface *below* its resting response. `gainAtRest` is a
+  floor, so a receded surface handed `activity: 0` rendered exactly as a rested
+  one; presence scales the resolved response, colour gain and membrane openness
+  together, which is what "the other domains recede" requires.
+- `scripts/stage352-capture.mjs` — two holes in the harness's own interaction
+  evidence, both closed. Escape asserted focus had cleared but not hover; because
+  the parked pointer never reached the canvas, the Escape frame was a hover frame
+  with an idle camera. The park is now verified (hovered set must go empty, with
+  fallbacks inside the canvas) and its verdict requires hover cleared. Reduced
+  motion was judged ready by a coarse frame signature, which an asymptotically
+  easing camera passes: two runs differed on 174 pixels. Under `--reduced-motion`
+  readiness is now byte equality. The console collector also expands object
+  arguments over their CDP handle, so the renderer telemetry snapshot is readable
+  in full rather than truncated to a preview.
+
+### Stage 3.5.3 measurements
+
+- The real field: 22 curves, 18.76 world units, 244 packets, coverage 1.30 at
+  ULTRA's advected density of 13/unit. The instanced fallback runs at 5/unit.
+- WebGPU against WebGL2 on the same frame: point samples on structural surfaces
+  differ by **+1 to +4 luminance levels**; histograms p50 27 against 24 (1920×1080)
+  and 18 against 17 (2560×1440). The residual is uniform across a 4×4 grid and
+  tracks WebGPU's denser route field, not the material. The 3.5.2 divergence
+  (p50 4 against 26) was fixed in `e30e427` and the 3.5.2 brief was never updated.
+- Reduced motion is byte-identical across two independent runs at the default
+  settle: `b0b5cc37fcfb11ff9f4d43b47bdb4db5`.
+- Escape and overview now show the same composition — identical camera and labels,
+  differing only in packet phase — which is what proves Escape restored idle.
+
+### Stage 3.5.3 verification evidence
+
+- `npm.cmd test` — pass: 35 files, 293 tests.
+- `npm.cmd run typecheck` — pass. `npm.cmd run lint` — pass.
+- `NEXT_TELEMETRY_DISABLED=1 npm.cmd run build` — pass.
+- Acceptance matrix: WebGPU and WebGL2 × ULTRA × {1920×1080, 2560×1440} ×
+  {overview, hover-GRAPHICS, focus-GRAPHICS, Escape} × {plain, text-hidden,
+  grayscale} + 480×270 thumbnails = 26 files per backend; SAFE on both backends;
+  reduced motion on three runs. **error 0, fatal 0** on every batch.
+- Captures are local only. `.gitignore` excludes `artifacts/`; a reviewer on
+  another machine re-runs the harness rather than expecting PNGs in the tree.
+- No dependency, `package.json` entry or machine-local file was added.
+
+### Stage 3.5.3 remaining, real
+
+- The three secondary processing pockets are stubs on canted hull surfaces, so at
+  some angles the join is a soft shading boundary rather than a visible seat.
+- RESEARCH is very dark at idle — the intended dormant-silhouette treatment, at
+  the edge of readable on a dim display.
+- The instanced fallback still reads as evenly spaced dashes at 5/unit. That is
+  the deliberate low-density fallback, but it is what a WebGL2-only reviewer sees.
+- No automated visual regression: the matrix is inspected, not compared to a
+  baseline.
+
+### Stage 3.5.3 handoff
+
+Stage 3.5.3 is implemented and captured on both backends. The next isolated slice
+remains Stage 6 — Command Palette; do not start it as part of this record.

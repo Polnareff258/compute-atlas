@@ -66,6 +66,13 @@ Do not describe WebGPU and WebGL2 output as identical in a review.
 
 ## 6. Evidence and how to regenerate it
 
+> **Superseded for regeneration by `docs/STAGE353_REVIEW_BRIEF.md`.** The command
+> below passes `--coords graphics=1180,640`, which is a fixed point that misses
+> the pick zone and is now a *failure* rather than a frame — the harness derives
+> the pointer position from the live DOM and exits non-zero when it cannot reach
+> the domain. The section is kept as the 3.5.2 record; for a working command use
+> the 3.5.3 brief.
+
 **The 31 `artifacts/stage352-*.png` files are local only.** `.gitignore` excludes `artifacts/`; only the 7 historical `stage35-*` files were force-added past it. On a fresh clone, regenerate:
 
 ```bash

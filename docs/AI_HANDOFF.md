@@ -5,7 +5,7 @@
 Repository: Polnareff258/compute-atlas
 Default branch: master
 Current branch: `master`
-Stage 3.5.2 implementation commit: latest local commit at handoff; see `git log -1` for the SHA. Push target: `origin/master` via the configured v2rayN proxy.
+Stage 3.5.3 implementation commit: latest local commit at handoff; see `git log -1` for the SHA. Push target: `origin/master` via the configured v2rayN proxy.
 
 ## Product
 
@@ -16,10 +16,17 @@ Future stages add deterministic commands, a local Agent gateway and runnable exp
 
 ## Current Stage
 
-Stage 3.5.2 visual reconstruction is implemented and captured on both backends.
-Next: Visual Review / Sol Review, carrying the one documented node-material divergence as an open item.
+Stage 3.5.3 visual convergence is implemented and captured on both backends.
+Next: Visual Review / Sol Review. The node-material divergence is no longer an
+open item — it was fixed in `e30e427` and is measured in `docs/STAGE353_REVIEW_BRIEF.md` §5.
 Stage 6 is not started and must remain out of scope until separately requested.
 
+Read `docs/STAGE353_REVIEW_BRIEF.md` before reviewing. It is written to be read
+instead of a transcript and supersedes `docs/STAGE352_REVIEW_BRIEF.md` for
+regeneration; it also corrects two claims in that document, one of which (the
+`--coords graphics=1180,640` regeneration command) is now a failing command by design.
+
+Stage 3.5.3 supersedes the Stage 3.5.2 visual layer: the 3.5.2 entry checks passed but its visual review did not.
 Stage 3.5.2 supersedes the Stage 3.5.1 visual layer. Stage 3.5.1 never produced its own screenshots, so nothing in `artifacts/` is Stage 3.5.1 evidence — the `stage352-*` files are this stage's, and the `stage35-*` files are historical V2 evidence only.
 Stage 3.5 is an inserted visual identity slice, not a replacement for the existing Stage 0–5.1 history.
 Do not start Stage 6 work in a Stage 3.5 review.
@@ -83,6 +90,7 @@ Stage 5.1 — Independent hover/focus ownership, runtime-to-renderer quality pro
 Stage 3.5 — Asymmetric Compute Core V2 composition, structure-changing states, WebGPU/WebGL2 browser evidence and fallback point-size correction.
 Stage 3.5.1 — Deterministic route hierarchy, compact zoned GPU field, layered nucleus, five domain silhouettes, bent graph routes and explicit configured/rendered/signal telemetry counts. Its visual layer is superseded by Stage 3.5.2, and it never produced its own screenshots.
 Stage 3.5.2 — Rebuilt hero Core (diagonal structural spine, asymmetric processing volume, central void, route ports and ingress, structural slices), a semantic routing flowfield of velocity-stretched dashes with route compression and arrival wake, five distinct domain sub-environments, one shared procedural surface material across both backends, and a reduced-motion path that stops the scene instead of dimming the canvas. Captured on WebGPU and WebGL2 at 1920×1080 and 2560×1440 with 31 local artifacts.
+Stage 3.5.3 — Rebuilt the routing flowfield's density model (per world unit of route rather than per curve, packet length a world-unit quantity capped at a third of its route, count floor 1), blunted the hero Core's hulls so they close on a face instead of tapering to a point, unfolded the focused GRAPHICS stack into four near-equal canted layers, added a graph-neutral `routeContract.ts` and `SurfaceInput.presence`, and closed two holes in the capture harness's own interaction evidence (Escape did not prove hover had cleared; reduced motion was judged ready by a coarse signature an easing camera passes).
 
 ## Current State Ownership
 
@@ -99,7 +107,10 @@ Stage 3.5.2 circulation owner: `coreCirculation.ts` supplies the deterministic r
 Stage 3.5.2 domain-view owner: `domainEnvironments.ts` supplies perimeter descriptors and `domainCircuits.ts` the per-domain local topology; `DomainEnvironment.tsx` renders them. `KnowledgeGraph` retains hover/focus reducer ownership and `GraphEdges.tsx` draws view-only routes.
 Stage 3.5.2 material owner: `surfaceMaterial.ts` is the single factory for every structural role on both backends; `surfaceGeometry.ts` owns baked orientation luminance and the bounded membrane opacity band.
 Stage 3.5.2 reduced-motion owner: `reducedMotion.ts` reads and subscribes to the media query; `RendererHost` passes the preference into `SceneHost`, which is where motion actually stops.
-Stage 3.5.2 telemetry owner: `SceneHost` samples `src/telemetry/rendererTelemetry.ts` from `coreCirculation` counts, distinguishing configured field budget, rendered field samples and active signal samples; `particleCount` remains rendered field samples.
+Stage 3.5.2 telemetry owner: `SceneHost` samples `src/telemetry/rendererTelemetry.ts` from `coreCirculation` counts, distinguishing configured field budget, rendered field samples and active signal samples; `particleCount` is derived from rendered field samples.
+Stage 3.5.3 routing-contract owner: `src/scene/routing/routeContract.ts` owns the route group ids (`CORE_ROUTE_GROUP`, `DOMAIN_ROUTE_GROUP_BASE`, `TRUNK_ROUTE_GROUP_BASE`, `MAX_ROUTE_GROUPS`) so `coreCirculation.ts` does not import `graphRoutes.ts`. It is graph-neutral and must stay so.
+Stage 3.5.3 field-density owner: `src/scene/routing/routeDash.ts` owns `deriveRouteDashDensity` (per world unit of route), `deriveRouteCurveLength` and `deriveCurveDashCounts(curves, density, capacity?)`. `routeTelemetry.ts` counts through the same function the packer calls, so telemetry cannot describe a field the renderer was not asked to draw. A count floor is a floor on coverage, not only on count — see the `MIN_PACKETS_PER_CURVE` note.
+Stage 3.5.3 presence owner: `SurfaceInput.presence` in `surfaceResponse.ts` scales a surface's whole resolved response and is the only input that can take it below `gainAtRest`. Use it for composition recession; brightness alone cannot express it.
 
 ## Quality Propagation
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { QUALITY_PROFILES } from '../../config/quality';
 import type { GraphPosition } from '../../graph/types';
+import type { StructurePart } from '../materials/structureGeometry';
 import type { DomainIngress, DomainVisualNodeId } from '../routing/graphRoutes';
 import {
   deriveDomainEnvironment,
@@ -43,6 +44,31 @@ function structuralFrame(environment: DomainEnvironment) {
   return environment.frame
     .filter((part) => !part.membrane || part.tier !== 'detail')
     .map((part) => `${part.shape}:${part.tier}:${part.membrane}`);
+}
+
+/**
+ * The two largest dimensions of a part, which is what a member's section is.
+ *
+ * A plate is thin in one axis by design and a span is thin in two, so the
+ * smallest dimension says nothing. What decides whether something reads as a
+ * manufactured volume is whether it has two axes with real size.
+ */
+function sectionOf(part: StructurePart): [number, number] {
+  if (part.shape === 'hull') throw new Error('domains are built from forms and spans');
+  const dims =
+    part.shape === 'span'
+      ? [
+          part.width,
+          part.depth,
+          Math.hypot(
+            part.end[0] - part.start[0],
+            part.end[1] - part.start[1],
+            part.end[2] - part.start[2],
+          ),
+        ]
+      : [...part.scale];
+  const sorted = dims.slice().sort((a, b) => b - a);
+  return [sorted[0] ?? 0, sorted[1] ?? 0];
 }
 
 describe('deriveDomainEnvironment', () => {
@@ -98,6 +124,44 @@ describe('deriveDomainEnvironment', () => {
       // sub-environment and become an icon again.
       expect(structuralFrame(sparse)).toEqual(structuralFrame(rich));
       expect(sparse.frame.length).toBeGreaterThan(2);
+    }
+  });
+
+  it('gives every domain a body with mass, not a frame of members', () => {
+    for (const nodeId of DOMAIN_IDS) {
+      const environment = environmentFor(nodeId, 1);
+      const threshold = 0.45 * environment.extent;
+
+      // A domain is a machined body whose front is open, not a wireframe of one.
+      // This has regressed twice from opposite directions — first into one wide
+      // slab, then into a frame of members three hundredths of a unit across that
+      // resolved to a handful of pixels and read as an asterisk. A body part is
+      // one with two axes at nearly half the domain's own extent, and there have
+      // to be at least two of them or the domain has no closed volume at all.
+      const mass = environment.frame.filter((part) => {
+        const [first, second] = sectionOf(part);
+        return first >= threshold && second >= threshold;
+      });
+
+      expect(mass.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('closes every domain behind its opening with a real back face', () => {
+    for (const nodeId of DOMAIN_IDS) {
+      const environment = environmentFor(nodeId, 1);
+      const threshold = 0.6 * environment.extent;
+
+      // An open front is the point; an open *back* is what turns a machine into
+      // a see-through frame. Every domain needs one face at least most of its own
+      // envelope across, which is also what gives the domain something to be a
+      // silhouette against when it is dormant and only its edge is lit.
+      const closed = environment.frame.filter((part) => {
+        const [first, second] = sectionOf(part);
+        return first >= threshold && second >= threshold;
+      });
+
+      expect(closed.length).toBeGreaterThanOrEqual(1);
     }
   });
 

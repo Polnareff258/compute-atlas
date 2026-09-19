@@ -2,15 +2,19 @@ import type { GraphLayout, GraphManifest, GraphNodeId } from '../../graph/types'
 import { selectCorePortForDirection, type CoreStructure } from '../core/coreStructure';
 import { hashSigned, hashUnit, normalizeSeed } from '../seedRandom';
 import type { RouteCurve } from './routeDash';
+import {
+  CORE_ROUTE_GROUP,
+  DOMAIN_ROUTE_GROUP_BASE,
+  TRUNK_ROUTE_GROUP_BASE,
+} from './routeContract';
 
 type Vector = readonly [number, number, number];
 
-/** Group 0 is always the Core's own circulation. */
-export const CORE_ROUTE_GROUP = 0;
-/** Domains occupy groups 1..5 so one branch can lift while others recede. */
-export const DOMAIN_ROUTE_GROUP_BASE = 1;
-/** Trunks take the last two slots, so they fit the two packed vec4 uniforms. */
-export const TRUNK_ROUTE_GROUP_BASE = 6;
+export {
+  CORE_ROUTE_GROUP,
+  DOMAIN_ROUTE_GROUP_BASE,
+  TRUNK_ROUTE_GROUP_BASE,
+} from './routeContract';
 
 export type DomainVisualNodeId = Exclude<GraphNodeId, 'core'>;
 
@@ -71,6 +75,16 @@ const MIN_SPAN = 0.05;
  */
 const IDLE_LEAD_WEIGHT = 0.86;
 const IDLE_TRAILING_WEIGHT = 0.24;
+/** Idle weight for one domain's own route group, before the resting ranking. */
+const IDLE_DOMAIN_GROUP_WEIGHT = 0.34;
+/**
+ * What a domain with no resting prominence is left with.
+ *
+ * Not zero: a dormant domain is a silhouette with a dark interior, not an
+ * absent one, and a group weight of zero would cull its interior circuits
+ * entirely rather than holding them at the low level the composition asks for.
+ */
+const IDLE_DORMANT_GROUP_FLOOR = 0.3;
 
 function magnitude(vector: Vector): number {
   return Math.hypot(vector[0], vector[1], vector[2]);
@@ -317,12 +331,42 @@ export function deriveGraphRouting(
  * its own domains. Non-target domains fall to the packer's default, which is how
  * they recede without the caller enumerating them.
  */
+/**
+ * Maps a domain's resting prominence onto a multiplier for its route group.
+ *
+ * Absent or non-finite prominence means "not part of the ranking", which is the
+ * behaviour every caller had before the ranking existed, so the group weight is
+ * returned unscaled rather than dropped to the dormant floor.
+ */
+function restingScale(
+  prominence: Readonly<Record<DomainVisualNodeId, number>> | undefined,
+  domainId: DomainVisualNodeId,
+): number {
+  if (prominence === undefined) return 1;
+  const value = prominence[domainId];
+  if (!Number.isFinite(value)) return 1;
+  const bounded = Math.min(1, Math.max(0, value));
+  return IDLE_DORMANT_GROUP_FLOOR + (1 - IDLE_DORMANT_GROUP_FLOOR) * bounded;
+}
+
 export function deriveGraphGroupWeights(
   routing: GraphRouting,
   input: {
     readonly activeDomainId: DomainVisualNodeId | null;
     readonly focused: boolean;
     readonly coreWeight: number;
+    /**
+     * Resting prominence per domain, 0..1, read only while nothing is bound.
+     *
+     * The trunk ranking below already decides which outbound route leads at
+     * idle; this decides how much of each domain's *own* interior is lit. A
+     * dormant domain runs dark while it waits, which is what keeps the idle
+     * frame from showing the whole route set at one brightness. The moment
+     * anything is bound the ranking is dropped, because from then on the
+     * composition is about the bound domain and a second ranking would only
+     * compete with it.
+     */
+    readonly restingProminence?: Readonly<Record<DomainVisualNodeId, number>>;
   },
 ): readonly { readonly group: number; readonly weight: number }[] {
   const focused = input.focused;
@@ -337,7 +381,11 @@ export function deriveGraphGroupWeights(
   for (const route of routing.routes) {
     const isActive = active !== null && route.domainId === active;
     if (active === null) {
-      entries.push({ group: route.group, weight: 0.34 });
+      entries.push({
+        group: route.group,
+        weight:
+          IDLE_DOMAIN_GROUP_WEIGHT * restingScale(input.restingProminence, route.domainId),
+      });
       continue;
     }
     if (isActive) {

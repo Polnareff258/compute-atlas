@@ -8,6 +8,10 @@ import {
   type GraphInteractionAction,
   type GraphInteractionState,
 } from '../../graph/interaction';
+import {
+  NAMED_DOMAIN_PROMINENCE,
+  type GraphProminence,
+} from '../../graph/layout';
 import type { GraphManifest, GraphNodeId } from '../../graph/types';
 import type { RendererAdapterBackend } from '../../renderer/runtime';
 import type { RouteCurve, RouteFlowState } from '../routing/routeDash';
@@ -23,6 +27,14 @@ export type DomainEnvironmentEntry = {
 
 export type KnowledgeGraphProps = {
   readonly manifest: GraphManifest;
+  /**
+   * How much of the composition each node is given at rest, from the layout.
+   *
+   * Idle is ranked rather than uniform: the brief's "only two or three domains
+   * mid-visible, the rest dormant" is a property of the composition, so it is
+   * read from the layout rather than recomputed here.
+   */
+  readonly prominence: GraphProminence;
   /** Every domain's sub-environment, in manifest routing order. */
   readonly environments: readonly DomainEnvironmentEntry[];
   /** Trunks, branches, approaches and each domain's own internal circuits. */
@@ -170,6 +182,7 @@ function GraphPointerBoundary({
 
 export function KnowledgeGraph({
   manifest,
+  prominence,
   environments,
   fieldCurves,
   flowRef,
@@ -213,6 +226,11 @@ export function KnowledgeGraph({
         // Focus is one domain's story: the others recede to outlines and give up
         // their text, so the selected title is the only thing being read.
         const othersRecede = interaction.focusedNodeId !== null && !isFocused;
+        const resting = prominence[nodeId];
+        // At rest, only the domains the composition is about carry their name.
+        // Text is the scarcest thing in the frame, and the idle composition
+        // spends it on three domains rather than on all five.
+        const named = Number.isFinite(resting) && resting >= NAMED_DOMAIN_PROMINENCE;
 
         return (
           <DomainEnvironmentView
@@ -222,9 +240,10 @@ export function KnowledgeGraph({
             environment={entry.environment}
             key={nodeId}
             label={copy?.label ?? nodeId}
+            presence={Number.isFinite(resting) ? resting : 0}
             reducedMotion={reducedMotion}
             showDescription={isFocused || isHovered}
-            showLabel={!othersRecede}
+            showLabel={(isFocused || isHovered || named) && !othersRecede}
           />
         );
       })}

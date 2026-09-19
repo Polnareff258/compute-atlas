@@ -132,10 +132,21 @@ describe('deriveCoreStructure', () => {
       // A lofted hull is defined by sections that differ along its axis. A
       // transformed unit box has one cross-section for its whole length, which
       // is exactly what made the old mass read as slabs.
-      expect(hull.sections.length).toBeGreaterThanOrEqual(3);
+      expect(hull.sections.length).toBeGreaterThanOrEqual(4);
       const { widest, narrowest } = sectionSpread(hull);
-      expect(narrowest).toBeLessThan(widest * 0.6);
+      // Tapered, but closing on a *face*: the narrowest section is still most of
+      // the widest one. A section that collapses toward a tip is a leaf, and two
+      // leaves hung on a stick is what the hero was, not a housing. This is the
+      // invariant that keeps the chamfer at the end of the body rather than the
+      // whole body being one.
+      expect(narrowest).toBeGreaterThan(widest * 0.5);
+      // And the end really is narrower than the middle, or the sections are not
+      // shaping anything.
+      expect(narrowest).toBeLessThan(widest * 0.8);
+      // A machined chamfer, not a rounded blob: a corner cut is a fraction of the
+      // section, and cutting more than a third of it is a fillet.
       expect(hull.chamfer).toBeGreaterThan(0);
+      expect(hull.chamfer).toBeLessThanOrEqual(0.3);
     }
   });
 

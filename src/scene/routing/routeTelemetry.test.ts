@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  deriveDashesPerRoute,
+  deriveCurveDashCounts,
   deriveRouteDashAttributes,
+  deriveRouteDashDensity,
   deriveRouteDashDrawRange,
   type RouteCurve,
 } from './routeDash';
@@ -32,8 +33,15 @@ const SCENE_CURVES: readonly RouteCurve[] = [
   curve(4, 'ambient'),
 ];
 
-function field(lanes: number, dashesPerRoute = 5, capacity?: number): RouteFieldSample {
-  const sample = { curves: SCENE_CURVES, dashesPerRoute, lanes };
+const DENSITY = 5;
+
+/** Packets the scene's four curves are worth at `DENSITY`, per curve. */
+function perCurve(density = DENSITY): number {
+  return deriveCurveDashCounts(SCENE_CURVES, density)[0] ?? 0;
+}
+
+function field(lanes: number, density = DENSITY, capacity?: number): RouteFieldSample {
+  const sample = { curves: SCENE_CURVES, density, lanes };
   return capacity === undefined ? sample : { ...sample, capacity };
 }
 
@@ -41,8 +49,8 @@ describe('countFieldDashes', () => {
   it('reports only the dashes the draw range reveals', () => {
     const counts = countFieldDashes(field(1));
 
-    // One class of one curve at five dashes per route.
-    expect(counts.rendered).toBe(5);
+    // One class of one curve, at whatever that curve's length is worth.
+    expect(counts.rendered).toBe(perCurve());
     expect(counts.signal).toBe(0);
   });
 
@@ -51,23 +59,25 @@ describe('countFieldDashes', () => {
     const withSignal = countFieldDashes(field(3));
 
     expect(withoutSignal.signal).toBe(0);
-    expect(withSignal.signal).toBe(5);
+    expect(withSignal.signal).toBe(perCurve());
     expect(withSignal.rendered).toBeGreaterThan(withoutSignal.rendered);
   });
 
   it('never reports more dashes than the field submitted', () => {
     const counts = countFieldDashes(field(4));
 
-    expect(counts.rendered).toBe(SCENE_CURVES.length * 5);
+    expect(counts.rendered).toBe(SCENE_CURVES.length * perCurve());
     expect(counts.signal).toBeLessThanOrEqual(counts.rendered);
   });
 
   it('honours the backend capacity cap without breaking the split', () => {
-    const capped = countFieldDashes(field(4, 5, 12));
+    const capped = countFieldDashes(field(4, DENSITY, 12));
+    const scaled = deriveCurveDashCounts(SCENE_CURVES, DENSITY, 12);
 
-    expect(capped.rendered).toBe(12);
-    // Twelve dashes reach into the third curve, whose class is signal.
-    expect(capped.signal).toBe(2);
+    expect(capped.rendered).toBe(scaled.reduce((sum, count) => sum + count, 0));
+    expect(capped.rendered).toBeLessThanOrEqual(12 + SCENE_CURVES.length);
+    // The signal curve is the third of four, so its packets are in the split.
+    expect(capped.signal).toBe(scaled[2]);
   });
 
   it('stays finite for hostile inputs', () => {
@@ -85,21 +95,20 @@ describe('countFieldDashes', () => {
     // several times a second. This is the assertion that keeps the shortcut
     // honest: every lane count, with and without a backend cap, must agree with
     // what the packed attributes reveal.
-    for (const dashesPerRoute of [0, 1, 3, 7]) {
-      const attributes = deriveRouteDashAttributes(SCENE_CURVES, dashesPerRoute, 17);
-
-      for (let lanes = 0; lanes <= 4; lanes += 1) {
-        const packed = deriveRouteDashDrawRange(attributes, lanes).count / 4;
-        expect(countFieldDashes({ curves: SCENE_CURVES, dashesPerRoute, lanes }).rendered).toBe(
-          packed,
+    for (const density of [0, 1, 3, 7]) {
+      for (const capacity of [undefined, 3, 11, 40]) {
+        const attributes = deriveRouteDashAttributes(
+          SCENE_CURVES,
+          density,
+          17,
+          capacity,
         );
 
-        for (const capacity of [3, 11, 40]) {
-          const expected = Math.min(packed, capacity);
-          expect(
-            countFieldDashes({ curves: SCENE_CURVES, dashesPerRoute, lanes, capacity })
-              .rendered,
-          ).toBe(expected);
+        for (let lanes = 0; lanes <= 4; lanes += 1) {
+          const packed = deriveRouteDashDrawRange(attributes, lanes).count / 4;
+          expect(countFieldDashes(field(lanes, density, capacity)).rendered).toBe(
+            packed,
+          );
         }
       }
     }
@@ -111,8 +120,10 @@ describe('deriveRouteFieldTelemetryCounts', () => {
     const counts = deriveRouteFieldTelemetryCounts(72_000, [field(4), field(1)]);
 
     expect(counts.configuredFieldBudget).toBe(72_000);
-    expect(counts.renderedFieldSamples).toBe(SCENE_CURVES.length * 5 + 5);
-    expect(counts.activeSignalSamples).toBe(5);
+    expect(counts.renderedFieldSamples).toBe(
+      SCENE_CURVES.length * perCurve() + perCurve(),
+    );
+    expect(counts.activeSignalSamples).toBe(perCurve());
   });
 
   it('reports the configured budget unchanged rather than the drawn count', () => {
@@ -123,22 +134,11 @@ describe('deriveRouteFieldTelemetryCounts', () => {
   });
 
   it('reports a denser field for the implementation that can afford it', () => {
-    const detail = 1;
-    const lanes = 4;
     const advected = deriveRouteFieldTelemetryCounts(72_000, [
-      {
-        curves: SCENE_CURVES,
-        dashesPerRoute: deriveDashesPerRoute(true, detail, lanes),
-        lanes,
-      },
+      field(4, deriveRouteDashDensity(true, 1)),
     ]);
     const instanced = deriveRouteFieldTelemetryCounts(72_000, [
-      {
-        curves: SCENE_CURVES,
-        dashesPerRoute: deriveDashesPerRoute(false, detail, lanes),
-        lanes,
-        capacity: 180,
-      },
+      field(4, deriveRouteDashDensity(false, 1), 180),
     ]);
 
     expect(advected.renderedFieldSamples).toBeGreaterThan(

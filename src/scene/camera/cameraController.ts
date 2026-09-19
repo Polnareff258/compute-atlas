@@ -7,8 +7,16 @@ export type CameraFocusTarget = readonly [x: number, y: number, z: number];
 export const CAMERA_FOV_DEGREES = 48;
 const HALF_FOV_TAN = Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 360);
 
-/** Idle camera distance. The hero is framed to read at roughly half the frame. */
-export const BASE_CAMERA_DISTANCE = 6;
+/**
+ * Idle camera distance. The hero is framed to read at roughly half the frame.
+ *
+ * Re-derived when the Core was rebuilt from lofted hulls: the new body is
+ * several units across where the old assembly of slabs was under two, and a
+ * distance that framed the old one put the new one over four fifths of the
+ * frame with its shoulders covering three domains. This is the number that keeps
+ * the documented intent true rather than the number that was true once.
+ */
+export const BASE_CAMERA_DISTANCE = 7.6;
 /** Where the camera sits when nothing is bound: negative, so the Core reads right of centre. */
 const IDLE_CAMERA_OFFSET_X = -0.42;
 /** Half-frames either side of the pivot the active route has to fit inside. */

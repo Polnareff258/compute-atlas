@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   compressRouteProgress,
-  deriveDashesPerRoute,
+  deriveCurveDashCounts,
+  deriveRouteCurveLength,
+  deriveRouteDashDensity,
   deriveRouteDashIntensity,
   deriveRouteVisibility,
   ROUTE_VISIBILITY_FLOOR,
@@ -110,6 +112,44 @@ describe('route sampling', () => {
 
     expect(Math.hypot(...(across as [number, number, number]))).toBeCloseTo(1, 5);
   });
+
+  it('widens across the view direction, not across the world up', () => {
+    // The whole field is authored against a camera that looks down -Z and never
+    // rolls. Building the across axis from world up makes it *always horizontal*,
+    // which is exactly what the camera's right vector is — so every band was
+    // viewed edge-on and a channel a fifth of a unit wide resolved to the
+    // one-pixel scratch the entire routing field used to read as. A route
+    // travelling straight left must therefore widen vertically.
+    const tangent = [1, 0, 0];
+    const across: number[] = [0, 0, 0];
+
+    deriveRouteAcross(tangent, 0, across);
+
+    expect(Math.abs(across[1]!)).toBeGreaterThan(0.9);
+    expect(Math.abs(across[2]!)).toBeLessThan(0.2);
+  });
+
+  it('keeps the widening continuous as a route turns toward the camera', () => {
+    // The facing axis is degenerate for a tangent parallel to it, so there is a
+    // fallback — and the fallback has to agree with the primary branch in the
+    // limit, because a hard switch between two axes a quarter turn apart tears
+    // the ribbon into the loops and hooks that made the hero look scribbled on.
+    const sample = (angle: number) => {
+      const across: number[] = [0, 0, 0];
+      deriveRouteAcross([Math.sin(angle), 0, Math.cos(angle)], 0, across);
+      return across;
+    };
+
+    let previous = sample(0);
+    for (let step = 1; step <= 64; step += 1) {
+      const current = sample((step / 64) * (Math.PI / 2));
+      const dot = previous[0]! * current[0]! + previous[1]! * current[1]! + previous[2]! * current[2]!;
+      // A torn ribbon is a sign flip or a quarter-turn jump between neighbouring
+      // samples; a continuous one is a small angle.
+      expect(dot).toBeGreaterThan(0.9);
+      previous = current;
+    }
+  });
 });
 
 describe('compressRouteProgress', () => {
@@ -163,10 +203,29 @@ describe('deriveDashEnvelope', () => {
 });
 
 describe('deriveRouteDashAttributes', () => {
+  /**
+   * Vertices each route class is worth, in class order.
+   *
+   * Taken from the shared rule rather than written down, because the counts now
+   * depend on each curve's own length: the four routes below are purposely not
+   * the same length, so a hard-coded stride would be asserting the wrong thing.
+   */
+  function verticesPerClass(density: number): number[] {
+    const counts = deriveCurveDashCounts(ROUTES, density);
+    return ROUTE_CLASS_ORDER.map((routeClass) =>
+      ROUTES.reduce(
+        (sum, route, index) =>
+          route.route === routeClass ? sum + (counts[index] ?? 0) * 4 : sum,
+        0,
+      ),
+    );
+  }
+
   it('packs one four-vertex quad per dash with matching indices', () => {
     const attributes = deriveRouteDashAttributes(ROUTES, 3, SEED);
+    const dashCount = verticesPerClass(3).reduce((sum, count) => sum + count, 0) / 4;
 
-    expect(attributes.dashCount).toBe(ROUTES.length * 3);
+    expect(attributes.dashCount).toBe(dashCount);
     expect(attributes.vertexCount).toBe(attributes.dashCount * 4);
     expect(attributes.indices.length).toBe(attributes.dashCount * 6);
 
@@ -179,28 +238,39 @@ describe('deriveRouteDashAttributes', () => {
 
   it('orders dashes by route class so a draw range can reveal lanes', () => {
     const attributes = deriveRouteDashAttributes(ROUTES, 2, SEED);
+    const perClass = verticesPerClass(2);
 
     expect(Array.from(attributes.routeOffsets)).toEqual([
       0, // primary starts at vertex 0
-      8, // secondary (1 route x 2 dashes x 4 verts)
-      16, // signal
-      24, // ambient
-      32, // terminator
+      perClass[0], // + secondary
+      (perClass[0] ?? 0) + (perClass[1] ?? 0), // + signal
+      (perClass[0] ?? 0) + (perClass[1] ?? 0) + (perClass[2] ?? 0), // + ambient
+      attributes.vertexCount, // terminator
     ]);
     expect(attributes.routeOffsets.length).toBe(ROUTE_CLASS_ORDER.length + 1);
   });
 
   it('reveals only the primary lane while idle and the full set on focus', () => {
     const attributes = deriveRouteDashAttributes(ROUTES, 2, SEED);
+    const perClass = verticesPerClass(2);
 
-    expect(deriveRouteDashDrawRange(attributes, 1)).toEqual({ start: 0, count: 8 });
-    expect(deriveRouteDashDrawRange(attributes, 4)).toEqual({ start: 0, count: 32 });
+    expect(deriveRouteDashDrawRange(attributes, 1)).toEqual({
+      start: 0,
+      count: perClass[0],
+    });
+    expect(deriveRouteDashDrawRange(attributes, 4)).toEqual({
+      start: 0,
+      count: attributes.vertexCount,
+    });
   });
 
   it('clamps an impossible lane request instead of reading past the buffer', () => {
     const attributes = deriveRouteDashAttributes(ROUTES, 2, SEED);
 
-    expect(deriveRouteDashDrawRange(attributes, 99)).toEqual({ start: 0, count: 32 });
+    expect(deriveRouteDashDrawRange(attributes, 99)).toEqual({
+      start: 0,
+      count: attributes.vertexCount,
+    });
     expect(deriveRouteDashDrawRange(attributes, -3)).toEqual({ start: 0, count: 0 });
     expect(deriveRouteDashDrawRange(attributes, Number.NaN)).toEqual({
       start: 0,
@@ -238,10 +308,12 @@ describe('deriveRouteDashAttributes', () => {
       curve({ id: 1, route: 'secondary', group: 4 }),
     ];
     const attributes = deriveRouteDashAttributes(grouped, 1, SEED);
+    const perCurve = deriveCurveDashCounts(grouped, 1)[0] ?? 0;
 
-    // Primary is emitted first, so the first quad belongs to group 1.
+    // Primary is emitted first, so the first quad belongs to group 1; the first
+    // vertex of the class that follows it belongs to group 4.
     expect(attributes.group[0]).toBe(1);
-    expect(attributes.group[5]).toBe(4);
+    expect(attributes.group[perCurve * 4]).toBe(4);
   });
 
   it('clamps an out-of-range group instead of writing an unreadable uniform slot', () => {
@@ -432,49 +504,191 @@ describe('deriveRouteDashIntensity', () => {
   });
 });
 
-describe('deriveDashesPerRoute', () => {
-  it('packs a far denser field for the advected implementation', () => {
-    const advected = deriveDashesPerRoute(true, 1, 4);
-    const instanced = deriveDashesPerRoute(false, 1, 4);
+describe('deriveRouteDashDensity', () => {
+  it('gives the advected implementation a far denser field', () => {
+    const advected = deriveRouteDashDensity(true, 1);
+    const instanced = deriveRouteDashDensity(false, 1);
 
-    // Many short packets is the whole point: the field has to stop resolving
-    // into segments of a pipe.
-    expect(advected).toBeGreaterThan(instanced * 4);
-    expect(instanced).toBeLessThanOrEqual(20);
+    // Packets per world unit of route. The advected field is dense enough that a
+    // route reads as a stream; the fallback carries the same language at a bit
+    // over a third of the density, which is the difference the backend is meant
+    // to show.
+    expect(advected).toBeGreaterThan(instanced * 2);
+    expect(instanced).toBeLessThanOrEqual(5);
   });
 
-  it('keeps a sparse channel on the lowest profile', () => {
-    expect(deriveDashesPerRoute(false, 0.12, 2)).toBeLessThanOrEqual(6);
-    expect(deriveDashesPerRoute(true, 0.12, 2)).toBeLessThan(
-      deriveDashesPerRoute(true, 1, 4),
+  it('scales with the profile instead of stepping between two values', () => {
+    expect(deriveRouteDashDensity(true, 0.12)).toBeLessThan(
+      deriveRouteDashDensity(true, 1),
+    );
+    expect(deriveRouteDashDensity(false, 0.12)).toBeLessThan(
+      deriveRouteDashDensity(false, 1),
+    );
+    // Hostile detail is a profile of zero, never a negative density.
+    expect(deriveRouteDashDensity(true, Number.NaN)).toBe(
+      deriveRouteDashDensity(true, 0),
     );
   });
+});
 
-  it('never returns a count below what a route needs to read as a flow', () => {
-    for (const detail of [0, 0.4, 1]) {
-      for (const lanes of [1, 4]) {
-        expect(deriveDashesPerRoute(true, detail, lanes)).toBeGreaterThanOrEqual(8);
-        expect(deriveDashesPerRoute(false, detail, lanes)).toBeGreaterThanOrEqual(2);
-      }
-    }
+describe('deriveRouteCurveLength', () => {
+  it('is the chord for a straight route and longer for a bent one', () => {
+    const straight = curve({ id: 0, control: [1, 0, 0], end: [2, 0, 0] });
+    const bent = curve({ id: 1, control: [1, 1.4, 0], end: [2, 0, 0] });
+
+    expect(deriveRouteCurveLength(straight)).toBeCloseTo(2, 6);
+    expect(deriveRouteCurveLength(bent)).toBeGreaterThan(2);
+  });
+
+  it('never returns a non-positive length for a degenerate route', () => {
+    const point = curve({ id: 0, control: [0, 0, 0], end: [0, 0, 0] });
+
+    // It is a divisor, so zero would make every packet on the route infinite.
+    expect(deriveRouteCurveLength(point)).toBeGreaterThan(0);
+    expect(Number.isFinite(deriveRouteCurveLength(point))).toBe(true);
+  });
+});
+
+describe('deriveCurveDashCounts', () => {
+  const DENSITY = 6;
+
+  it('gives a long route more packets than a short one', () => {
+    const short = curve({ id: 0, control: [0.2, 0.1, 0], end: [0.4, 0, 0] });
+    const long = curve({ id: 1, control: [1.3, 0.34, 0.12], end: [2.6, -0.2, 0] });
+    const [shortCount, longCount] = deriveCurveDashCounts([short, long], DENSITY);
+
+    // This is what makes the Core the dense end of the field: its circulation is
+    // short and long at once, and density per unit of route reads as density per
+    // unit of frame exactly there.
+    expect(longCount!).toBeGreaterThan(shortCount!);
+  });
+
+  it('never drops a route entirely, however short', () => {
+    // The floor is one packet, not the three this used to be. On a curve this
+    // short a packet is already capped to a third of its own route, so three of
+    // them lit it end to end: the reach became a solid bar and, being bent, the
+    // white hook that sat over the Core's hull. Short runs are the sparsest part
+    // of the field by design — the density is per world unit — so the guarantee
+    // here is only that a route is never silently dropped.
+    const stub = curve({ id: 0, control: [0.05, 0.02, 0], end: [0.1, 0, 0] });
+    const [count] = deriveCurveDashCounts([stub], DENSITY);
+
+    expect(count).toBeGreaterThanOrEqual(1);
+
+    // The length the Core's own ingress reaches actually are, at the density the
+    // renderer actually runs at ULTRA. A reach is shorter than a trunk and still
+    // has to read as a direction rather than as a dot.
+    const reach = curve({ id: 0, control: [0.07, 0.02, 0], end: [0.15, 0, 0] });
+    const [reachCount] = deriveCurveDashCounts([reach], deriveRouteDashDensity(true, 1));
+    expect(reachCount).toBeGreaterThan(1);
+  });
+
+  it('packs nothing at zero density rather than flooring every route up', () => {
+    expect(deriveCurveDashCounts(ROUTES, 0)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('scales the whole field to meet a capacity instead of cutting its tail off', () => {
+    const mixed = [
+      curve({ id: 0, control: [0.6, 0.2, 0], end: [1.2, 0, 0] }),
+      curve({ id: 1, control: [1.3, 0.34, 0.12], end: [2.6, -0.2, 0] }),
+    ];
+    const uncapped = deriveCurveDashCounts(mixed, 8);
+    const capped = deriveCurveDashCounts(mixed, 8, 9);
+
+    // The old cap spent the ceiling curve by curve, which flattened every route
+    // to the same handful of packets; the one before it truncated the packed
+    // order, which deleted the later routes entirely. Neither is a sparser field.
+    expect(capped.reduce((sum, count) => sum + count, 0)).toBeLessThan(
+      uncapped.reduce((sum, count) => sum + count, 0),
+    );
+    for (const count of capped) expect(count).toBeGreaterThan(0);
+    // And the shape survives: the longer route is still the denser one.
+    expect(capped[1]!).toBeGreaterThanOrEqual(capped[0]!);
+    expect(uncapped[1]!).toBeGreaterThan(uncapped[0]!);
   });
 });
 
 describe('packet geometry', () => {
-  it('draws short thin packets rather than long fat segments', () => {
-    const attributes = deriveRouteDashAttributes([curve({ id: 1 })], 64, SEED);
+  it('draws packets that are streaks along their route rather than beads', () => {
+    // A route of the length the scene actually draws between the Core and a
+    // domain. The stored `length` is in route *progress*, so comparing it to a
+    // world width directly compares two different quantities — which is what
+    // this test did, and why it reported packets several times longer than they
+    // were and let them shrink to beads without noticing.
+    const route = curve({
+      id: 1,
+      control: [1.3, 0.34, 0.12],
+      end: [2.6, -0.2, 0],
+    });
+    const attributes = deriveRouteDashAttributes([route], 128, SEED);
+    const head: number[] = [0, 0, 0];
+    const tail: number[] = [0, 0, 0];
 
+    let shortestStreak = Number.POSITIVE_INFINITY;
     let longest = 0;
     let widest = 0;
-    for (let vertex = 0; vertex < attributes.vertexCount; vertex += 4) {
-      longest = Math.max(longest, attributes.length[vertex]!);
-      widest = Math.max(widest, attributes.width[vertex]!);
+
+    for (let dash = 0; dash < attributes.dashCount; dash += 1) {
+      const vertex = dash * 4;
+      const length = attributes.length[vertex]!;
+      const width = attributes.width[vertex]!;
+      const phase = attributes.phase[vertex]!;
+      // A packet near the source has its tail clamped at the start, so its drawn
+      // extent is genuinely shorter than its own length; those are measured
+      // rather than reasoned about, so they are left out of the streak figure.
+      if (phase < length) continue;
+
+      sampleRoutePoint(route, phase, head);
+      sampleRoutePoint(route, phase - length, tail);
+      const worldLength = Math.hypot(
+        head[0]! - tail[0]!,
+        head[1]! - tail[1]!,
+        head[2]! - tail[2]!,
+      );
+
+      shortestStreak = Math.min(shortestStreak, worldLength / width);
+      longest = Math.max(longest, length);
+      widest = Math.max(widest, width);
     }
 
-    // A packet is a fraction of its route, and its ratio of length to width is
-    // what keeps it a streak rather than a bead.
-    expect(longest).toBeLessThan(0.08);
-    expect(widest).toBeLessThan(0.045);
-    expect(longest / widest).toBeGreaterThan(0.9);
+    // Every packet, not the average one: one bead among a family of streaks is a
+    // dot on the frame that the eye stops at.
+    expect(shortestStreak).toBeGreaterThan(1.5);
+    expect(longest).toBeLessThan(0.055);
+    expect(widest).toBeLessThan(0.04);
+  });
+
+  it('sizes a packet in world units, so a short route gets short packets', () => {
+    // A slice of route progress is not a size. One curve here is a trunk and the
+    // other is a stub a tenth of it, and the same slice of progress was a
+    // fifteen-pixel streak on the first and a blob on the second — which is what
+    // made the Core's own circulation read as white hooks laid over the hull
+    // while the routes between domains read as wire.
+    const trunk = curve({ id: 1, control: [1.3, 0.34, 0.12], end: [2.6, -0.2, 0] });
+    // Same id, so the per-packet size jitter is the same and the comparison is
+    // between the two curves' lengths alone.
+    const stub = curve({ id: 1, control: [0.13, 0.034, 0.012], end: [0.26, -0.02, 0] });
+
+    const measured = [trunk, stub].map((route) => {
+      const attributes = deriveRouteDashAttributes([route], 8, SEED);
+      const head: number[] = [0, 0, 0];
+      const tail: number[] = [0, 0, 0];
+      const length = attributes.length[0]!;
+      sampleRoutePoint(route, length, head);
+      sampleRoutePoint(route, 0, tail);
+
+      return {
+        world: Math.hypot(head[0]! - tail[0]!, head[1]! - tail[1]!, head[2]! - tail[2]!),
+        route: deriveRouteCurveLength(route),
+      };
+    });
+
+    // The same size on both, to within the cap's worth of shortening.
+    expect(measured[1]!.world).toBeGreaterThan(measured[0]!.world * 0.8);
+    expect(measured[1]!.world).toBeLessThan(measured[0]!.world * 1.2);
+    // And the cap is real: a packet is never most of the route it runs on.
+    for (const { world, route } of measured) {
+      expect(world / route).toBeLessThan(0.35);
+    }
   });
 });

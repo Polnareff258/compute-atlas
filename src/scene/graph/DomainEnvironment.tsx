@@ -19,13 +19,25 @@ export type DomainEnvironmentViewProps = {
   readonly reducedMotion: boolean;
   /** 0 dormant, ~0.55 hovered, 1 focused. */
   readonly activation: number;
+  /**
+   * How much of the composition this domain is given at rest, 0..1.
+   *
+   * Composition, not state: it is what makes idle a ranked frame rather than
+   * five domains drawn at one brightness. It enters the surface response as
+   * `presence`, which is the only input that can take a surface below its
+   * resting response.
+   */
+  readonly presence: number;
   readonly label: string;
   readonly description: string;
-  /** Focus keeps one title and one line of copy; idle names every visible domain. */
+  /** Focus keeps one title and one line of copy; idle names the prominent domains. */
   readonly showLabel: boolean;
   readonly showDescription: boolean;
   readonly dimmed: boolean;
 };
+
+/** What a domain recedes to while another one is focused. */
+export const RECEDED_DOMAIN_PRESENCE = 0.26;
 
 /**
  * One domain as a sub-environment.
@@ -35,11 +47,18 @@ export type DomainEnvironmentViewProps = {
  * layering rather than as a cluster of thin plates. Its ingress jaws and
  * interior layers then move on their own, because a domain whose parts never
  * separate would still be a picture of a machine rather than one.
+ *
+ * Engagement is expressed three ways at once, because one alone is not read as
+ * engagement: the resting presence rises toward full, the surface response
+ * answers through the curve, and the parts physically separate. The scene
+ * previously had only the middle term, and it moved an opaque surface's gain by
+ * about three percent.
  */
 export function DomainEnvironmentView({
   environment,
   reducedMotion,
   activation,
+  presence,
   label,
   description,
   showLabel,
@@ -49,12 +68,26 @@ export function DomainEnvironmentView({
   /**
    * Which way the label runs off its anchor.
    *
-   * Labels annotate inward, toward the composition: a domain on the right half
-   * of the frame offsets its text to the left of itself. Placing every label to
-   * the same side pushed the outermost domain's name off the frame edge, which
-   * is the one label the idle composition actually needs.
+   * Sideways, labels annotate inward, toward the composition: a domain on the
+   * right half of the frame offsets its text to the left of itself. Placing
+   * every label to the same side pushed the outermost domain's name off the
+   * frame edge, which is the one label the idle composition actually needs.
    */
   const labelSide = environment.anchor[0] > 0 ? -1 : 1;
+  /**
+   * Vertically, it runs *away from the route*.
+   *
+   * The route arrives from the Core, so the corridor occupies whichever
+   * quadrant of the domain points back at the origin — and the label used to sit
+   * at a fixed `+0.66 * extent` above its anchor, which for GRAPHICS is exactly
+   * that quadrant. Its plate is opaque, so it drew a black rectangle over the
+   * route's arrival and swallowed the one thing the focus frame is about. The
+   * label now takes the other vertical side whenever the Core is above it.
+   *
+   * The Core is always at the origin, so it is above a domain exactly when that
+   * domain's own height is negative.
+   */
+  const labelVerticalSide = environment.anchor[1] > 0 ? 1 : -1;
   const geometry = useMemo(() => buildStructureGeometry(environment.parts), [environment]);
   const movableGeometries = useMemo(
     () => environment.movables.map((movable) => buildPartGeometry(movable.part)),
@@ -67,6 +100,8 @@ export function DomainEnvironmentView({
         role: 'volume',
         color: '#ffffff',
       }),
+      // The one role that is genuinely a different *surface* rather than a
+      // different response, so it is the one that keeps a tint of its own.
       membrane: createSurfaceMaterial({
         role: 'membrane',
         color: MACHINE_PALETTE.membrane,
@@ -74,13 +109,22 @@ export function DomainEnvironmentView({
       }),
       // The domain's own machinery, not a socket: it rests deep and answers
       // hardest, so a working domain lights from the inside out.
+      //
+      // White, because a surface material's colour multiplies the tier colour
+      // already baked into the geometry. These were tinted with the palette's
+      // port colours, so every moving layer and every socket rendered as
+      // `portQuiet * tier` — two mid-tones multiplied into a dark olive, which
+      // is why a focused GRAPHICS was a small dark-green mass under a bright
+      // Core instead of the subject of its own frame. The role's identity is its
+      // response curve (see `machinePalette`), and the tier baked into the
+      // geometry is what carries the colour.
       interior: createSurfaceMaterial({
         role: 'interior',
-        color: MACHINE_PALETTE.portQuiet,
+        color: '#ffffff',
       }),
       ingress: createSurfaceMaterial({
         role: 'port',
-        color: MACHINE_PALETTE.port,
+        color: '#ffffff',
       }),
     };
   }, []);
@@ -89,6 +133,11 @@ export function DomainEnvironmentView({
   /** Eased locally, so the surfaces settle at the rate the routes do. */
   const poseRef = useRef(0);
   const appliedRef = useRef('');
+  // Sanitised once per render rather than per frame: a hostile value here would
+  // otherwise reach every material on every frame.
+  const resting = Number.isFinite(presence)
+    ? Math.min(1, Math.max(0, presence))
+    : 0;
 
   useEffect(
     () => () => {
@@ -121,28 +170,35 @@ export function DomainEnvironmentView({
 
     // Material state is keyed on the quantised pose, so a static frame is free
     // and a transition still reads smoothly.
-    const key = `${Math.round(pose * 64)}:${reducedMotion ? 'r' : 'f'}:${dimmed ? 'd' : 'a'}`;
+    const key = `${Math.round(pose * 64)}:${Math.round(resting * 64)}:${reducedMotion ? 'r' : 'f'}:${dimmed ? 'd' : 'a'}`;
     if (key === appliedRef.current) return;
     appliedRef.current = key;
 
-    // Receding domains keep their silhouette and lose their interior: presence
-    // is a property of the composition, not of brightness alone.
-    const presence = dimmed ? 0.22 : 1;
+    // A receding domain keeps its silhouette and gives up its interior: it drops
+    // to the composition's recessed level whatever its resting prominence was,
+    // so the frame behind a focused domain is one flat depth rather than a
+    // second ranking competing with the subject.
+    const shown = dimmed ? RECEDED_DOMAIN_PRESENCE : resting + (1 - resting) * pose;
+
     materials.solid.updateInput({
-      activity: pose * presence,
-      focus: pose * pose * presence,
+      activity: pose,
+      focus: pose * pose,
+      presence: shown,
     });
     materials.membrane.updateInput({
-      activity: pose * 0.8 * presence,
-      focus: pose * presence,
+      activity: pose * 0.9,
+      focus: pose,
+      presence: shown,
     });
     materials.interior.updateInput({
-      activity: (0.25 + pose * 0.75) * presence,
-      focus: pose * presence,
+      activity: 0.25 + pose * 0.75,
+      focus: pose,
+      presence: shown,
     });
     materials.ingress.updateInput({
-      activity: (0.3 + pose * 0.7) * presence,
-      focus: pose * presence,
+      activity: 0.3 + pose * 0.7,
+      focus: pose,
+      presence: shown,
     });
   });
 
@@ -187,7 +243,7 @@ export function DomainEnvironmentView({
           distanceFactor={8}
           position={[
             labelSide * environment.extent * 0.72,
-            environment.extent * 0.66,
+            labelVerticalSide * environment.extent * 0.66,
             environment.ingressLocal[2],
           ]}
           style={{ pointerEvents: 'none' }}

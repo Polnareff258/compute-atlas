@@ -18,7 +18,7 @@ import {
 } from '../graph/interaction';
 import { createGraphController } from '../graph/graphController';
 import { GRAPH_MANIFEST } from '../graph/graphManifest';
-import { deriveGraphLayout } from '../graph/layout';
+import { deriveGraphLayout, deriveGraphProminence } from '../graph/layout';
 import type {
   QualityProfile,
   RendererBackend,
@@ -94,6 +94,10 @@ export function SceneHost({
   const settings = getQualityProfile(sceneQuality);
   const coreParameters = useMemo(() => getCoreParameters(sceneQuality), [sceneQuality]);
   const graphLayout = useMemo(() => deriveGraphLayout(GRAPH_MANIFEST), []);
+  // How much of the idle frame each node is given. Derived once from the layout
+  // and read by the composition, the label budget and the resting field alike,
+  // so those three cannot disagree about which domains idle is about.
+  const graphProminence = useMemo(() => deriveGraphProminence(GRAPH_MANIFEST), []);
   // The Core's own structure is derived here rather than inside ComputeCore so
   // routing can leave from real Core ports. The Core still never reads the Graph.
   const structure = useMemo(
@@ -235,11 +239,21 @@ export function SceneHost({
         ? 'hover_response'
         : null;
 
+  // Where the field wants to be, derived from discrete state rather than every
+  // frame. `deriveRouteFlowTarget` builds a fresh weight array, and it used to be
+  // called from inside `useFrame`, so the scene allocated one array, one target
+  // object and one nested weights object per frame for a value that only changes
+  // when the interaction does. It is React-derived state, so it is derived in
+  // render; the frame loop below only eases toward it.
+  const flowTarget = useMemo(
+    () => deriveRouteFlowTarget(routing, graphInteraction, graphProminence),
+    [graphInteraction, graphProminence, routing],
+  );
+
   // Continuous field scalars are eased here, in one place, from discrete
   // interaction state. Nothing below this line re-renders at frame rate.
   useFrame((_, delta) => {
-    const target = deriveRouteFlowTarget(routing, graphInteraction);
-    advanceRouteFlow(routeFlowRef.current, target, delta, reducedMotion);
+    advanceRouteFlow(routeFlowRef.current, flowTarget, delta, reducedMotion);
 
     if (onTelemetry === undefined) return;
 
@@ -304,6 +318,7 @@ export function SceneHost({
         interaction={graphInteraction}
         manifest={GRAPH_MANIFEST}
         onAction={handleGraphAction}
+        prominence={graphProminence}
         reducedMotion={reducedMotion}
         routeLanes={coreParameters.routeLanes}
       />

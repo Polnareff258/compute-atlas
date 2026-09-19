@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buffersEqual,
   buildSearchCandidates,
   captureVariants,
   evaluateExpectation,
@@ -80,6 +81,7 @@ describe('interaction expectations', () => {
     hasDescription: true,
     labelCount: 5,
     focusedNames: [],
+    hoveredNames: ['GRAPHICS'],
     observed: [],
   };
   const focused = {
@@ -88,6 +90,7 @@ describe('interaction expectations', () => {
     hasDescription: true,
     labelCount: 1,
     focusedNames: ['GRAPHICS'],
+    hoveredNames: [],
     observed: [],
   };
   const idle = {
@@ -96,6 +99,7 @@ describe('interaction expectations', () => {
     hasDescription: false,
     labelCount: 5,
     focusedNames: [],
+    hoveredNames: [],
     observed: [],
   };
 
@@ -123,10 +127,31 @@ describe('interaction expectations', () => {
     expect(evaluateExpectation(idle, 'escape', 'graphics').ok).toBe(true);
     // A frame that still shows a single label has not left the focus composition.
     expect(evaluateExpectation({ ...idle, labelCount: 1 }, 'escape', 'graphics').ok).toBe(false);
+    // And a pointer still resting on a domain leaves it hovered, which keeps the
+    // routing field bent toward it even though focus is gone. Idle is a claim
+    // about hover as well as about focus, so Escape has to clear both.
+    expect(evaluateExpectation({ ...idle, hoveredNames: ['GRAPHICS'] }, 'escape', 'graphics').ok).toBe(
+      false,
+    );
   });
 
   it('does not invent a verdict for a state that drives no input', () => {
     expect(evaluateExpectation({ found: false }, 'none', 'graphics').ok).toBe(true);
+  });
+});
+
+describe('reduced-motion readiness', () => {
+  it('compares frames exactly rather than by coarse signature', () => {
+    // Reduced motion claims the scene has stopped. "Stopped much" is not that
+    // claim: an asymptotically easing camera moves less than one signature cell
+    // between samples, and two captures taken under that bar came back differing
+    // on 174 pixels of scene.
+    const a = Buffer.from([1, 2, 3, 4]);
+    expect(buffersEqual(a, Buffer.from([1, 2, 3, 4]))).toBe(true);
+    expect(buffersEqual(a, Buffer.from([1, 2, 3, 5]))).toBe(false);
+    expect(buffersEqual(a, Buffer.from([1, 2, 3]))).toBe(false);
+    expect(buffersEqual(null, a)).toBe(false);
+    expect(buffersEqual(a, null)).toBe(false);
   });
 });
 

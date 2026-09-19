@@ -21,6 +21,9 @@ import {
 import {
   RIBBON_CHANNEL_GAIN,
   ROUTE_CLASS_ORDER,
+  ROUTE_FACING_AXIS,
+  ROUTE_FACING_BLEND_FLOOR,
+  ROUTE_FACING_EPSILON,
   ROUTE_VISIBILITY_FLOOR,
   type RouteFlowState,
 } from './routeDash';
@@ -187,14 +190,32 @@ function createDashPositionNode(uniforms: RouteFlowUniforms) {
     .add(end.sub(bentControl).mul(progress.mul(float(2))));
   const tangent = derivative.div(max(derivative.length(), float(NORMALIZE_FLOOR)));
 
-  const rawAcross = cross(tangent, vec3(0, 1, 0));
+  // The quad is widened against the view axis, not against world up.
+  //
+  // `cross(tangent, worldUp)` is always horizontal, and this camera looks along
+  // -Z, so every quad built that way was seen exactly edge-on: a channel thirty
+  // pixels wide reached the frame as a one-pixel scratch. `ROUTE_FACING_AXIS`
+  // and `ROUTE_FACING_EPSILON` are imported rather than re-typed so the shader
+  // and the CPU fallback cannot end up in different planes.
+  const rawAcross = cross(tangent, vec3(...ROUTE_FACING_AXIS));
   const acrossLength = rawAcross.length();
-  // Parallel to the up reference: substitute a usable axis instead of collapsing.
-  const across = select(
-    acrossLength.greaterThan(NORMALIZE_FLOOR * 10),
-    rawAcross.div(max(acrossLength, float(NORMALIZE_FLOOR))),
-    vec3(1, 0, 0),
+  const upAcross = cross(tangent, vec3(0, 1, 0));
+  const upAcrossLength = upAcross.length();
+  // A route running down the view axis has no screen-space width to give, so the
+  // world-up axis is blended in as it degenerates rather than swapped for it.
+  // The two are a quarter turn apart; choosing between them with a comparison
+  // tears whichever ribbon sits on the threshold, and that fold is what made the
+  // hero's own circulation look like it had been scribbled on.
+  const facingAcross = rawAcross.div(max(acrossLength, float(NORMALIZE_FLOOR)));
+  const fallbackAcross = upAcross.div(max(upAcrossLength, float(NORMALIZE_FLOOR)));
+  const handover = saturate(
+    acrossLength
+      .sub(ROUTE_FACING_BLEND_FLOOR)
+      .div(ROUTE_FACING_EPSILON - ROUTE_FACING_BLEND_FLOOR),
   );
+  const smoothHandover = handover.mul(handover).mul(float(3).sub(handover.mul(float(2))));
+  const blended = mix(fallbackAcross, facingAcross, smoothHandover);
+  const across = blended.div(max(blended.length(), float(NORMALIZE_FLOOR)));
 
   // Arrival wake widens and brightens the packet as it reaches the ingress.
   const arrivalProximity = saturate(float(1).sub(float(1).sub(progress).div(ARRIVAL_FRACTION)));

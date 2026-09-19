@@ -92,16 +92,17 @@ export function createRouteDashGeometry(
 const RIBBON_MIN_SAMPLES = 8;
 const RIBBON_MAX_SAMPLES = 24;
 /**
- * The channel has to be a band, not a hairline.
+ * The channel's width, now that the channel is actually visible.
  *
- * At the scene's framing a world unit is roughly two hundred pixels, so the
- * previous few-thousandths width resolved to one or two pixels and the entire
- * routing field read as scratched wire irrespective of how many packets were
- * riding it. A channel that is several pixels wide is what lets the eye follow a
- * route, and it is what the packets then have something to sit inside.
+ * These were raised to 0.2 when the field still read as scratched wire, on the
+ * theory that the band was too narrow to see. The width was never the problem:
+ * every band was built edge-on (`deriveRouteAcross`), so widening it changed
+ * nothing and the raised number was never seen. With the band facing the viewer
+ * a fifth of a world unit is thirty pixels of solid channel under every route,
+ * which is a pipe again. It is a channel, so it is a fraction of that.
  */
-const RIBBON_MIN_WIDTH = 0.08;
-const RIBBON_MAX_WIDTH = 0.2;
+const RIBBON_MIN_WIDTH = 0.045;
+const RIBBON_MAX_WIDTH = 0.11;
 
 /**
  * Continuous routing channel under the dashes.

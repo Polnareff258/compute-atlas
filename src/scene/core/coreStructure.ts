@@ -117,8 +117,8 @@ const TERTIARY_DETAIL = 0.9;
  * hulls, so the mass reads as hung on one member rather than assembled from
  * pieces that happen to sit near each other.
  */
-const SPINE_START: Vector = [-1.3, -0.86, -0.3];
-const SPINE_END: Vector = [1.22, 0.78, 0.44];
+const SPINE_START: Vector = [-1.12, -0.78, -0.3];
+const SPINE_END: Vector = [1.16, 0.75, 0.44];
 const SECOND_RAIL_START: Vector = [-1.02, -0.7, -0.54];
 const SECOND_RAIL_END: Vector = [0.98, 0.5, -0.2];
 
@@ -130,21 +130,28 @@ type HullDefinition = Omit<
 /**
  * Upper processing hull: the long body above the void.
  *
- * It swells at a quarter of its length and closes on a narrow chamfered tip, so
- * its silhouette changes with the camera instead of presenting a rectangle that
- * slides around. Nothing here is a scaled unit box.
+ * It swells past a quarter of its length, holds a flat deck along the middle and
+ * closes on a chamfered *end face* rather than a point. That last part is what
+ * makes it read as machined: a section that collapses to a tip is a leaf, and two
+ * leaves and a stick is a plant, not a computing structure. A real housing ends
+ * on a plane with its corners cut, so the last two sections here are the cut and
+ * the face — the taper lives in the last eighth of the length, where a machined
+ * chamfer lives, instead of over the whole body.
+ *
+ * Nothing here is a scaled unit box.
  */
 const HULL_UPPER: HullDefinition = {
   tier: 'anchor',
   start: [-0.78, 0.24, -0.06],
   end: [1.05, 0.74, 0.14],
   facets: 0,
-  chamfer: 0.34,
+  chamfer: 0.22,
   sections: [
-    { t: 0, halfWidth: 0.2, halfHeight: 0.17, offset: [0, -0.02] },
-    { t: 0.24, halfWidth: 0.34, halfHeight: 0.26, offset: [0, 0.02] },
-    { t: 0.62, halfWidth: 0.3, halfHeight: 0.22, offset: [0, 0] },
-    { t: 1, halfWidth: 0.1, halfHeight: 0.08, offset: [0, -0.02] },
+    { t: 0, halfWidth: 0.21, halfHeight: 0.17, offset: [0, -0.02] },
+    { t: 0.2, halfWidth: 0.33, halfHeight: 0.25, offset: [0, 0.02] },
+    { t: 0.58, halfWidth: 0.31, halfHeight: 0.24, offset: [0, 0] },
+    { t: 0.86, halfWidth: 0.27, halfHeight: 0.2, offset: [0, -0.01] },
+    { t: 1, halfWidth: 0.21, halfHeight: 0.15, offset: [0, -0.02] },
   ],
 };
 
@@ -154,12 +161,13 @@ const HULL_LOWER: HullDefinition = {
   start: [-0.8, -0.72, 0.1],
   end: [1.14, -0.42, -0.08],
   facets: 0,
-  chamfer: 0.4,
+  chamfer: 0.26,
   sections: [
-    { t: 0, halfWidth: 0.16, halfHeight: 0.1, offset: [0, 0.02] },
-    { t: 0.3, halfWidth: 0.31, halfHeight: 0.2, offset: [0, 0] },
-    { t: 0.72, halfWidth: 0.26, halfHeight: 0.17, offset: [0, -0.01] },
-    { t: 1, halfWidth: 0.09, halfHeight: 0.06, offset: [0, 0] },
+    { t: 0, halfWidth: 0.18, halfHeight: 0.12, offset: [0, 0.02] },
+    { t: 0.26, halfWidth: 0.31, halfHeight: 0.2, offset: [0, 0] },
+    { t: 0.64, halfWidth: 0.29, halfHeight: 0.18, offset: [0, -0.01] },
+    { t: 0.88, halfWidth: 0.24, halfHeight: 0.15, offset: [0, -0.01] },
+    { t: 1, halfWidth: 0.18, halfHeight: 0.11, offset: [0, 0] },
   ],
 };
 
@@ -174,7 +182,7 @@ const YOKE_LEFT: HullDefinition = {
   start: [-0.78, 0.26, -0.04],
   end: [-0.72, -0.64, 0.08],
   facets: 0,
-  chamfer: 0.3,
+  chamfer: 0.24,
   sections: [
     { t: 0, halfWidth: 0.16, halfHeight: 0.14, offset: [0, 0] },
     { t: 0.5, halfWidth: 0.21, halfHeight: 0.19, offset: [-0.02, 0] },
@@ -187,7 +195,7 @@ const YOKE_RIGHT: HullDefinition = {
   start: [0.94, 0.64, 0.1],
   end: [1.12, -0.32, -0.02],
   facets: 0,
-  chamfer: 0.3,
+  chamfer: 0.24,
   sections: [
     { t: 0, halfWidth: 0.14, halfHeight: 0.16, offset: [0, 0] },
     { t: 0.5, halfWidth: 0.19, halfHeight: 0.21, offset: [0.02, 0] },
@@ -195,18 +203,26 @@ const YOKE_RIGHT: HullDefinition = {
   ],
 };
 
-/** The spine as a tapered prism, so it is a member rather than a rod. */
+/**
+ * The spine as a tapered prism, so it is a member rather than a rod.
+ *
+ * It protrudes past both hulls, and deliberately: a member that stops flush with
+ * the bodies it carries reads as a seam between them, and the point of the spine
+ * is that the two hulls are hung on one member. What it must not do is run half a
+ * world unit out into empty space past the far end, which is a stick laid on top
+ * of a machine rather than a shaft through one.
+ */
 const SPINE: HullDefinition = {
   tier: 'anchor',
   start: SPINE_START,
   end: SPINE_END,
   facets: 0,
-  chamfer: 0.32,
+  chamfer: 0.24,
   sections: [
-    { t: 0, halfWidth: 0.055, halfHeight: 0.075, offset: [0, 0] },
-    { t: 0.28, halfWidth: 0.115, halfHeight: 0.145, offset: [0, 0] },
-    { t: 0.62, halfWidth: 0.09, halfHeight: 0.11, offset: [0, 0] },
-    { t: 1, halfWidth: 0.045, halfHeight: 0.055, offset: [0, 0] },
+    { t: 0, halfWidth: 0.07, halfHeight: 0.09, offset: [0, 0] },
+    { t: 0.28, halfWidth: 0.12, halfHeight: 0.15, offset: [0, 0] },
+    { t: 0.62, halfWidth: 0.095, halfHeight: 0.115, offset: [0, 0] },
+    { t: 1, halfWidth: 0.06, halfHeight: 0.075, offset: [0, 0] },
   ],
 };
 

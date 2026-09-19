@@ -11,8 +11,8 @@ import {
   compressRouteProgress,
   deriveDashEnvelope,
   deriveDashPhase,
-  deriveDashesPerRoute,
   deriveRouteAcross,
+  deriveRouteDashDensity,
   deriveRouteDashIntensity,
   deriveRouteDashAttributes,
   deriveRouteDashDrawRange,
@@ -172,10 +172,14 @@ export function RouteDashes({
     () =>
       deriveRouteDashAttributes(
         curves,
-        deriveDashesPerRoute(advected, boundedDetail, boundedLanes),
+        deriveRouteDashDensity(advected, boundedDetail),
         seed,
+        // The ceiling is the instanced fallback's, whose budget is the whole
+        // field rather than one route; see `deriveCurveDashCounts`. The advected
+        // field has no CPU pass to bound.
+        advected ? undefined : WEBGL2_DASH_CEILING,
       ),
-    [advected, boundedDetail, boundedLanes, curves, seed],
+    [advected, boundedDetail, curves, seed],
   );
   const ribbonGeometry = useMemo(
     () => createRouteRibbonGeometry(curves, boundedDetail),

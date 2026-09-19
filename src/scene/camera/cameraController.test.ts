@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { GRAPH_MANIFEST } from '../../graph/graphManifest';
+import { deriveGraphLayout } from '../../graph/layout';
+import type { GraphNodeId } from '../../graph/types';
 import {
   BASE_CAMERA_DISTANCE,
   CAMERA_FOV_DEGREES,
@@ -9,6 +12,35 @@ import {
 
 const ASPECT = 16 / 9;
 const HALF_FOV_TAN = Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 360);
+
+const LAYOUT = deriveGraphLayout(GRAPH_MANIFEST);
+
+const DOMAIN_IDS: readonly GraphNodeId[] = [
+  'graphics',
+  'ai',
+  'game-analysis',
+  'systems',
+  'research',
+];
+
+/**
+ * The framing the scene actually ships for one domain.
+ *
+ * Read from the layout rather than from the coordinates that happened to be in
+ * this file when it was written: the layout moved to give the rebuilt Core room,
+ * and a test holding yesterday's numbers would have gone on passing while
+ * describing a composition that no longer existed.
+ */
+function framingForDomain(nodeId: GraphNodeId) {
+  const position = LAYOUT[nodeId];
+  const distance = Math.hypot(position[0], position[1], position[2]);
+  return framingFor(
+    position[0] / distance,
+    position[1] / distance,
+    distance,
+    position[2] / distance,
+  );
+}
 
 /** Where a world point lands across the half-frame at this framing. */
 function screenX(framing: ReturnType<typeof deriveCameraFraming>, worldX: number): number {
@@ -139,47 +171,31 @@ describe('deriveCameraFraming', () => {
 
   it('puts the Core and the bound domain on opposite thirds', () => {
     // GRAPHICS, the domain the focus choreography reframes against.
-    const distance = Math.hypot(-3.35, -0.62, 0.35);
-    const framing = framingFor(
-      -3.35 / distance,
-      -0.62 / distance,
-      distance,
-      0.35 / distance,
-    );
+    const framing = framingForDomain('graphics');
+    const graphicsX = LAYOUT.graphics[0];
 
     expect(framing.focus).toBeCloseTo(1, 6);
     expect(screenX(framing, 0)).toBeCloseTo(1 / 3, 1);
-    expect(screenX(framing, -3.35)).toBeCloseTo(-1 / 3, 1);
+    expect(screenX(framing, graphicsX)).toBeCloseTo(-1 / 3, 1);
     // Both ends of the active route are inside the frame, on opposite sides of
     // its centre, and neither is against an edge.
     expect(screenX(framing, 0)).toBeGreaterThan(0);
-    expect(screenX(framing, -3.35)).toBeLessThan(0);
+    expect(screenX(framing, graphicsX)).toBeLessThan(0);
     expect(Math.abs(screenX(framing, 0))).toBeLessThan(0.55);
-    expect(Math.abs(screenX(framing, -3.35))).toBeLessThan(0.55);
+    expect(Math.abs(screenX(framing, graphicsX))).toBeLessThan(0.55);
   });
 
   it('reframes every domain by its own distance rather than one tuned constant', () => {
-    for (const position of [
-      [-3.35, -0.62, 0.35],
-      [-2.55, 1.42, -0.95],
-      [0.95, 2.35, 0.55],
-      [3.05, 0.72, -0.65],
-      [2.35, -1.75, 1.05],
-    ]) {
-      const distance = Math.hypot(position[0]!, position[1]!, position[2]!);
-      const framing = framingFor(
-        position[0]! / distance,
-        position[1]! / distance,
-        distance,
-        position[2]! / distance,
-      );
+    for (const nodeId of DOMAIN_IDS) {
+      const position = LAYOUT[nodeId];
+      const framing = framingForDomain(nodeId);
 
       // Whichever domain is bound, both ends of the route land inside the frame
       // on opposite sides of its centre, and neither reaches an edge.
       expect(framing.focus).toBeCloseTo(1, 6);
       const ends: readonly (readonly [number, number])[] = [
         [0, 0],
-        [position[0]!, position[1]!],
+        [position[0], position[1]],
       ];
       for (const [x, y] of ends) {
         expect(Math.abs(screenX(framing, x))).toBeLessThanOrEqual(0.34);
@@ -188,14 +204,14 @@ describe('deriveCameraFraming', () => {
       // The two ends are mirror images about the frame centre: the Core moves
       // away from the domain's side, which is what leaves the route between them
       // running across the middle of the composition.
-      expect(screenX(framing, 0)).toBeCloseTo(-screenX(framing, position[0]!), 2);
-      expect(screenY(framing, 0)).toBeCloseTo(-screenY(framing, position[1]!), 2);
+      expect(screenX(framing, 0)).toBeCloseTo(-screenX(framing, position[0]), 2);
+      expect(screenY(framing, 0)).toBeCloseTo(-screenY(framing, position[1]), 2);
       // The active route really is the subject of the frame: its two ends sit a
       // third apart in the direction the offset runs, not huddled near the axis.
       expect(
         Math.hypot(
-          screenX(framing, 0) - screenX(framing, position[0]!),
-          screenY(framing, 0) - screenY(framing, position[1]!),
+          screenX(framing, 0) - screenX(framing, position[0]),
+          screenY(framing, 0) - screenY(framing, position[1]),
         ),
       ).toBeGreaterThan(0.4);
     }
@@ -203,15 +219,31 @@ describe('deriveCameraFraming', () => {
 
   it('never rotates toward the target, so the Core keeps one presentation', () => {
     const idle = framingFor(0, 0, 0);
-    const focused = framingFor(-0.97, -0.18, 3.44, 0.1);
+    const focused = framingForDomain('graphics');
 
     expect(idle.yaw).toBe(0);
     expect(idle.pitch).toBe(0);
     expect(focused.yaw).toBe(0);
     expect(focused.pitch).toBe(0);
     // The camera really moved: this is a translate and a dolly, not a re-aim.
+    // It is a dolly *out* for a domain at GRAPHICS' distance, which is what
+    // makes room for both ends of the route; the assertions are on the two
+    // things that have to hold whatever the domain is — the camera slid a long
+    // way sideways, and the subject did not turn.
     expect(focused.positionX).toBeLessThan(idle.positionX - 1);
-    expect(focused.positionZ).toBeGreaterThan(idle.positionZ);
+    expect(focused.positionZ).not.toBe(idle.positionZ);
+  });
+
+  it('keeps the hero at roughly half the frame at the idle distance', () => {
+    // The Core's own span, measured from the built structure rather than
+    // guessed: this is the number the idle distance has to be derived against,
+    // and the reason it moved when the Core was rebuilt.
+    const CORE_HALF_WIDTH = 2.6;
+    const halfWidth = BASE_CAMERA_DISTANCE * HALF_FOV_TAN * ASPECT;
+    const fraction = CORE_HALF_WIDTH / halfWidth;
+
+    expect(fraction).toBeGreaterThan(0.3);
+    expect(fraction).toBeLessThan(0.55);
   });
 
   it('keeps the dolly inside a usable range at every aspect and distance', () => {

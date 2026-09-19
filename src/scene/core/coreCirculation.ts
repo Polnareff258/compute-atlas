@@ -1,6 +1,6 @@
 import { hashSigned, hashUnit, normalizeSeed } from '../seedRandom';
 import type { RouteCurve } from '../routing/routeDash';
-import { CORE_ROUTE_GROUP } from '../routing/graphRoutes';
+import { CORE_ROUTE_GROUP } from '../routing/routeContract';
 import type { CoreStructure, CoreStructureForm } from './coreStructure';
 
 type Vector = readonly [number, number, number];
@@ -14,6 +14,22 @@ type Vector = readonly [number, number, number];
  * separate effect sitting inside the hero. Emitting route curves instead means
  * the Core's interior and the Graph routes are literally the same kind of
  * object, drawn by the same field.
+ *
+ * What that sharing costs is a discipline this file got wrong once. The same
+ * field means the same brightness for the same route class, and the same
+ * geometry for the same curve — so a curve authored to run a long way outside
+ * the hull is drawn exactly as brightly as a Graph route crossing open space,
+ * and it reads as a luminous doodle hanging beside the machine rather than as
+ * flow inside it. Two rules follow, and both are load-bearing:
+ *
+ *   - **Every run stays inside the mass.** The streams are clamped to the hull
+ *     and the port runs are short enough to be a socket's glow rather than a
+ *     cable. There is nothing to occlude a curve that leaves the body, and the
+ *     field has no depth cue to fall back on.
+ *   - **Nothing internal uses the `signal` class.** `signal` is the language's
+ *     brightest and it belongs to a route that is actually carrying something
+ *     somewhere. Used inside the hero it makes the Core look scribbled on. The
+ *     interior runs `primary` and `ambient`.
  */
 export type CoreCirculation = {
   readonly curves: readonly RouteCurve[];
@@ -21,10 +37,21 @@ export type CoreCirculation = {
 
 /** Detail gates, matching the structure's own tiers. */
 const CROSSLINK_DETAIL = 0.5;
-const LAYER_DETAIL = 0.72;
 
 const SPINE_STREAMS = 3;
-const SPINE_OVERSHOOT = 1.14;
+/**
+ * How far a stream runs past the centroid along the spine.
+ *
+ * It used to be 1.14, roughly the length of the body, so every stream began and
+ * ended in open space on either side of the hero. The overshoot is still here —
+ * a stream that stops exactly at the hull looks capped — but it is small enough
+ * to be read as the flow passing under the shell rather than as a rail.
+ */
+const SPINE_OVERSHOOT = 0.78;
+
+/** How far a port run reaches into the body. Short: a socket, not a cable. */
+const INGRESS_REACH_MIN = 0.14;
+const INGRESS_REACH_MAX = 0.24;
 
 function add(a: Vector, b: Vector, scale = 1): Vector {
   return [a[0] + b[0] * scale, a[1] + b[1] * scale, a[2] + b[2] * scale];
@@ -60,7 +87,7 @@ function spineStreams(structure: CoreStructure, seed: number, detail: number): R
   const axis = unit(structure.spineAxis);
   const across = unit(cross(axis, [0, 1, 0]));
   const through = unit(cross(axis, across));
-  const streamCount = detail >= LAYER_DETAIL ? SPINE_STREAMS : 1;
+  const streamCount = detail >= CROSSLINK_DETAIL ? SPINE_STREAMS : 1;
   const curves: RouteCurve[] = [];
 
   for (let stream = 0; stream < streamCount; stream += 1) {
@@ -94,7 +121,10 @@ function spineStreams(structure: CoreStructure, seed: number, detail: number): R
     curves.push({
       id: 10 + stream,
       rank: stream,
-      route: stream === 0 ? 'primary' : 'secondary',
+      // Only the centre stream is a primary channel. The two on either side are
+      // the body's background flow and sit a class down, so the interior has a
+      // reading order instead of three equally loud lines.
+      route: stream === 0 ? 'primary' : 'ambient',
       group: CORE_ROUTE_GROUP,
       start,
       control,
@@ -119,7 +149,10 @@ function crossLinks(structure: CoreStructure, seed: number): RouteCurve[] {
 
   anchors.forEach((anchor, index) => {
     const from: Vector = anchor.position;
-    const bow = hashSigned(seed, 2200 + index) * 0.24;
+    // The bow is small on purpose: this link runs from one interior volume to
+    // the void at the centre of the mass, and a large bow lifts its midpoint out
+    // through the hull where the field will happily draw it in mid-air.
+    const bow = hashSigned(seed, 2200 + index) * 0.12;
     curves.push({
       id: 40 + index,
       rank: 3 + index,
@@ -152,43 +185,24 @@ function portIngress(structure: CoreStructure, seed: number): RouteCurve[] {
   return structure.ports.map((port, index) => {
     const inward: Vector = [-port.direction[0], -port.direction[1], -port.direction[2]];
     const mouth = add(port.position, inward, 0.02);
-    const inner = add(port.position, inward, 0.42 + hashUnit(seed, 2300 + index) * 0.2);
+    const reach =
+      INGRESS_REACH_MIN +
+      hashUnit(seed, 2300 + index) * (INGRESS_REACH_MAX - INGRESS_REACH_MIN);
+    const inner = add(port.position, inward, reach);
 
     return {
       id: 60 + index,
       rank: 8 + index,
+      // A port run is the socket answering the route, not the route. It keeps
+      // the `signal` class because the test of a live port is exactly that it is
+      // brighter than the shell around it — but it is short enough now that it
+      // reads as a lit socket rather than as a line drawn in the air beside the
+      // Core, which is what it was at half a unit long.
       route: 'signal',
       group: CORE_ROUTE_GROUP,
       start: mouth,
-      control: add(mouth, inward, 0.2),
-      end: add(inner, [0, 1, 0], hashSigned(seed, 2310 + index) * 0.14),
-    };
-  });
-}
-
-/**
- * Shallow sweeps that run across the layered membranes.
- *
- * These sit at the front of the mass so the surface reads as disturbed by the
- * flow passing beneath it, rather than as a static panel.
- */
-function membraneSweeps(structure: CoreStructure, seed: number): RouteCurve[] {
-  const membranes = structure.members.filter(
-    (member): member is CoreStructureForm => member.shape === 'membrane',
-  );
-  return membranes.slice(0, 2).map((membrane, index) => {
-    const half: Vector = [membrane.scale[0] * 0.5, membrane.scale[1] * 0.5, 0];
-    const center: Vector = membrane.position;
-    const lift = hashSigned(seed, 2400 + index) * 0.05;
-
-    return {
-      id: 80 + index,
-      rank: 12 + index,
-      route: 'ambient',
-      group: CORE_ROUTE_GROUP,
-      start: [center[0] - half[0], center[1] - half[1] * 0.4, center[2] + lift],
-      control: [center[0], center[1] + half[1] * 0.5, center[2] + lift * 2],
-      end: [center[0] + half[0], center[1] - half[1] * 0.4, center[2] + lift],
+      control: add(mouth, inward, reach * 0.4),
+      end: add(inner, [0, 1, 0], hashSigned(seed, 2310 + index) * 0.08),
     };
   });
 }
@@ -199,6 +213,14 @@ function membraneSweeps(structure: CoreStructure, seed: number): RouteCurve[] {
  * Writes exactly one route group — the Core's own — because the Graph's groups
  * are packed into the same uniform set and the Core must not be able to dim a
  * domain's branch by accident.
+ *
+ * There is no membrane sweep here any more. The membranes used to carry one
+ * shallow arc each, authored to the membrane's own width, and the widest
+ * membrane is the full width of the body — so the "sweep" was a luminous arc
+ * spanning the entire hero, drawn at the front of the mass where nothing
+ * occludes it. It was the single largest piece of geometry in the Core that was
+ * not the Core. The membranes already answer state through their own openness,
+ * which is the response they were given a fade curve for.
  */
 export function deriveCoreCirculation(
   structure: CoreStructure,
@@ -215,10 +237,6 @@ export function deriveCoreCirculation(
 
   if (bounded >= CROSSLINK_DETAIL) {
     curves.push(...crossLinks(structure, normalizedSeed));
-  }
-
-  if (bounded >= LAYER_DETAIL) {
-    curves.push(...membraneSweeps(structure, normalizedSeed));
   }
 
   return { curves };
