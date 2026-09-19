@@ -15,10 +15,29 @@ const HALF_FOV_TAN = Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 360);
  * computational environment rather than a diagram of one. It is deliberately
  * tied to `CORE_SCALE` rather than to the layout: the ratio of the two is what
  * sets the fraction of the frame the mass occupies, so rescaling the hero
- * without moving the camera here would silently change the composition, and
- * that is the failure this comment exists to prevent.
+ * without moving the camera here would silently change the composition.
+ *
+ * That paragraph was here before, and the composition drifted anyway. The value
+ * was 9.1 and it was right for the hero it was measured against; the Core was
+ * then rebuilt, `LOCAL_BOUNDS` grew by half again, and nobody re-measured. By
+ * the bounds the mass read at 0.81 of the frame's height, and counting the folds
+ * that leave the outline it filled the height edge to edge on screen — the hero
+ * was the page, and the five domains around it had been pushed out to the
+ * margins where they read as marginalia rather than as bays. A comment saying
+ * the ratio matters is not the same thing as a test that measures it, which is
+ * the part worth remembering: the number that has to be re-checked is the one
+ * that lives in a different file from the thing it is about.
+ *
+ * 11.5 puts the mass at 0.64 of the frame's height and 0.45 of its width. The
+ * height is the number that matters and the width cannot be the one that does:
+ * the hero is 4.05 by 3.3 half-extents, so it is nearly square inside a frame
+ * that is not, and a distance that fills the width will always have run out of
+ * height first. Derived rather than measured would be better still, and the
+ * reason it is not is that the constant lives here and the extent lives in the
+ * Core; until the two are joined by something a test can read, the value has to
+ * be re-measured off a capture whenever the Core's bounds move.
  */
-export const BASE_CAMERA_DISTANCE = 9.1;
+export const BASE_CAMERA_DISTANCE = 11.5;
 /** Where the camera sits when nothing is bound: negative, so the Core reads right of centre. */
 const IDLE_CAMERA_OFFSET_X = -0.55;
 /**
@@ -49,10 +68,13 @@ const MIN_CAMERA_DISTANCE = 5;
  * The backstop on the dolly, twice the idle distance.
  *
  * No legal focus resolves anywhere near it — the furthest of the five domains
- * asks for 11.7 against an idle 9.1 — so this exists only to keep a hostile or
- * future input from dissolving the composition into a wide shot.
+ * asks for well under a third of it against the idle distance — so this exists
+ * only to keep a hostile or future input from dissolving the composition into a
+ * wide shot. It tracks the idle distance, since the only thing it has to be is
+ * comfortably outside anything a focus can ask for and comfortably inside the
+ * range where the layout is still on screen.
  */
-const MAX_CAMERA_DISTANCE = 18;
+const MAX_CAMERA_DISTANCE = BASE_CAMERA_DISTANCE * 2;
 /** Handheld response to the pointer, in world units at full response. */
 const POINTER_SWING_X = 0.13;
 const POINTER_SWING_Y = 0.1;

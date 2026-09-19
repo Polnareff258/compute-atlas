@@ -432,8 +432,19 @@ function boundedWakeOvershoot(proximity: number, wake: number): number {
  * so "the other domains recede" arrived as "every route is faintly on" — and a
  * field where everything is faintly on has no subject. A floor makes receding
  * mean leaving.
+ *
+ * It was 0.12, which culled only the routes that were already gone, and the idle
+ * frame showed five complete runs from the Core to five domains — a hub with
+ * spokes drawn on it. The floor is now above what a domain carries at rest, so
+ * idle shows the two shared trunks and nothing else: the branches are not dim
+ * evidence around the machine, they are absent from it until the pointer asks
+ * for one, which is the difference between the frame being a routing diagram and
+ * being a machine that happens to be routing. Nothing about the branches was
+ * deleted to achieve that — they are the same curves at the same weights, and
+ * the threshold that was already deciding what the frame shows is the thing that
+ * moved.
  */
-export const ROUTE_VISIBILITY_FLOOR = 0.12;
+export const ROUTE_VISIBILITY_FLOOR = 0.26;
 
 /**
  * Route weight → how much of the route survives, 0 .. 1.
@@ -603,14 +614,29 @@ export function deriveRouteDashAttributes(
       const speed = 0.16 + hashUnit(normalizedSeed, laneSeed + 1) * 0.14;
       // Sizes are set from the framing rather than from taste. At the idle
       // distance a world unit is roughly 160 pixels on a 1920 frame, so this
-      // lands at fourteen to twenty pixels long and three to five wide: long
+      // lands at twenty-five to forty pixels long and six to ten wide: long
       // enough that a packet reads as a streak with a direction, short enough
       // that the eye stops resolving single packets and starts reading the
       // field's density instead.
-      const length =
-        (packetLength * (0.8 + hashUnit(normalizedSeed, laneSeed + 2) * 0.5)) /
-        curveLength;
-      const width = 0.016 + hashUnit(normalizedSeed, laneSeed + 3) * 0.014;
+      //
+      // The width was three to five pixels, and that is the number a packet has
+      // to be wrong in to read as wire. A three-pixel line carrying a bright
+      // value against a near-black frame is a hairline with a hard edge at any
+      // zoom, however long it is drawn: the length said streak and the width
+      // said scratch.
+      //
+      // It is a fraction of this packet's own length rather than an absolute
+      // size, and that is the part worth keeping. A short run — an ingress
+      // reach, a cross-link — has its packet capped by the curve it is on, so
+      // an absolute width would leave the shortest packet on the frame exactly
+      // as wide as the longest, which is a bead on the routes with the least
+      // room to read as anything else. Tied to the length, every packet on
+      // every route is between four and six times longer than it is wide, and
+      // none of them can become a dot at any quality profile.
+      const packetWorld =
+        packetLength * (0.8 + hashUnit(normalizedSeed, laneSeed + 2) * 0.5);
+      const length = packetWorld / curveLength;
+      const width = packetWorld * (0.17 + hashUnit(normalizedSeed, laneSeed + 3) * 0.09);
       const brightness = 0.45 + hashUnit(normalizedSeed, laneSeed + 4) * 0.55;
       const routeIndex = ROUTE_CLASS_INDEX[curve.route];
       const groupIndex = Math.max(
@@ -683,8 +709,15 @@ export function resolveDashCurve(
   return undefined;
 }
 
-/** Packet length in world units. See the sizing note in the packer. */
-export const ROUTE_PACKET_LENGTH = 0.1;
+/**
+ * Packet length in world units. See the sizing note in the packer.
+ *
+ * Length and width are one decision, not two: a packet has to stay a streak, so
+ * the only way to make it wider is to make it longer as well, and the width was
+ * raised to twice what it was. An eighth of a world unit at the idle distance is
+ * roughly thirty pixels of band, running to forty on the longest packets.
+ */
+export const ROUTE_PACKET_LENGTH = 0.19;
 
 /**
  * A route with almost no length still gets a mark, or it is not a route.

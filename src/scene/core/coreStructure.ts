@@ -351,24 +351,74 @@ const BEZEL_HALF_HEIGHT = 0.03;
  * The rail's width as a fraction of the wall it is cut into.
  *
  * This is the number that decides whether the body is a mass with a line cut
- * across it or a bullseye, and half was the wrong answer. At half the wall's
- * width the annulus resolves as a quarter bright land, a half dark channel and
- * another quarter bright land — and a half of a wall between two thirds of a unit
- * and one and a third of a unit wide is a band, so at thumbnail size the dark
- * channel was the largest shape in the composition and the machine read as a dark
- * ring with a lit rim. A fifth of the wall leaves four fifths of the deck as
- * plate and turns the rail into what it was always meant to be: a line that says
- * where the part was split, not a region of its own.
+ * across it or a bullseye, and both of the obvious answers were wrong.
+ *
+ * At half the wall's width the annulus resolves as a quarter bright land, a half
+ * dark channel and another quarter bright land. A fifth was the next attempt, on
+ * the argument that it leaves four fifths of the deck as plate — and the
+ * measured frame says the argument was about the wrong quantity. The rail holds
+ * one value whatever it crosses, so what decides whether it reads as a *line* is
+ * not the fraction of the wall it takes but the absolute width it lands at on
+ * the heavy side: a fifth of the 1.32-wide flank is 0.29 world units, and on
+ * screen a 0.29-unit band of interior-tier value against lands four times
+ * brighter is not a groove, it is a hole. The body was a bright ring, a black
+ * ring and a bright ring, and the black one was the widest shape in the
+ * composition.
+ *
+ * An eighth keeps the same ratio at the crown and lands at 0.16 on the flank,
+ * which is 47 pixels at the idle framing — wide enough to read as a cut at any
+ * distance the frame is actually looked at from, narrow enough that the two
+ * lands are one surface with a line in it.
  */
-const BEZEL_WALL_FRACTION = 0.22;
+const BEZEL_WALL_FRACTION = 0.125;
+
+/**
+ * Where across the deck the rail runs, as a fraction of the wall's own width.
+ *
+ * The rail used to run down the middle of the deck, which is the obvious place
+ * for a parting line and the wrong one here, because of what is on the other
+ * side of the deck. Inboard of the rail is the aperture: the opening is a dark
+ * recess, and it was immediately against the rail's dark line, so the two read
+ * as one outline and the body resolved as a bright ring with a black band drawn
+ * round its inner edge — a picture frame with a heavy mount, which is the exact
+ * shape a monolith is not.
+ *
+ * A line in the middle of a surface divides it into two equal halves and says
+ * "two surfaces". A line near an edge says "this is one plate, and that is its
+ * edge" — and that is what this body is. Moved outward the rail draws the rim
+ * off the deck, the deck becomes one broad bright land running all the way to
+ * the aperture's edge, and the aperture is bounded by lit plate instead of by a
+ * dark line. Nothing about the opening changed; what changed is which surface
+ * the eye finds at its lip.
+ *
+ * Two thirds, and not more: the rail plus its own half-width has to stay inside
+ * the wall at every point, and the wall is not the same width all the way round.
+ */
+const BEZEL_RAIL_OUTSET = 0.66;
+
+/**
+ * The rail's points, pushed outward along the ring's own radius.
+ *
+ * Radial rather than along the true normal. The normal is derived inside
+ * `path()` from the bisector of the two neighbouring segments and is not
+ * available to a constant, and for a ring this nearly convex the radius is the
+ * same direction to within a few degrees at every point — a tenth of a wall's
+ * width of error on a line whose whole job is to sit somewhere particular on the
+ * deck, with the silhouette it is cut into unchanged either way.
+ */
+function bezelPoint(point: Vector, half: number): Vector {
+  const radius = Math.hypot(point[0], point[1]);
+  if (radius < 1e-6) return point;
+  const outset = half * BEZEL_RAIL_OUTSET;
+  return [point[0] + (point[0] / radius) * outset, point[1] + (point[1] / radius) * outset, point[2]];
+}
 
 const FRONT_BEZEL = {
   points: MONOLITH.points.map(
-    (point, index): Vector => [
-      point[0],
-      point[1],
-      point[2] + (MONOLITH.halfHeight[index] ?? 0) + BEZEL_RAIL_OFFSET,
-    ],
+    (point, index): Vector => {
+      const rail = bezelPoint(point, MONOLITH.halfWidth[index] ?? 0);
+      return [rail[0], rail[1], rail[2] + (MONOLITH.halfHeight[index] ?? 0) + BEZEL_RAIL_OFFSET];
+    },
   ),
   halfWidth: MONOLITH.halfWidth.map((half) => half * BEZEL_WALL_FRACTION),
   halfHeight: BEZEL_HALF_HEIGHT,
@@ -471,6 +521,58 @@ const LOWER_LIP = {
   chamfer: 0.2,
   reference: [0, 0, 1],
 } as const;
+
+/**
+ * Deck plates: the small laid-in panels that give the front face a scale of its
+ * own.
+ *
+ * The deck is the largest lit surface on the machine and it was one value from
+ * the rail to the lip of the aperture. Everything else on the body is a feature
+ * measured in whole units — a fold, a hull, a rail — so the front face had no
+ * detail smaller than a quarter of the body, and a surface with nothing on it
+ * below that scale reads as untextured however carefully its outline is
+ * faceted. These are the scale contrast for the outside of the machine, in the
+ * same way the wafers are for the inside.
+ *
+ * Placed off the ring's own points and sized off its own wall widths, so they
+ * follow the ring rather than being sprinkled on it, and made uneven three ways
+ * — a deterministic subset of the twelve points, a different radial offset per
+ * point, and a hash-derived size — because a repeating pattern of equal parts is
+ * a diagram. Only one panel per point for the same reason: a ring of twelve
+ * equally spaced plates is a gear.
+ *
+ * Inboard of the rail, and that is what they are for. The rail divides the deck;
+ * every one of these sits on the wide land between the rail and the aperture, so
+ * they break up exactly the surface that has nothing on it and leave the narrow
+ * outer rim as a clean machined edge.
+ */
+const DECK_PLATE_INDICES = [1, 3, 5, 8, 10] as const;
+const DECK_PLATE_DETAIL = MANIFOLD_DETAIL;
+
+const DECK_PLATES = DECK_PLATE_INDICES.map((index, order) => {
+  const point = MONOLITH.points[index] ?? [0, 0, 0];
+  const halfWidth = MONOLITH.halfWidth[index] ?? 0.4;
+  const halfHeight = MONOLITH.halfHeight[index] ?? 0.2;
+  const radius = Math.hypot(point[0], point[1]);
+  const nx = radius > 1e-6 ? point[0] / radius : 0;
+  const ny = radius > 1e-6 ? point[1] / radius : 0;
+  const radial = hashUnit(17, 700 + order * 5) - 0.5;
+  const across = 0.5 + hashUnit(17, 702 + order * 5) * 0.55;
+  const tangent = radius > 1e-6 ? Math.atan2(ny, nx) : 0;
+  return {
+    // Half way between the rail and the aperture's lip, plus a jitter so no two
+    // panels sit at the same radius.
+    position: [
+      point[0] + nx * (halfWidth * (radial * 0.5 + 0.05)),
+      point[1] + ny * (halfWidth * (radial * 0.5 + 0.05)),
+      point[2] + halfHeight + 0.008,
+    ] as Vector,
+    // Local x is radial, so the plate is laid along the deck rather than across
+    // it. The z rotation is the ring's own tangent direction at this point.
+    rotation: [0, 0, tangent] as Vector,
+    scale: [halfWidth * across * 1.5, halfWidth * (0.8 + order * 0.1), 0.022] as Vector,
+  };
+});
 
 type PathDefinition = Omit<CoreStructurePath, 'shape' | 'band' | 'fade' | 'rank' | 'tier' | 'surface'>;
 
@@ -954,13 +1056,34 @@ export function deriveCoreStructure(
     path({ ...MONOLITH, closed: true }, 'anchor', 'shell', 'midground', 0),
     path({ ...CROWN_FOLD, closed: false }, 'primary', 'shell', 'midground', 1),
     path({ ...FLANK_FOLD, closed: false }, 'primary', 'shell', 'midground', 2),
-    form(APERTURE_FLOOR, 'recess', 'recess', 'background', 3),
+    // The back of the aperture is a `primary` tier under a `recess` surface, and
+    // that pairing is the whole of this line. At the interior tier it resolved to
+    // the same value as the void beyond the frame, so the opening was not a
+    // recess the eye looks into, it was a hole through the body to the
+    // background — and a ring with a hole in it is a picture frame. A recess has
+    // to have a floor that reads as a floor for the wall to have a depth.
+    form(APERTURE_FLOOR, 'primary', 'recess', 'background', 3),
     hull(ASSEMBLY_SHOULDER, 'primary', 'shell', 'midground', 4),
     hull(ASSEMBLY_FOOT, 'secondary', 'shell', 'foreground', 5),
     path({ ...INNER_SHELF, closed: false }, 'primary', 'shell', 'foreground', 6),
     path({ ...LOWER_LIP, closed: false }, 'secondary', 'shell', 'foreground', 7),
     path({ ...FRONT_BEZEL, closed: true }, 'recess', 'shell', 'foreground', 8),
   );
+
+  if (detail >= DECK_PLATE_DETAIL) {
+    members.push(
+      // `secondary` under a `shell` finish, which is the whole difference
+      // between a laid-in panel and a chip out of the deck. A recessed finish
+      // on a plate this size puts a near-black speck on the brightest surface in
+      // the frame, and a speck at this scale does not read as a machined land —
+      // it reads as damage. A panel is a value or two down from the plate it is
+      // let into and flat across its own face, which is what a tier does and
+      // what a whole surface class is too much of.
+      ...DECK_PLATES.map((plate, order) =>
+        form(plate, 'secondary', 'shell', 'foreground', 60 + order),
+      ),
+    );
+  }
 
   if (detail >= WAFER_DETAIL) {
     members.push(

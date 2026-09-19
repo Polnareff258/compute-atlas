@@ -123,7 +123,13 @@ export function deriveRouteFlowTarget(
     groupWeights: deriveGraphGroupWeights(routing, {
       activeDomainId: activeDomainId === 'core' ? null : activeDomainId,
       focused,
-      coreWeight: focused ? 0.92 : hasTarget ? 0.56 : 0.3,
+      // Idle is 0.55 rather than 0.3 because the field's visibility floor moved
+      // up above the idle domain weights, and the Core's own circulation is not
+      // a domain: it is the thing the idle frame is *of*. Left at 0.3 it would
+      // have been culled along with the branches, and the brief's idle picture —
+      // a still machine with a slow weave turning over inside it — would have
+      // been a machine with nothing running in it at all.
+      coreWeight: focused ? 0.92 : hasTarget ? 0.66 : 0.55,
       // Only read at rest; `deriveGraphGroupWeights` says why.
       ...(restingProminence === undefined ? {} : { restingProminence }),
     }),

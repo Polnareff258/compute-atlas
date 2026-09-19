@@ -242,9 +242,20 @@ describe('deriveCameraFraming', () => {
     // `BASE_CAMERA_DISTANCE` moved when the Core was rebuilt — so a test holding
     // yesterday's constants would go on passing while describing a frame the
     // page no longer draws.
+    //
+    // Both axes, and the larger one is the assertion. The first version of this
+    // measured the width alone, and the width is the axis that cannot fail: the
+    // hero is a near-square body — 4.05 by 3.3 half-extents — inside a 16:9
+    // frame, so its height runs out of frame long before its width does. At the
+    // idle distance this test used to defend, the width read 0.56 and the height
+    // 0.81: comfortably inside the band on the axis being measured, and three
+    // quarters of the way down the page on the one that was not. The band is
+    // about how much of the frame the mass *occupies*, so the axis that binds is
+    // the one it has to hold to.
     const hero = deriveCoreStructure({ structureDetail: 1 }, 17);
     const halfWidth = BASE_CAMERA_DISTANCE * HALF_FOV_TAN * ASPECT;
-    const fraction = hero.bounds[0] / halfWidth;
+    const halfHeight = BASE_CAMERA_DISTANCE * HALF_FOV_TAN;
+    const fraction = Math.max(hero.bounds[0] / halfWidth, hero.bounds[1] / halfHeight);
 
     expect(fraction).toBeGreaterThan(0.5);
     expect(fraction).toBeLessThan(0.68);

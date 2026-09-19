@@ -464,12 +464,20 @@ describe('deriveRouteVisibility', () => {
     expect(deriveRouteVisibility(0.6)).toBeGreaterThan(deriveRouteVisibility(0.3));
   });
 
-  it('keeps a participating idle route near full rather than near zero', () => {
-    // 0.34 is what every domain carries in the idle composition. It has to read
-    // as present, not as a ghost of itself.
-    expect(deriveRouteVisibility(0.34)).toBeGreaterThan(0.45);
-    // 0.14 is a non-target domain under hover, and 0.05 is one under focus.
-    expect(deriveRouteVisibility(0.14)).toBeLessThan(0.2);
+  it('keeps a participating route near full and removes one that is not', () => {
+    // The three weights the idle composition actually passes: the Core's own
+    // circulation at 0.55, the leading trunk at 0.86 and the trailing one at
+    // 0.46. Every one of them is above the floor and has to read as present
+    // rather than as a ghost of itself, which is what the root is for — a
+    // linear ramp would put all three under half.
+    expect(deriveRouteVisibility(0.55)).toBeGreaterThan(0.6);
+    expect(deriveRouteVisibility(0.86)).toBeGreaterThan(0.85);
+    expect(deriveRouteVisibility(0.46)).toBeGreaterThan(0.5);
+    // And the weight a domain carries at rest is *below* the floor, so idle
+    // draws two shared trunks and no branches. 0.2 is that weight; 0.14 is a
+    // non-target domain under hover and 0.05 is one under focus.
+    expect(deriveRouteVisibility(0.2)).toBe(0);
+    expect(deriveRouteVisibility(0.14)).toBe(0);
     expect(deriveRouteVisibility(0.05)).toBe(0);
   });
 
@@ -657,21 +665,35 @@ describe('packet geometry', () => {
 
     // Every packet, not the average one: one bead among a family of streaks is a
     // dot on the frame that the eye stops at.
+    //
+    // The ratio is the contract and the two bounds below it are its arithmetic.
+    // They moved together when the packets were widened: two to six hundredths
+    // of a world unit is a band, and a band carrying the old tenth-of-a-unit
+    // length would have been a bead by this same ratio — which is what the
+    // ratio is here to catch. Both numbers are read off the packer, so a packet
+    // that grew in width without growing in length fails here rather than on the
+    // frame.
     expect(shortestStreak).toBeGreaterThan(1.5);
-    expect(longest).toBeLessThan(0.055);
-    expect(widest).toBeLessThan(0.04);
+    expect(longest).toBeLessThan(0.12);
+    expect(widest).toBeLessThan(0.07);
   });
 
   it('sizes a packet in world units, so a short route gets short packets', () => {
     // A slice of route progress is not a size. One curve here is a trunk and the
-    // other is a stub a tenth of it, and the same slice of progress was a
-    // fifteen-pixel streak on the first and a blob on the second — which is what
-    // made the Core's own circulation read as white hooks laid over the hull
-    // while the routes between domains read as wire.
+    // other is half of it, and the same slice of progress was a fifteen-pixel
+    // streak on the first and a blob on the second — which is what made the
+    // Core's own circulation read as white hooks laid over the hull while the
+    // routes between domains read as wire.
     const trunk = curve({ id: 1, control: [1.3, 0.34, 0.12], end: [2.6, -0.2, 0] });
     // Same id, so the per-packet size jitter is the same and the comparison is
     // between the two curves' lengths alone.
-    const stub = curve({ id: 1, control: [0.13, 0.034, 0.012], end: [0.26, -0.02, 0] });
+    //
+    // Long enough that the length cap does not bind on it. The stub used to be
+    // a tenth of the trunk, which put its cap just above the packet size and
+    // made this test measure the cap rather than the sizing: the day the packet
+    // grew, the two stopped agreeing and the failure had nothing to do with the
+    // property under test. The cap has its own assertion below, on both curves.
+    const stub = curve({ id: 1, control: [0.65, 0.17, 0.06], end: [1.3, -0.1, 0] });
 
     const measured = [trunk, stub].map((route) => {
       const attributes = deriveRouteDashAttributes([route], 8, SEED);

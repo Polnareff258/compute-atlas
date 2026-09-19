@@ -200,7 +200,7 @@ function ingressAssembly(
 }
 
 /**
- * AI: a canted housing holding a bank of packet trays, with a read head above.
+ * AI: a tall canted housing holding a bank of packet trays, with a read head.
  *
  * Every domain here is built the same way the hero is: a body with real mass
  * whose front is open, and large layered surfaces inside it. The five domains
@@ -209,6 +209,22 @@ function ingressAssembly(
  * and at the framing the scene is viewed at that is a handful of pixels. They
  * read as wireframes of machines, which is the same failure as reading as icons,
  * arrived at from the other side.
+ *
+ * The second attempt fixed the section and kept the arrangement, and the frame
+ * said the arrangement was the problem. A domain is drawn at about 250 pixels
+ * across, and an open front bounded by four members is, at that size, the
+ * *outline* of a rectangle however thick the members are: the eye completes the
+ * rectangle and reads a picture frame with a slab inside it, because that is
+ * what is on the screen. GRAPHICS and RESEARCH both read that way in the
+ * measured frame, and RESEARCH was the worst of the five while being the one
+ * with the most careful truss.
+ *
+ * So each domain is a closed body with an opening cut into its front now, the
+ * same construction as the monolith: walls on every side, a solid back, a dark
+ * recessed interior panel, and the layered surfaces in the gap. The members that
+ * used to *be* the frame are the mass at the corners of it, and the tiers are
+ * spent on the two or three largest volumes rather than distributed over a ring
+ * of small ones.
  */
 function packetBuffer(scale: number): {
   frame: StructurePart[];
@@ -217,37 +233,38 @@ function packetBuffer(scale: number): {
   const s = scale;
   return {
     frame: [
-      // Side walls, top cap and base: a housing with the front left open so the
-      // tray bank is read in depth rather than as a face.
-      form('anchor', [-0.48 * s, 0.12 * s, -0.02 * s], [0.15 * s, 1.3 * s, 0.5 * s], [0.04, 0.07, 0.05]),
-      form('anchor', [0.48 * s, 0.06 * s, 0.04 * s], [0.15 * s, 1.24 * s, 0.46 * s], [-0.05, -0.1, -0.05]),
-      form('primary', [0, 0.66 * s, 0.02 * s], [1.12 * s, 0.16 * s, 0.54 * s], [0.03, 0.11, 0.03]),
-      form('primary', [0, -0.62 * s, 0], [1.04 * s, 0.18 * s, 0.56 * s], [-0.02, 0.05, 0.07]),
-      // The back face, solid and well behind the bank, so the trays are read
-      // against something and the housing has depth instead of a hole.
-      form('secondary', [0, 0.02 * s, -0.38 * s], [0.98 * s, 1.2 * s, 0.16 * s], [0.04, 0.07, 0.09]),
+      // A closed body: back, two walls, cap and base, with the front left open
+      // so the tray bank is read in depth rather than as a face.
+      form('secondary', [0, 0.02 * s, -0.44 * s], [1.02 * s, 1.3 * s, 0.22 * s], [0.03, 0.06, 0.05]),
+      form('anchor', [-0.52 * s, 0.06 * s, -0.08 * s], [0.22 * s, 1.22 * s, 0.66 * s], [0.04, 0.07, 0.05]),
+      form('anchor', [0.52 * s, -0.02 * s, -0.04 * s], [0.22 * s, 1.26 * s, 0.62 * s], [-0.05, -0.1, -0.05]),
+      form('primary', [0.02 * s, 0.68 * s, -0.08 * s], [1.2 * s, 0.22 * s, 0.64 * s], [0.03, 0.11, 0.03]),
+      form('primary', [-0.02 * s, -0.66 * s, -0.04 * s], [1.12 * s, 0.24 * s, 0.66 * s], [-0.02, 0.05, 0.07]),
+      // The interior panel, a tier down and set back: what the trays are read
+      // against, and what keeps the inside of the body dark around them.
+      form('secondary', [0, 0.02 * s, -0.3 * s], [0.92 * s, 1.12 * s, 0.06 * s], [0.03, 0.07, 0.05], 'recess'),
       // The read head, cantilevered over the mouth.
-      form('secondary', [0.08 * s, 0.78 * s, 0.3 * s], [0.56 * s, 0.2 * s, 0.28 * s], [0.22, 0.16, 0.12]),
-      plate('detail', [0, 0.02 * s, -0.24 * s], [0.9 * s, 1.1 * s, 0.014 * s], [0.03, 0.09, 0.06]),
+      form('secondary', [0.06 * s, 0.8 * s, 0.28 * s], [0.6 * s, 0.22 * s, 0.3 * s], [0.22, 0.16, 0.12]),
+      plate('detail', [0, 0.02 * s, -0.26 * s], [0.9 * s, 1.1 * s, 0.014 * s], [0.03, 0.09, 0.06]),
     ],
     movables: [
       {
         id: 'tray-lower',
         role: 'interior',
         travel: [0.04 * s, 0.16 * s, 0.08 * s],
-        part: form('anchor', [-0.02 * s, -0.34 * s, 0.06 * s], [0.8 * s, 0.15 * s, 0.34 * s], [0.02, 0.1, 0.02]),
+        part: form('anchor', [-0.02 * s, -0.36 * s, 0.1 * s], [0.8 * s, 0.17 * s, 0.44 * s], [0.02, 0.1, 0.02]),
       },
       {
         id: 'tray-mid',
         role: 'interior',
         travel: [0.12 * s, 0.28 * s, 0.03 * s],
-        part: form('primary', [0.03 * s, 0, 0.04 * s], [0.76 * s, 0.15 * s, 0.33 * s], [-0.02, -0.06, 0.03]),
+        part: form('primary', [0.03 * s, 0.02 * s, 0.08 * s], [0.76 * s, 0.17 * s, 0.42 * s], [-0.02, -0.06, 0.03]),
       },
       {
         id: 'tray-upper',
         role: 'interior',
         travel: [0.2 * s, 0.4 * s, -0.02 * s],
-        part: form('secondary', [-0.03 * s, 0.34 * s, 0.06 * s], [0.7 * s, 0.15 * s, 0.32 * s], [0.03, 0.14, -0.03]),
+        part: form('secondary', [-0.03 * s, 0.38 * s, 0.1 * s], [0.7 * s, 0.17 * s, 0.4 * s], [0.03, 0.14, -0.03]),
       },
       {
         // The bank itself, as one layered surface between the trays: the domain
@@ -255,19 +272,28 @@ function packetBuffer(scale: number): {
         id: 'bank-sheet',
         role: 'interior',
         travel: [0.16 * s, 0.32 * s, 0.22 * s],
-        part: plate('detail', [0, 0.02 * s, 0.16 * s], [0.84 * s, 0.98 * s, 0.014 * s], [0.02, 0.08, 0.04]),
+        part: plate('detail', [0, 0.02 * s, 0.18 * s], [0.86 * s, 1.0 * s, 0.014 * s], [0.02, 0.08, 0.04]),
       },
       {
         id: 'read-port',
         role: 'interior',
         travel: [0.3 * s, 0.46 * s, 0.12 * s],
-        part: span('anchor', [0.36 * s, 0.78 * s, 0.3 * s], [0.62 * s, 0.84 * s, 0.34 * s], 0.11 * s),
+        part: span('anchor', [0.34 * s, 0.8 * s, 0.28 * s], [0.66 * s, 0.86 * s, 0.32 * s], 0.12 * s),
       },
     ],
   };
 }
 
-/** GRAPHICS: an open housing holding four framebuffer layers, swept by a scan rail. */
+/**
+ * GRAPHICS: a wide, low closed housing holding four framebuffer layers, with a
+ * scan rail crossing the mouth.
+ *
+ * The wide, low proportion is doing as much work as the construction is. Four of
+ * the five domains are around a unit across in both axes and this one is nearly
+ * half again as wide as it is tall, which is the only thing at domain scale that
+ * survives the thumbnail — a silhouette difference reads further than a
+ * structural one, and the brief asks for five bays rather than five of one bay.
+ */
 function framebuffer(scale: number): {
   frame: StructurePart[];
   movables: DomainMovable[];
@@ -275,23 +301,20 @@ function framebuffer(scale: number): {
   const s = scale;
   return {
     frame: [
-      // The housing is a comb, not a plate: two rails and two posts with the
-      // front left open. The previous build was a single wide slab, and a wide
-      // slab is what made this domain read as an icon of a framebuffer rather
-      // than as one.
-      span('anchor', [-0.68 * s, 0.56 * s, 0.04 * s], [0.68 * s, 0.52 * s, 0.04 * s], 0.07 * s),
-      span('anchor', [-0.64 * s, -0.6 * s, 0.02 * s], [0.64 * s, -0.56 * s, 0.02 * s], 0.07 * s),
-      span('primary', [-0.68 * s, 0.54 * s, -0.3 * s], [-0.64 * s, -0.58 * s, -0.3 * s], 0.06 * s),
-      span('primary', [0.68 * s, 0.5 * s, -0.3 * s], [0.64 * s, -0.56 * s, -0.3 * s], 0.06 * s),
-      // The back wall, well behind the stack, so the stack is read in depth.
-      form('recess', [0.02 * s, 0.02 * s, -0.5 * s], [0.96 * s, 0.78 * s, 0.06 * s], [0.02, 0.04, 0.01]),
+      // Jaws above and below, posts left and right, and a back wall behind them:
+      // a closed box with the whole of its front open, so the stack of films is
+      // seen through a slot rather than framed by a rectangle.
+      form('secondary', [0, 0.02 * s, -0.46 * s], [1.34 * s, 0.9 * s, 0.2 * s], [0.02, 0.04, 0.02]),
+      form('anchor', [-0.04 * s, 0.48 * s, 0.0 * s], [1.26 * s, 0.26 * s, 0.7 * s], [0.06, 0.12, 0.03]),
+      form('anchor', [0.04 * s, -0.48 * s, -0.02 * s], [1.2 * s, 0.28 * s, 0.66 * s], [-0.05, -0.1, -0.04]),
+      form('primary', [-0.6 * s, 0.0 * s, -0.14 * s], [0.24 * s, 0.9 * s, 0.54 * s], [0.03, 0.08, 0.05]),
+      form('primary', [0.6 * s, 0.04 * s, -0.1 * s], [0.24 * s, 0.84 * s, 0.5 * s], [-0.04, -0.07, -0.05]),
+      // The interior panel: the dark the films are read against.
+      form('secondary', [0.02 * s, 0.02 * s, -0.34 * s], [0.96 * s, 0.64 * s, 0.06 * s], [0.02, 0.04, 0.01], 'recess'),
       // The scan rail crosses the mouth at an angle. The angle is what makes the
       // layers read as a volume being swept rather than as a flat stack.
-      span('secondary', [-0.8 * s, 0.36 * s, 0.34 * s], [0.76 * s, -0.3 * s, 0.3 * s], 0.04 * s),
-      // Mounts, so the housing stands on something.
-      form('secondary', [-0.38 * s, -0.78 * s, 0.1 * s], [0.38 * s, 0.07 * s, 0.3 * s]),
-      form('secondary', [0.4 * s, -0.74 * s, 0.04 * s], [0.3 * s, 0.07 * s, 0.26 * s]),
-      plate('detail', [0.02 * s, 0.02 * s, -0.44 * s], [0.9 * s, 0.72 * s, 0.012 * s], [0.02, 0.04, 0.02]),
+      span('secondary', [-0.84 * s, 0.42 * s, 0.38 * s], [0.8 * s, -0.36 * s, 0.34 * s], 0.07 * s),
+      plate('detail', [0.02 * s, 0.02 * s, -0.4 * s], [0.9 * s, 0.62 * s, 0.012 * s], [0.02, 0.04, 0.02]),
     ],
     movables: [
       {
@@ -333,7 +356,15 @@ function framebuffer(scale: number): {
   };
 }
 
-/** GAME ANALYSIS: a comparison branch converging on an open decision chamber. */
+/**
+ * GAME ANALYSIS: two comparison chambers side by side, converging on a junction.
+ *
+ * The pair is the whole read, so it is built as two bodies rather than as one
+ * chamber with two arms attached: a domain that is *about* comparing has to show
+ * two of something, and two closed housings with a seam between them say that at
+ * any size the frame is looked at from. The arms then carry the convergence
+ * out of the pair and into the junction behind it.
+ */
 function decisionChamber(scale: number): {
   frame: StructurePart[];
   movables: DomainMovable[];
@@ -341,22 +372,20 @@ function decisionChamber(scale: number): {
   const s = scale;
   return {
     frame: [
-      // Two branches converging on the chamber. They are the domain's silhouette,
-      // so they are drawn as solid members rather than as hairlines.
-      span('anchor', [-0.78 * s, 0.72 * s, 0.1 * s], [-0.16 * s, 0.24 * s, 0.02 * s], 0.18 * s, 0.16 * s),
-      span('anchor', [0.76 * s, 0.68 * s, -0.12 * s], [0.16 * s, 0.22 * s, 0.02 * s], 0.18 * s, 0.16 * s),
-      // The chamber is open at the front. Its floor, back and two side walls are
-      // the closed faces, and the lid is held proud of the walls so the gap
-      // between the lid and the rim is visible — that gap is what makes a verdict
-      // chamber rather than a box.
-      form('secondary', [0, -0.2 * s, -0.32 * s], [1.0 * s, 0.78 * s, 0.18 * s], [0.02, 0.05, 0.04]),
-      form('primary', [0, -0.58 * s, 0], [1.0 * s, 0.18 * s, 0.62 * s]),
-      form('primary', [-0.46 * s, -0.18 * s, -0.02 * s], [0.16 * s, 0.64 * s, 0.56 * s], [0.03, 0.04, 0.02]),
-      form('primary', [0.46 * s, -0.2 * s, 0.02 * s], [0.16 * s, 0.6 * s, 0.54 * s], [-0.03, -0.05, -0.02]),
-      // Posts carrying the lid, so the lid reads as held rather than floating.
-      span('detail', [-0.34 * s, -0.14 * s, 0.06 * s], [-0.34 * s, 0.08 * s, 0.06 * s], 0.06 * s),
-      span('detail', [0.34 * s, -0.16 * s, 0.06 * s], [0.34 * s, 0.06 * s, 0.06 * s], 0.06 * s),
-      plate('detail', [0, -0.24 * s, -0.2 * s], [0.82 * s, 0.6 * s, 0.014 * s], [0.02, 0.06, 0.03]),
+      // The junction the pair converge on: the domain's closed back.
+      form('secondary', [0.02 * s, -0.04 * s, -0.48 * s], [1.0 * s, 0.8 * s, 0.2 * s], [0.02, 0.05, 0.04]),
+      // The two chambers. Different heights and offsets, because a matched pair
+      // reads as a part number rather than as two things being compared.
+      form('anchor', [-0.36 * s, 0.04 * s, -0.12 * s], [0.58 * s, 0.96 * s, 0.6 * s], [0.04, 0.06, 0.03]),
+      form('anchor', [0.38 * s, -0.06 * s, -0.08 * s], [0.56 * s, 0.9 * s, 0.56 * s], [-0.04, -0.07, -0.03]),
+      form('primary', [0, -0.66 * s, -0.06 * s], [1.04 * s, 0.24 * s, 0.64 * s]),
+      // Arms from each chamber's shoulder back to the junction.
+      span('primary', [-0.74 * s, 0.58 * s, 0.06 * s], [-0.2 * s, 0.2 * s, -0.02 * s], 0.22 * s, 0.2 * s),
+      span('primary', [0.76 * s, 0.54 * s, -0.1 * s], [0.22 * s, 0.18 * s, -0.04 * s], 0.22 * s, 0.2 * s),
+      // The seam between the chambers, recessed: the one place the pair is
+      // divided rather than joined.
+      form('secondary', [0.01 * s, -0.1 * s, -0.26 * s], [0.1 * s, 0.72 * s, 0.5 * s], [0.02, 0.05, 0.02], 'recess'),
+      plate('detail', [0, -0.24 * s, -0.22 * s], [0.82 * s, 0.6 * s, 0.014 * s], [0.02, 0.06, 0.03]),
     ],
     movables: [
       {
@@ -379,12 +408,13 @@ function decisionChamber(scale: number): {
         part: plate('detail', [0, -0.34 * s, 0.16 * s], [0.62 * s, 0.42 * s, 0.014 * s], [0.02, 0.05, 0.03]),
       },
       {
-        // The lid itself: the chamber opens by lifting it clear of the walls
-        // rather than by brightening.
+        // The lid itself: the pair opens by lifting one common cap clear of both
+        // chambers rather than by brightening. It spans the two, so the opening
+        // is read as the bay opening and not as one chamber moving.
         id: 'chamber-lid',
         role: 'interior',
-        travel: [0, 0.26 * s, 0.06 * s],
-        part: form('anchor', [0, -0.02 * s, 0.02 * s], [0.92 * s, 0.16 * s, 0.56 * s], [0.02, 0.04, 0.02]),
+        travel: [0, 0.3 * s, 0.04 * s],
+        part: form('anchor', [0.01 * s, 0.58 * s, -0.06 * s], [1.06 * s, 0.16 * s, 0.6 * s], [0.02, 0.04, 0.02]),
       },
     ],
   };
@@ -401,29 +431,32 @@ function processingStack(scale: number): {
   // tenth of a unit tall and a tenth of that deep, which is a shelf; a deck has
   // to have enough section to cast its own shadow line.
   const steps: readonly { y: number; width: number; depth: number; tier: StructureTier }[] = [
-    { y: 0.6, width: 0.84, depth: 0.5, tier: 'anchor' },
-    { y: 0.28, width: 0.98, depth: 0.56, tier: 'primary' },
-    { y: -0.06, width: 1.06, depth: 0.6, tier: 'primary' },
-    { y: -0.4, width: 0.9, depth: 0.54, tier: 'secondary' },
+    { y: 0.62, width: 1.0, depth: 0.62, tier: 'anchor' },
+    { y: 0.26, width: 1.14, depth: 0.68, tier: 'primary' },
+    { y: -0.1, width: 1.2, depth: 0.72, tier: 'primary' },
+    { y: -0.46, width: 1.06, depth: 0.66, tier: 'secondary' },
   ];
 
   return {
     frame: [
       // A closed back plane behind the decks: the stack's silhouette.
-      form('secondary', [0, 0.06 * s, -0.44 * s], [1.06 * s, 1.28 * s, 0.18 * s], [0.02, 0.05, 0.06]),
+      form('secondary', [0, 0.06 * s, -0.48 * s], [1.24 * s, 1.34 * s, 0.22 * s], [0.02, 0.05, 0.06]),
       ...steps.map((step, index) =>
         form(
           step.tier,
           [((index % 2 === 0 ? -1 : 1) * 0.07 * s), step.y * s, index * 0.02 * s],
-          [step.width * s, 0.17 * s, step.depth * s],
+          [step.width * s, 0.2 * s, step.depth * s],
           [0.01 * index, 0.02 * index, 0],
         ),
       ),
+      // The routing backplane: the surface the stack is mounted on and the one
+      // the domain's own routing runs across.
+      form('secondary', [0, 0.04 * s, -0.3 * s], [1.14 * s, 1.24 * s, 0.05 * s], [0.02, 0.05, 0.06], 'recess'),
       // The bus crosses the front of the stack, so the decks read as being
       // addressed by something rather than merely piled.
-      span('anchor', [0.24 * s, 0.86 * s, 0.28 * s], [0.24 * s, -0.66 * s, 0.28 * s], 0.14 * s, 0.12 * s),
-      span('primary', [-0.42 * s, 0.76 * s, -0.1 * s], [-0.42 * s, -0.56 * s, -0.1 * s], 0.1 * s),
-      plate('detail', [0, -0.5 * s, 0.3 * s], [0.86 * s, 0.24 * s, 0.014 * s]),
+      span('anchor', [0.26 * s, 0.92 * s, 0.3 * s], [0.26 * s, -0.72 * s, 0.3 * s], 0.18 * s, 0.16 * s),
+      span('primary', [-0.46 * s, 0.84 * s, -0.12 * s], [-0.46 * s, -0.62 * s, -0.12 * s], 0.14 * s),
+      plate('detail', [0, -0.54 * s, 0.32 * s], [0.9 * s, 0.24 * s, 0.014 * s]),
     ],
     movables: [
       {
@@ -448,7 +481,16 @@ function processingStack(scale: number): {
   };
 }
 
-/** RESEARCH: an open truss around a canted interference body, plus a probe arm. */
+/**
+ * RESEARCH: a small dense body inside a sparse cage, plus a probe arm.
+ *
+ * The brief asks for research to be the sparse, probing one, and sparse is a
+ * *comparative* word: it only reads if the body is smaller than the others and
+ * the members around it are fewer, not if the whole bay is drawn in hairlines.
+ * So the mass here is a single compact canted volume — the densest of the five
+ * against its own envelope — with open space and two long posts around it, which
+ * is the one domain whose silhouette is a small thing in a large frame.
+ */
 function lattice(scale: number): {
   frame: StructurePart[];
   movables: DomainMovable[];
@@ -456,23 +498,19 @@ function lattice(scale: number): {
   const s = scale;
   return {
     frame: [
-      // Four posts and two rails: an open truss, so the background reads through
-      // the frame. What it must not be is two members crossing the whole face.
-      // That is what this was, at three hundredths of a unit wide, and at the
-      // framing the scene is viewed at two crossed hairlines over a black plate
-      // is not a truss — it is an asterisk.
-      span('anchor', [-0.6 * s, 0.7 * s, 0.16 * s], [-0.6 * s, -0.7 * s, -0.06 * s], 0.13 * s),
-      span('anchor', [0.6 * s, 0.66 * s, -0.16 * s], [0.6 * s, -0.66 * s, 0.06 * s], 0.13 * s),
-      span('primary', [-0.62 * s, 0.7 * s, 0.14 * s], [0.62 * s, 0.66 * s, -0.14 * s], 0.13 * s),
-      span('primary', [-0.62 * s, -0.7 * s, -0.06 * s], [0.62 * s, -0.66 * s, 0.06 * s], 0.13 * s),
-      // Short braces between the posts and the body, not across the opening.
-      span('detail', [-0.6 * s, 0.46 * s, 0.06 * s], [-0.18 * s, 0.24 * s, 0.14 * s], 0.08 * s),
-      span('detail', [0.6 * s, -0.44 * s, -0.06 * s], [0.18 * s, -0.22 * s, 0.14 * s], 0.08 * s),
-      // The interference body: the mass the truss is built around, canted so it
-      // is read as a volume under load rather than as a panel hung in a frame.
-      form('secondary', [0, 0, 0.02 * s], [0.78 * s, 0.76 * s, 0.3 * s], [0.12, 0.18, 0.36]),
-      // And a plate deep behind it, so the truss is read in depth.
-      plate('detail', [0, 0, -0.34 * s], [0.9 * s, 0.88 * s, 0.014 * s], [0.1, 0.14, 0.3]),
+      // The body the cage is built around, canted so it is read as a volume
+      // under load rather than as a panel hung in a frame.
+      form('anchor', [0, 0, -0.08 * s], [0.86 * s, 0.92 * s, 0.58 * s], [0.12, 0.18, 0.36]),
+      // A closed back, so the cage is a bay with a wall rather than a truss
+      // standing in the void.
+      form('secondary', [0, 0, -0.48 * s], [1.0 * s, 1.02 * s, 0.2 * s], [0.1, 0.14, 0.3]),
+      // Two posts and two rails: a cage, but a sparse one, and it stands off the
+      // body rather than closing a rectangle around the front of it.
+      span('anchor', [-0.68 * s, 0.74 * s, 0.2 * s], [-0.68 * s, -0.74 * s, -0.1 * s], 0.16 * s),
+      span('anchor', [0.68 * s, 0.7 * s, -0.2 * s], [0.68 * s, -0.7 * s, 0.1 * s], 0.16 * s),
+      span('primary', [-0.7 * s, 0.74 * s, 0.18 * s], [0.7 * s, 0.7 * s, -0.18 * s], 0.16 * s),
+      form('secondary', [0, 0, -0.3 * s], [0.62 * s, 0.66 * s, 0.05 * s], [0.1, 0.14, 0.3], 'recess'),
+      plate('detail', [0, 0, -0.38 * s], [0.92 * s, 0.9 * s, 0.014 * s], [0.1, 0.14, 0.3]),
     ],
     movables: [
       {

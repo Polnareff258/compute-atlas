@@ -72,11 +72,24 @@ const MIN_SPAN = 0.05;
 /**
  * Idle trunk weights. The gap between them is deliberately wide: the brief
  * requires idle to read as one route leaving the Core, not as two equal ones.
+ *
+ * Both sit above the route field's visibility floor, which is the whole reason
+ * the trailing weight is as high as it is. These two curves are the only routing
+ * the idle frame draws, and "the trunk is present but secondary" and "the trunk
+ * is culled" are one number apart at a floor this high.
  */
 const IDLE_LEAD_WEIGHT = 0.86;
-const IDLE_TRAILING_WEIGHT = 0.24;
-/** Idle weight for one domain's own route group, before the resting ranking. */
-const IDLE_DOMAIN_GROUP_WEIGHT = 0.34;
+const IDLE_TRAILING_WEIGHT = 0.46;
+/**
+ * Idle weight for one domain's own route group, before the resting ranking.
+ *
+ * Below the visibility floor by construction, so the five branch-and-ingress
+ * runs are absent from the idle frame rather than faint in it. The ranking
+ * scales this down and never up, so no domain's resting prominence can lift it
+ * back over the threshold. Hover passes 0.86 and focus 1 for the bound domain,
+ * which is the reveal the composition is built around.
+ */
+const IDLE_DOMAIN_GROUP_WEIGHT = 0.2;
 /**
  * What a domain with no resting prominence is left with.
  *
