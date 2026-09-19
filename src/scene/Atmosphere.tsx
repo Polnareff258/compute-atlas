@@ -13,10 +13,11 @@ import { deriveAtmosphereDescriptor } from './atmosphereDescriptor';
 /**
  * Depth behind the composition.
  *
- * Three large depth-separated planes in the machine's recessed tier, merged into
- * one mass and graded by the scene fog. This replaces the previous constellation
- * of thin traces and stray points: a backdrop that reads as distance and scale,
- * with nothing in it that could be mistaken for a signal.
+ * Seven nested depth-separated plates plus a rear fill, in the `backdrop` tier,
+ * merged into one mass and graded by the scene fog. This replaces the previous
+ * constellation of thin traces and stray points: a backdrop that reads as
+ * distance and scale, with nothing in it that could be mistaken for a signal.
+ * `deriveAtmosphereDescriptor` owns the stack; this file only mounts it.
  *
  * It takes no backend, and neither does anything else now: every structural
  * surface in the scene takes one path on both renderers. See the note in

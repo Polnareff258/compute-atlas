@@ -195,10 +195,14 @@ export type BakedStructureGeometry = {
 /**
  * A structure is one merged mass, not a list of parts.
  *
- * Members bake into two geometries — solid and membrane — so a whole structure
- * costs two draw calls instead of one per box. Tier colour and orientation
- * luminance are both pre-multiplied into vertex colours, which is what lets a
- * single material render every tier honestly on both backends.
+ * Members bake into one geometry per `SurfaceClass` — five buffers, most of them
+ * empty for any given structure — and a view mounts only the finishes its own
+ * part list uses, which is what `usedSurfaceClasses` answers. So a whole
+ * structure costs one draw call per finish it has instead of one per box, and a
+ * backdrop that is all recesses does not pay a draw call for an accent it never
+ * uses. Tier colour and orientation luminance are both pre-multiplied into
+ * vertex colours, which is what lets a single material render every tier
+ * honestly on both backends.
  *
  * Baking also buys correctness the runtime cannot: the luminance a rotated face
  * should carry is a property of its final orientation, so it is computed after

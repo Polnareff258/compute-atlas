@@ -82,8 +82,8 @@ const VIEW_AXIS = new THREE.Vector3(
 /**
  * The hero Compute Core.
  *
- * One asymmetric monolith with a deep central aperture, two folded shells, an
- * aperture full of wafers, membranes and compute dies, three machined routing
+ * One asymmetric monolith with a deep central aperture, four folded shells, an
+ * aperture full of wafers, membranes and compute dies, four machined routing
  * manifolds and two attached processing assemblies — merged into one geometry
  * per finish, so it reads as a single computed body rather than a pile of boxes
  * and still answers state one surface family at a time.

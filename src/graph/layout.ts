@@ -10,11 +10,23 @@ import type { GraphLayout, GraphManifest, GraphNodeId } from './types';
  * domain the focus choreography reframes against.
  *
  * The radii are set against the Core rather than against each other, and they
- * have now been moved twice for the same reason. A Core that fills three fifths
- * of the frame has a half-width of about four and a half world units, so a ring
- * of domains at four units is a ring of domains *inside* the subject. These sit
- * at 5.8–7.0, which clears the mass on every side and leaves the outer two
- * clipped by the frame at the idle framing.
+ * have now been moved twice for the same reason. The Core's half-extents are
+ * 4.05 by 3.30 by 1.50, so a ring of domains at four units is a ring of domains
+ * *inside* the subject, and a domain is placed where its own bay clears that box
+ * rather than at a fixed radius.
+ *
+ * Measured, four of the five clear it: graphics 6.24 world units from the
+ * origin, systems 5.80, ai 5.64, research 4.70. The fifth does not.
+ * `game-analysis` sits 3.41 out, which puts it inside the box on every axis at
+ * once — above the mass at 2.85 against a top of 3.30, and 1.70 off centre
+ * against a half-width of 4.05 — so the crown passes in front of its lower
+ * members and the bay reads as mounted on the machine rather than standing
+ * beside it. That is the one place the depth overlap this layout is built for
+ * turns into occlusion of a whole domain, and it is visible in the idle frame.
+ * This paragraph used to claim the domains "sit at 5.8-7.0, which clears the
+ * mass on every side". The radii were moved twice after that was written and the
+ * claim was never re-measured, so for a stage the comment asserted a clearance
+ * the table below it did not have.
  *
  * That clipping is the composition rather than a defect. Idle is meant to read
  * as a large computed body with bays arranged around it, not as five icons on a
@@ -65,10 +77,12 @@ const NODE_PROMINENCE: Readonly<Record<GraphNodeId, number>> = {
   //
   // Raised from 0.22 and 0.17. Presence scales the whole response, so at the old
   // values these two resolved to about a tenth of their tier colour against a
-  // background of #050609 — dark enough that the body disappeared and only the
+  // near-black background — dark enough that the body disappeared and only the
   // brightest edge of a member was left, which is why a dormant domain read as a
   // scratch rather than as a machine standing in the depth of the frame. A
-  // silhouette has to be dark *and* whole.
+  // silhouette has to be dark *and* whole. The margin is thinner than it was
+  // when that was measured, because the backdrop is now a measured step above
+  // the void rather than the void itself.
   ai: 0.28,
   research: 0.24,
 };
