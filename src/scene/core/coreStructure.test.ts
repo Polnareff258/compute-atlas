@@ -53,10 +53,25 @@ function hullsOf(members: readonly CoreStructureMember[]): readonly CoreStructur
 }
 
 /** The one closed path: the ring of material the aperture is cut through. */
+/**
+ * The body ring: the deepest closed path in the structure.
+ *
+ * Selected rather than asserted as "the only closed path", because the bezel is
+ * closed too — and neither of the obvious discriminators works. The bezel
+ * overhangs the body, so it is wider on both axes and longer around; what it is
+ * not is *thick*. A body ring swept from a wall section is most of a unit deep,
+ * and a plate standing in front of it is a tenth of that, so depth is what
+ * separates the two, and it is the property the assertions below are actually
+ * about.
+ */
 function monolithOf(structure: CoreStructure): CoreStructurePath {
   const closed = pathsOf(structure.members).filter((member) => member.closed);
-  expect(closed).toHaveLength(1);
-  return closed[0]!;
+  expect(closed.length).toBeGreaterThanOrEqual(2);
+  return closed.reduce((deepest, member) =>
+    largest(extentsOf(member.halfHeight)) > largest(extentsOf(deepest.halfHeight))
+      ? member
+      : deepest,
+  );
 }
 
 /** A profile extent, which a path may carry per point rather than as one value. */
@@ -180,9 +195,12 @@ describe('deriveCoreStructure', () => {
     for (const structureDetail of DETAILS) {
       const structure = deriveCoreStructure({ structureDetail }, SEED);
 
-      // One closed ring and two open folds. The ring is the whole main mass, so
-      // a tier that dropped it would drop the subject of the frame.
-      expect(pathsOf(structure.members).filter((member) => member.closed)).toHaveLength(1);
+      // Two closed rings — the body and the bezel standing proud of it — and
+      // the open folds. The body is the whole main mass, so a tier that dropped
+      // it would drop the subject of the frame.
+      expect(pathsOf(structure.members).filter((member) => member.closed)).toHaveLength(2);
+      expect(pathsOf(structure.members).filter((member) => member.closed && member.tier === 'anchor'))
+        .toHaveLength(1);
       expect(pathsOf(structure.members).filter((member) => !member.closed).length)
         .toBeGreaterThanOrEqual(2);
       // The floor behind the aperture is what makes the opening a recess rather
@@ -224,8 +242,15 @@ describe('deriveCoreStructure', () => {
     const ringWidth =
       Math.max(...ring.points.map((point) => point[0])) -
       Math.min(...ring.points.map((point) => point[0]));
+    // Closed paths are excluded because a ring's centre is inside itself: the
+    // bezel is a shell the size of the body, not something sitting in its
+    // opening, and counting it here would make this assertion about the
+    // silhouette rather than about what is enclosed.
     const enclosed = structure.members.filter(
-      (member) => member !== ring && insideOutline(ring.points, memberCentre(member)),
+      (member) =>
+        member !== ring &&
+        member.shape !== 'path' &&
+        insideOutline(ring.points, memberCentre(member)),
     );
     const atBodyScale = enclosed.filter(
       (member) => sectionOf(member) > ringWidth * 0.4,
@@ -269,7 +294,10 @@ describe('deriveCoreStructure', () => {
       (member) => member.surface === 'edge' && member.band !== 'foreground',
     );
 
-    expect(manifolds).toHaveLength(3);
+    // Four channels, and the fourth is the internal junction: three of them
+    // carry the field out of the body, and the fourth is where they meet inside
+    // it. A Core with only exits has routing but no topology.
+    expect(manifolds).toHaveLength(4);
 
     // The field is not a line drawn to the Core: it is carried in a channel that
     // starts inside the aperture and crosses the ring's own wall on its way out.
@@ -381,12 +409,18 @@ describe('deriveCoreStructure', () => {
     // classes are what the response is written against, so a class that arrived
     // at the wrong tier would be a hover answering in the wrong place.
     expect(countOf(0.25, 'membrane')).toBe(0);
-    expect(countOf(0.6, 'membrane')).toBe(2);
+    expect(countOf(0.45, 'membrane')).toBe(1);
+    expect(countOf(0.6, 'membrane')).toBe(3);
+    expect(countOf(0.72, 'membrane')).toBe(4);
+    expect(countOf(0.9, 'membrane')).toBe(5);
     expect(countOf(0.25, 'edge')).toBe(1);
     expect(countOf(0.45, 'edge')).toBe(3);
+    expect(countOf(0.72, 'edge')).toBe(5);
+    expect(countOf(0.9, 'edge')).toBe(7);
+    expect(countOf(0.25, 'accent')).toBe(1);
     expect(countOf(0.6, 'accent')).toBe(2);
     expect(countOf(0.72, 'accent')).toBe(3);
-    expect(countOf(0.9, 'accent')).toBe(6);
+    expect(countOf(0.9, 'accent')).toBe(8);
   });
 
   it('adds detail inside the aperture rather than more body around it', () => {

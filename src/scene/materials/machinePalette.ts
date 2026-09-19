@@ -13,12 +13,46 @@ export const MACHINE_PALETTE = Object.freeze({
   /** Scene background and the deepest recessed read. */
   void: '#04070a',
 
-  /** Structural shell tiers, ordered high → low orientation luminance. */
-  shellHigh: '#8b9997',
-  shellMid: '#4b585a',
-  shellLow: '#283133',
+  /**
+   * Structural shell tiers, ordered high → low orientation luminance.
+   *
+   * The ladder is set by what the body has to be seen *against*, not by taste,
+   * and that reference moved. Against a black background the mass could sit as
+   * low as it liked and still read as a silhouette — so it was tuned down, on
+   * the argument that a body whose brightest face lands in the middle of the
+   * range leaves the pale accent nothing to be an accent against. That argument
+   * is still right about the accent, and the ladder is still well below mid
+   * grey. What changed is the floor: the backdrop is no longer the void but a
+   * measured step above it, and a shadow side that lands *on* that step is a
+   * body dissolving into its own background rather than a body.
+   *
+   * The window is therefore narrow and both sides of it are real. Above the
+   * backdrop by a visible margin at the darkest face a shell can have; below mid
+   * grey at the brightest.
+   */
+  shellHigh: '#7c8a88',
+  shellMid: '#475456',
+  shellLow: '#263133',
   /** Recessed interior faces: present, never competing with the silhouette. */
-  interior: '#121a1c',
+  interior: '#101a1c',
+
+  /**
+   * The depth behind everything: the backdrop planes and nothing else.
+   *
+   * A tier of its own rather than a reuse of `interior`, and the reason is
+   * measurable rather than aesthetic. The backdrop is graded by distance, so its
+   * near and far planes differ by the depth darkening alone — but `interior` is
+   * dark enough that even the near plane lands *under* the scene background, so
+   * the backdrop was not a quiet field at all: it was a hole very slightly
+   * blacker than the void, and the mass had nothing to be cut out of.
+   *
+   * Sitting above `void` is the whole of this tier's job, and so is not sitting
+   * far above it. A backdrop with real presence becomes the largest surface in
+   * the frame and the Core reads as a hole punched in *it* — figure and ground
+   * swap, which is exactly what an early revision of this did. This is the value
+   * that clears the background without ever approaching the mass.
+   */
+  backdrop: '#1b2629',
 
   /** Thin layered surfaces. */
   membrane: '#7fa39e',
@@ -29,7 +63,7 @@ export const MACHINE_PALETTE = Object.freeze({
   portQuiet: '#78928f',
 
   /** A domain that is present but not participating. */
-  dormant: '#222b2e',
+  dormant: '#222d30',
 
   /**
    * The pale icy accent: wafers, dies and edge strips.

@@ -63,9 +63,21 @@ type ProjectedNode = {
 /**
  * Screen-space picking against each domain's own envelope.
  *
- * Domains are now large objects with depth, so the pick radius comes from the
- * projected extent rather than from a fixed constant — otherwise the outer
+ * Domains are large objects with depth, so the pick radius comes from the
+ * projected envelope rather than from a fixed constant — otherwise the outer
  * layers of a sub-environment would be visible but not clickable.
+ *
+ * The envelope is the domain's own box, projected corner by corner. Measuring
+ * it with one diagonal offset instead was a real defect and not a subtle one:
+ * the estimate came out at about a fifth of the body's screen width, so the
+ * outer four fifths of a domain looked like a thing you could point at and was
+ * not. Nothing caught it while the camera sat close, because the estimate was
+ * generous enough at that distance to cover most of the body; moving the camera
+ * back to frame the rebuilt Core is what exposed it.
+ *
+ * The radius is the *smaller* half-extent rather than the diagonal, so a wide
+ * domain does not claim the space beside it. Two domains are never within a
+ * factor of two on screen, so nothing is stolen either way.
  */
 function projectDomainNodes(
   environments: readonly DomainEnvironmentEntry[],
@@ -75,14 +87,26 @@ function projectDomainNodes(
   const rect = canvas.getBoundingClientRect();
   const projected: ProjectedNode[] = [];
   const center = new THREE.Vector3();
-  const edge = new THREE.Vector3();
+  const corner = new THREE.Vector3();
 
   for (const entry of environments) {
-    const { anchor, extent, ingressLocal } = entry.environment;
-    center.set(anchor[0], anchor[1], anchor[2]);
-    edge.set(anchor[0] + extent * 0.8, anchor[1] + extent * 0.6, anchor[2] + ingressLocal[2]);
-    center.project(camera);
-    edge.project(camera);
+    const { anchor, extent } = entry.environment;
+    center.set(anchor[0], anchor[1], anchor[2]).project(camera);
+
+    let halfWidth = 0;
+    let halfHeight = 0;
+    for (const [signX, signY] of [
+      [1, 1],
+      [1, -1],
+      [-1, 1],
+      [-1, -1],
+    ] as const) {
+      corner
+        .set(anchor[0] + extent * signX, anchor[1] + extent * signY, anchor[2])
+        .project(camera);
+      halfWidth = Math.max(halfWidth, Math.abs(corner.x - center.x));
+      halfHeight = Math.max(halfHeight, Math.abs(corner.y - center.y));
+    }
 
     projected.push({
       id: entry.environment.nodeId,
@@ -90,7 +114,7 @@ function projectDomainNodes(
       y: rect.top + ((1 - center.y) / 2) * rect.height,
       radius: Math.max(
         24,
-        (Math.abs(edge.x - center.x) * rect.width) / 2 + 12,
+        Math.min(halfWidth * rect.width, halfHeight * rect.height) * 0.7,
       ),
     });
   }

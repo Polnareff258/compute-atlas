@@ -139,8 +139,18 @@ export type CoreStructure = {
   readonly heroScale: number;
 };
 
-/** Half-extents of the mass including its folds, in design units. */
-const LOCAL_BOUNDS: Vector = [2.11, 1.2, 0.62];
+/**
+ * Half-extents of the mass including its folds, in design units.
+ *
+ * The width is deliberately held where it was while the height nearly doubles.
+ * The framing contracts are written against the width — the idle rig puts the
+ * Core at a little over half the frame across, and `BASE_CAMERA_DISTANCE` is
+ * derived from that — so widening the body would move every one of them. Making
+ * it taller instead costs nothing and fixes the composition: at 16:9 a body that
+ * is twice as wide as it is tall can only ever occupy a horizontal band, which
+ * is what left the lower third of the frame empty.
+ */
+const LOCAL_BOUNDS: Vector = [1.84, 1.5, 0.58];
 
 /**
  * Additive detail gates, in ascending order. SAFE keeps the monolith, its
@@ -164,37 +174,84 @@ const DIE_DETAIL = 0.88;
  * and the ports, the centroid and the bounds move with it — which is what keeps
  * the routes attached to the surface they leave.
  */
-const CORE_SCALE = 1.9;
+const CORE_SCALE = 2.2;
 
 /**
  * The monolith: the whole main mass as one closed ring, and the reason this
  * Core has an aperture rather than a gap between two parts.
  *
- * The outline is deliberately asymmetric in both axes. It is wider at the right
- * shoulder than at the left, heavier along the bottom than the top, and its
- * wall thickness walks from 0.11 to 0.22 around the ring — a wall that carries
- * one thickness all the way round a closed path is an extruded picture frame,
- * whereas a wall that is heavy at the foot and thin at the shoulder is a
- * machined body that happens to have an opening through it.
+ * Two ratios decide whether a ring reads as a machine with an opening in it or
+ * as a picture frame, and this one is authored against both.
  *
- * Depth comes from `halfHeight`, the section's extent along the view axis: the
- * ring is a third of a unit deep, so the opening is a recess with its own floor
- * and its own darkening rather than a hole cut in a card.
+ * The first is the section. A heavily chamfered section on a path whose normals
+ * sweep continuously is a torus: the facets differ so little from their
+ * neighbours that the tone walks smoothly round the body, which is why the
+ * previous version read as grey plastic rather than as machined mass. A shallow
+ * chamfer on a near-square section gives every face one normal, so adjacent
+ * faces land on different tiers and the mass reads in steps.
+ *
+ * The second is where the opening is and how thick the material around it is.
+ * An opening in the middle of an even wall is a doughnut whatever its aspect:
+ * the eye reads the wall, finds it the same everywhere, and stops. Here the
+ * wall runs from 0.26 across at the crown to 0.54 down the left flank, and the
+ * opening sits up and to the right of the body's own centre as a result. The
+ * mass is a heavy lower-left shoulder with a slot cut toward its light corner,
+ * which is what an asymmetric body actually is.
  */
 const MONOLITH = {
   points: [
-    [-1.86, -0.14, 0.05],
-    [-1.52, -0.62, 0.02],
-    [-0.42, -0.8, -0.02],
-    [0.8, -0.66, -0.03],
-    [1.46, -0.08, 0.01],
-    [1.2, 0.54, 0.06],
-    [0.36, 0.78, 0.08],
-    [-0.94, 0.62, 0.07],
+    [-1.27, 0.62, 0.06],
+    [-1.2, 0.96, 0.1],
+    [-0.8, 1.14, 0.1],
+    [0.0, 1.18, 0.08],
+    [0.8, 1.06, 0.04],
+    [1.36, 0.82, 0.0],
+    [1.46, 0.2, 0.0],
+    [1.36, -0.44, 0.04],
+    [0.8, -0.86, 0.04],
+    [-0.1, -0.94, 0.0],
+    [-0.98, -0.8, 0.02],
+    [-1.24, -0.24, 0.04],
   ],
-  halfWidth: [0.22, 0.22, 0.19, 0.21, 0.22, 0.15, 0.11, 0.13],
-  halfHeight: [0.3, 0.28, 0.26, 0.28, 0.34, 0.34, 0.28, 0.24],
-  chamfer: 0.3,
+  halfWidth: [0.5, 0.44, 0.3, 0.26, 0.28, 0.32, 0.32, 0.36, 0.44, 0.5, 0.54, 0.54],
+  halfHeight: [0.3, 0.3, 0.28, 0.28, 0.3, 0.32, 0.34, 0.32, 0.3, 0.3, 0.28, 0.28],
+  chamfer: 0.1,
+  reference: [0, 0, 1],
+} as const;
+
+/**
+ * The front bezel: a thin plate standing proud of the ring, cut to its outline.
+ *
+ * This is what stops the body reading as a stone. A ring swept with one section
+ * presents one band to the camera, and however its facets are shaded it is a
+ * single continuous surface — at the idle framing a large, round, evenly lit
+ * one, which the eye resolves as a rock rather than as a machined part. A
+ * second, much thinner ring raised in front of it and set a tier down breaks
+ * that band into an edge and a face at two depths, which is the cheapest way to
+ * say "this was cut" without adding a single moving part.
+ *
+ * It shares the body's own points and carries a profile a little wider at every
+ * one, so it overhangs the wall it sits on. A bezel flush with its housing is a
+ * panel line, and a panel line at this scale would vanish at 480x270.
+ */
+const FRONT_BEZEL = {
+  points: [
+    [-1.27, 0.62, 0.42],
+    [-1.2, 0.96, 0.44],
+    [-0.8, 1.14, 0.44],
+    [0.0, 1.18, 0.42],
+    [0.8, 1.06, 0.42],
+    [1.36, 0.82, 0.4],
+    [1.46, 0.2, 0.4],
+    [1.36, -0.44, 0.42],
+    [0.8, -0.86, 0.42],
+    [-0.1, -0.94, 0.42],
+    [-0.98, -0.8, 0.42],
+    [-1.24, -0.24, 0.42],
+  ],
+  halfWidth: [0.56, 0.5, 0.36, 0.32, 0.34, 0.38, 0.38, 0.42, 0.5, 0.56, 0.6, 0.6],
+  halfHeight: 0.035,
+  chamfer: 0.14,
   reference: [0, 0, 1],
 } as const;
 
@@ -209,15 +266,15 @@ const MONOLITH = {
  */
 const CROWN_FOLD = {
   points: [
-    [-1.3, 0.7, 0.28],
-    [-0.76, 0.96, 0.33],
-    [0.18, 1.04, 0.31],
-    [0.96, 0.9, 0.25],
-    [1.44, 0.46, 0.18],
+    [-1.34, 1.02, 0.32],
+    [-0.54, 1.3, 0.38],
+    [0.4, 1.32, 0.34],
+    [1.1, 1.04, 0.26],
+    [1.4, 0.58, 0.2],
   ],
-  halfWidth: [0.07, 0.14, 0.16, 0.13, 0.08],
+  halfWidth: [0.1, 0.17, 0.18, 0.15, 0.1],
   halfHeight: 0.05,
-  chamfer: 0.32,
+  chamfer: 0.16,
   reference: [0, 0, 1],
 } as const;
 
@@ -233,15 +290,56 @@ const CROWN_FOLD = {
  */
 const FLANK_FOLD = {
   points: [
-    [-1.66, 0.44, 0.24],
-    [-1.96, -0.1, 0.14],
-    [-1.82, -0.6, 0.02],
-    [-1.24, -1.0, -0.06],
-    [-0.52, -1.1, -0.12],
+    [-1.38, 0.74, 0.3],
+    [-1.56, 0.04, 0.22],
+    [-1.42, -0.6, 0.14],
+    [-0.86, -1.0, 0.06],
+    [-0.18, -1.14, 0.0],
   ],
-  halfWidth: [0.09, 0.15, 0.17, 0.15, 0.09],
-  halfHeight: 0.07,
-  chamfer: 0.3,
+  halfWidth: [0.1, 0.18, 0.2, 0.18, 0.11],
+  halfHeight: 0.06,
+  chamfer: 0.16,
+  reference: [0, 0, 1],
+} as const;
+
+/**
+ * The inner shelf and the lower lip: the two folds that break the aperture's
+ * outline.
+ *
+ * Everything above this point bounds the opening with the ring, and a ring
+ * bounds an opening evenly — which is precisely the read this stage has to get
+ * away from, because an opening with a regular boundary is a frame no matter
+ * how thick its wall is. These two sit across the mouth of the aperture at
+ * different depths and stop at different distances from the centre, so the
+ * visible edge of the opening is a stack of plate ends at three depths rather
+ * than one swept curve.
+ *
+ * Both leave the aperture more than half open, and neither is large: they are
+ * the near edges of folds that continue over the body, and the eye reads them
+ * as such because they do not close.
+ */
+const INNER_SHELF = {
+  points: [
+    [-1.07, 0.74, 0.34],
+    [-0.27, 0.82, 0.4],
+    [0.57, 0.66, 0.34],
+  ],
+  halfWidth: [0.16, 0.22, 0.18],
+  halfHeight: 0.05,
+  chamfer: 0.2,
+  reference: [0, 0, 1],
+} as const;
+
+const LOWER_LIP = {
+  points: [
+    [-0.75, -0.4, 0.36],
+    [0.11, -0.48, 0.42],
+    [1.03, -0.28, 0.32],
+    [1.37, -0.02, 0.22],
+  ],
+  halfWidth: [0.14, 0.2, 0.18, 0.12],
+  halfHeight: 0.045,
+  chamfer: 0.2,
   reference: [0, 0, 1],
 } as const;
 
@@ -262,9 +360,9 @@ type HullDefinition = Omit<
  * is the one the routing field runs across.
  */
 const APERTURE_FLOOR = {
-  position: [0, 0.02, -0.4],
+  position: [0.19, 0.24, -0.36],
   rotation: [0, 0, 0],
-  scale: [2.52, 1.36, 0.05],
+  scale: [2.2, 1.6, 0.05],
 } as const;
 
 /**
@@ -274,10 +372,14 @@ const APERTURE_FLOOR = {
  * region to read rather than one uniform level of detail everywhere.
  */
 const WAFERS = [
-  { position: [-0.62, 0.1, -0.1], rotation: [0.06, -0.22, 0.1], scale: [1.05, 0.62, 0.035], surface: 'accent' },
-  { position: [0.32, -0.08, 0.02], rotation: [-0.05, 0.18, -0.08], scale: [0.92, 0.5, 0.03], surface: 'recess' },
-  { position: [0.86, 0.16, -0.16], rotation: [0.1, 0.3, 0.12], scale: [0.6, 0.4, 0.028], surface: 'accent' },
-  { position: [-1.05, -0.22, -0.2], rotation: [-0.08, -0.3, -0.1], scale: [0.5, 0.34, 0.03], surface: 'recess' },
+  { position: [-0.43, 0.36, -0.24], rotation: [0.06, -0.22, 0.1], scale: [1.0, 0.56, 0.035], surface: 'accent' },
+  { position: [0.45, 0.1, -0.06], rotation: [-0.05, 0.18, -0.08], scale: [0.88, 0.46, 0.03], surface: 'recess' },
+  { position: [0.95, 0.4, -0.2], rotation: [0.1, 0.3, 0.12], scale: [0.46, 0.3, 0.028], surface: 'accent' },
+  { position: [-0.81, -0.06, -0.14], rotation: [-0.08, -0.3, -0.1], scale: [0.52, 0.34, 0.03], surface: 'recess' },
+  { position: [-0.11, 0.66, 0.16], rotation: [0.14, -0.34, 0.18], scale: [0.7, 0.3, 0.022], surface: 'recess' },
+  { position: [0.71, -0.22, 0.2], rotation: [-0.12, 0.26, -0.16], scale: [0.62, 0.26, 0.02], surface: 'accent' },
+  { position: [-0.65, 0.28, 0.26], rotation: [0.18, 0.4, 0.08], scale: [0.42, 0.5, 0.018], surface: 'recess' },
+  { position: [0.31, 0.5, -0.34], rotation: [-0.16, -0.2, 0.22], scale: [0.46, 0.32, 0.016], surface: 'recess' },
 ] as const;
 
 /**
@@ -285,18 +387,33 @@ const WAFERS = [
  *
  * They are volumes rather than slices so the Core's own circulation has
  * something to connect, which is what makes the inside of the aperture read as
- * computed-in rather than hollow.
+ * computed-in rather than hollow. There are twice as many as the aperture's own
+ * width suggests they need, and their sizes are deliberately uneven: a dense
+ * local region reads as density, whereas a region of equal parts reads as a
+ * pattern, and a pattern is a diagram.
  */
 const DIES = [
-  { position: [-0.1, -0.16, -0.06], rotation: [0.1, 0.2, 0.06], scale: [0.22, 0.16, 0.12], surface: 'accent' },
-  { position: [0.68, 0.22, -0.02], rotation: [-0.08, -0.16, -0.1], scale: [0.18, 0.14, 0.1], surface: 'accent' },
-  { position: [-0.98, 0.34, -0.14], rotation: [0.05, 0.24, 0.12], scale: [0.16, 0.2, 0.09], surface: 'recess' },
+  { position: [0.07, 0.02, -0.14], rotation: [0.1, 0.2, 0.06], scale: [0.22, 0.16, 0.12], surface: 'accent' },
+  { position: [0.79, 0.46, -0.1], rotation: [-0.08, -0.16, -0.1], scale: [0.18, 0.14, 0.1], surface: 'accent' },
+  { position: [-0.77, 0.58, -0.2], rotation: [0.05, 0.24, 0.12], scale: [0.16, 0.2, 0.09], surface: 'recess' },
+  { position: [0.53, -0.14, 0.18], rotation: [0.12, -0.28, 0.16], scale: [0.13, 0.11, 0.09], surface: 'accent' },
+  { position: [-0.39, -0.3, 0.06], rotation: [-0.14, 0.18, -0.2], scale: [0.15, 0.12, 0.1], surface: 'recess' },
+  { position: [1.07, 0.14, 0.24], rotation: [0.08, 0.32, -0.12], scale: [0.12, 0.16, 0.08], surface: 'recess' },
 ] as const;
 
-/** Layered membranes inside the aperture. The only class that blends. */
+/**
+ * Layered membranes inside the aperture. The only class that blends.
+ *
+ * Five of them rather than two, at depths from the back of the recess to well
+ * in front of the ring, so the aperture is something the eye looks *into*
+ * through several sheets rather than a card with a panel standing on it.
+ */
 const APERTURE_MEMBRANES = [
-  { position: [-0.3, 0.02, 0.16], rotation: [0.08, -0.26, 0.14], scale: [1.25, 0.7, 0.01], fade: 0.42 },
-  { position: [0.55, -0.02, -0.22], rotation: [-0.06, 0.2, -0.1], scale: [0.95, 0.55, 0.01], fade: 0.3 },
+  { position: [-0.13, 0.26, 0.2], rotation: [0.08, -0.26, 0.14], scale: [1.2, 0.66, 0.01], fade: 0.42 },
+  { position: [0.67, 0.18, -0.18], rotation: [-0.06, 0.2, -0.1], scale: [0.92, 0.52, 0.01], fade: 0.3 },
+  { position: [-0.49, -0.08, 0.3], rotation: [0.1, 0.34, -0.18], scale: [0.66, 0.44, 0.008], fade: 0.36 },
+  { position: [0.95, 0.52, 0.34], rotation: [-0.12, -0.3, 0.2], scale: [0.54, 0.38, 0.008], fade: 0.28 },
+  { position: [0.03, 0.42, -0.3], rotation: [0.16, 0.12, 0.06], scale: [1.06, 0.4, 0.006], fade: 0.24 },
 ] as const;
 
 /**
@@ -308,36 +425,49 @@ const APERTURE_MEMBRANES = [
  * channels that are part of the mass, so the flow has a wall to be inside. Each
  * one starts in the aperture, crosses the monolith's wall and leaves along an
  * outer surface.
+ *
+ * The fourth is the one that turns a bundle into a system: two of the other
+ * three converge into it inside the wall, so the routing has a junction in the
+ * Core rather than three independent exits.
  */
 const MANIFOLDS = [
   {
     points: [
-      [-0.7, 0.3, 0.1],
-      [0.2, 0.44, 0.14],
-      [0.92, 0.6, 0.16],
-      [1.34, 0.78, 0.2],
+      [-0.51, 0.56, 0.14],
+      [0.37, 0.72, 0.18],
+      [1.09, 0.88, 0.2],
+      [1.55, 1.0, 0.24],
     ],
     halfWidth: 0.055,
     halfHeight: 0.055,
   },
   {
     points: [
-      [-1.3, -0.52, 0.16],
-      [-0.4, -0.62, 0.22],
-      [0.7, -0.5, 0.24],
-      [1.4, -0.22, 0.22],
+      [-1.07, -0.34, 0.2],
+      [-0.19, -0.48, 0.26],
+      [0.85, -0.36, 0.28],
+      [1.53, -0.06, 0.26],
     ],
     halfWidth: 0.06,
     halfHeight: 0.06,
   },
   {
     points: [
-      [1.06, -0.34, -0.3],
-      [1.1, 0.1, -0.28],
-      [0.96, 0.5, -0.24],
+      [1.21, -0.16, -0.28],
+      [1.25, 0.28, -0.26],
+      [1.11, 0.72, -0.22],
     ],
     halfWidth: 0.045,
     halfHeight: 0.045,
+  },
+  {
+    points: [
+      [-0.13, -0.5, 0.16],
+      [0.17, -0.62, 0.12],
+      [0.47, -0.6, 0.08],
+    ],
+    halfWidth: 0.05,
+    halfHeight: 0.05,
   },
 ] as const;
 
@@ -352,8 +482,8 @@ const MANIFOLDS = [
  * plates of decreasing size sitting on the crown.
  */
 const ASSEMBLY_SHOULDER: HullDefinition = {
-  start: [1.24, 0.3, 0.26],
-  end: [1.34, 0.8, 0.3],
+  start: [1.6, 0.26, 0.3],
+  end: [1.72, 0.84, 0.34],
   facets: 6,
   chamfer: 0,
   sections: [
@@ -364,8 +494,8 @@ const ASSEMBLY_SHOULDER: HullDefinition = {
 };
 
 const ASSEMBLY_FOOT: HullDefinition = {
-  start: [-1.3, -0.86, 0.24],
-  end: [-0.66, -1.18, 0.16],
+  start: [-1.24, -0.98, 0.26],
+  end: [-0.56, -1.24, 0.18],
   facets: 0,
   chamfer: 0.24,
   sections: [
@@ -376,14 +506,14 @@ const ASSEMBLY_FOOT: HullDefinition = {
 };
 
 const SHOULDER_PLATES = [
-  { position: [1.3, 0.55, 0.26], rotation: [0.2, 0.3, 1.35], scale: [0.34, 0.24, 0.02], surface: 'accent' },
-  { position: [1.28, 0.66, 0.3], rotation: [-0.15, 0.4, 1.3], scale: [0.3, 0.2, 0.018], surface: 'recess' },
+  { position: [1.7, 0.54, 0.32], rotation: [0.2, 0.3, 1.35], scale: [0.34, 0.24, 0.02], surface: 'accent' },
+  { position: [1.68, 0.66, 0.36], rotation: [-0.15, 0.4, 1.3], scale: [0.3, 0.2, 0.018], surface: 'recess' },
 ] as const;
 
 const ASSEMBLY_STACK = [
-  { position: [-0.2, 0.9, 0.1], rotation: [0.05, 0.1, 0.04], scale: [0.5, 0.05, 0.22], surface: 'recess' },
-  { position: [-0.2, 0.97, 0.1], rotation: [0.05, 0.1, 0.04], scale: [0.42, 0.04, 0.18], surface: 'accent' },
-  { position: [-0.2, 1.03, 0.1], rotation: [0.05, 0.1, 0.04], scale: [0.34, 0.035, 0.15], surface: 'recess' },
+  { position: [-0.3, 1.34, 0.12], rotation: [0.05, 0.1, 0.04], scale: [0.5, 0.05, 0.22], surface: 'recess' },
+  { position: [-0.3, 1.4, 0.12], rotation: [0.05, 0.1, 0.04], scale: [0.42, 0.04, 0.18], surface: 'accent' },
+  { position: [-0.3, 1.46, 0.12], rotation: [0.05, 0.1, 0.04], scale: [0.34, 0.035, 0.15], surface: 'recess' },
 ] as const;
 
 /**
@@ -397,8 +527,8 @@ const ASSEMBLY_STACK = [
  * edge.
  */
 const EDGE_LINERS = [
-  { start: [-1.74, 0.56, 0.32], end: [1.32, 0.4, 0.28], width: 0.03, depth: 0.03 },
-  { start: [-1.62, -0.86, 0.3], end: [0.94, -0.58, 0.26], width: 0.028, depth: 0.028 },
+  { start: [-1.5, 0.92, 0.36], end: [1.34, 0.52, 0.3], width: 0.03, depth: 0.03 },
+  { start: [-1.5, -0.86, 0.34], end: [0.86, -0.72, 0.3], width: 0.028, depth: 0.028 },
 ] as const;
 
 /**
@@ -412,9 +542,9 @@ const EDGE_LINERS = [
  */
 const FOREGROUND_BLADE = {
   points: [
-    [1.3, -1.0, 1.3],
-    [1.72, -0.82, 1.36],
-    [1.86, -0.44, 1.28],
+    [1.26, -1.22, 1.32],
+    [1.7, -1.02, 1.38],
+    [1.84, -0.6, 1.3],
   ],
   halfWidth: [0.06, 0.07, 0.05],
   halfHeight: 0.02,
@@ -434,13 +564,13 @@ const FOREGROUND_BLADE = {
  * departing route from cutting back through the body it just left.
  */
 const PORT_TABLE = [
-  { position: [-2.02, -0.14, 0.1], direction: [-0.96, -0.12, 0.24] },
-  { position: [-0.42, -0.96, 0.0], direction: [0.04, -0.96, 0.26] },
-  { position: [0.8, -0.88, 0.02], direction: [0.42, -0.88, 0.2] },
-  { position: [1.62, -0.08, 0.1], direction: [0.93, -0.02, 0.36] },
-  { position: [0.36, 0.86, 0.14], direction: [0.05, 0.95, 0.3] },
-  { position: [0.1, -0.05, 0.46], direction: [0.14, -0.06, 0.98] },
-  { position: [1.3, 0.46, 0.28], direction: [0.7, 0.68, 0.2] },
+  { position: [-1.8, 0.16, 0.1], direction: [-0.96, -0.1, 0.24] },
+  { position: [-1.3, -1.06, 0.02], direction: [-0.5, -0.86, 0.2] },
+  { position: [-0.1, -1.46, 0.04], direction: [0.04, -0.96, 0.26] },
+  { position: [1.8, 0.06, 0.1], direction: [0.94, -0.06, 0.32] },
+  { position: [0.32, 1.46, 0.16], direction: [0.08, 0.95, 0.28] },
+  { position: [0.19, 0.24, 0.5], direction: [0.12, -0.02, 0.99] },
+  { position: [1.7, 0.54, 0.32], direction: [0.7, 0.68, 0.2] },
 ] as const;
 
 function scaleVector(vector: Vector, scale: number): Vector {
@@ -531,11 +661,12 @@ function normalizedDetail(value: number): number {
  *
  * The composition is one asymmetric monolith rather than an assembly. A closed
  * swept path forms the main mass and cuts a deep central aperture through it;
- * two folded shells ride over its crown and down its flank, leaving the outline
- * at both ends so the body reads as layered plate; an aperture floor, wafers,
- * membranes and compute dies give that opening its own density and its own
- * darkening; three manifolds are cut into the mass as channels; and two
- * processing assemblies are attached to the shoulder and the foot.
+ * four folded shells — over the crown, down the flank, and the two that break
+ * the opening's own edge — leave the outline at their ends so the body reads as
+ * layered plate; an aperture floor, eight wafers, five membranes and six
+ * compute dies give that opening its own density and its own darkening; four
+ * manifolds are cut into the mass as channels; and two processing assemblies
+ * are attached to the shoulder and the foot.
  *
  * There is no member that crosses the body at an angle and no member that is a
  * transformed unit box standing in for a machined form. The only box-shaped
@@ -623,7 +754,10 @@ export function deriveCoreStructure(
 
   // Silhouette: the monolith, both folded shells, the aperture floor and the two
   // attached assemblies. Nothing below this line is needed for the Core to read
-  // as itself, and nothing below it changes the outline.
+  // as itself, and nothing below it changes the outline — the shelf and the lip
+  // are in this band because they are what the opening's edge is made of, and an
+  // aperture whose boundary changed with the quality profile would be a
+  // different aperture.
   members.push(
     path({ ...MONOLITH, closed: true }, 'anchor', 'shell', 'midground', 0),
     path({ ...CROWN_FOLD, closed: false }, 'primary', 'shell', 'midground', 1),
@@ -631,6 +765,9 @@ export function deriveCoreStructure(
     form(APERTURE_FLOOR, 'recess', 'recess', 'background', 3),
     hull(ASSEMBLY_SHOULDER, 'primary', 'shell', 'midground', 4),
     hull(ASSEMBLY_FOOT, 'secondary', 'shell', 'foreground', 5),
+    path({ ...INNER_SHELF, closed: false }, 'primary', 'shell', 'foreground', 6),
+    path({ ...LOWER_LIP, closed: false }, 'secondary', 'shell', 'foreground', 7),
+    path({ ...FRONT_BEZEL, closed: true }, 'secondary', 'shell', 'foreground', 8),
   );
 
   if (detail >= WAFER_DETAIL) {
@@ -645,6 +782,7 @@ export function deriveCoreStructure(
       path({ points: MANIFOLDS[0].points, closed: false, halfWidth: MANIFOLDS[0].halfWidth, halfHeight: MANIFOLDS[0].halfHeight, chamfer: 0.4, reference: [0, 0, 1] }, 'primary', 'edge', 'midground', 12),
       path({ points: MANIFOLDS[1].points, closed: false, halfWidth: MANIFOLDS[1].halfWidth, halfHeight: MANIFOLDS[1].halfHeight, chamfer: 0.4, reference: [0, 0, 1] }, 'primary', 'edge', 'midground', 13),
       form(WAFERS[1], 'detail', 'recess', 'midground', 14),
+      form(APERTURE_MEMBRANES[4], 'detail', 'membrane', 'background', 15, APERTURE_MEMBRANES[4].fade),
     );
   }
 
@@ -653,16 +791,18 @@ export function deriveCoreStructure(
       form(APERTURE_MEMBRANES[0], 'detail', 'membrane', 'midground', 20, APERTURE_MEMBRANES[0].fade),
       form(APERTURE_MEMBRANES[1], 'detail', 'membrane', 'midground', 21, APERTURE_MEMBRANES[1].fade),
       form(SHOULDER_PLATES[0], 'anchor', 'accent', 'midground', 22),
+      form(WAFERS[4], 'detail', 'recess', 'foreground', 23),
     );
   }
 
   if (detail >= ASSEMBLY_DETAIL) {
     members.push(
-      path({ points: MANIFOLDS[2].points, closed: false, halfWidth: MANIFOLDS[2].halfWidth, halfHeight: MANIFOLDS[2].halfHeight, chamfer: 0.4, reference: [0, 0, 1] }, 'secondary', 'edge', 'background', 23),
-      form(ASSEMBLY_STACK[0], 'detail', 'recess', 'midground', 24),
-      form(ASSEMBLY_STACK[1], 'anchor', 'accent', 'midground', 25),
-      form(SHOULDER_PLATES[1], 'detail', 'recess', 'midground', 26),
-      liner(EDGE_LINERS[1], 'detail', 'midground', 27),
+      path({ points: MANIFOLDS[2].points, closed: false, halfWidth: MANIFOLDS[2].halfWidth, halfHeight: MANIFOLDS[2].halfHeight, chamfer: 0.4, reference: [0, 0, 1] }, 'secondary', 'edge', 'background', 24),
+      form(ASSEMBLY_STACK[0], 'detail', 'recess', 'midground', 25),
+      form(ASSEMBLY_STACK[1], 'anchor', 'accent', 'midground', 26),
+      form(SHOULDER_PLATES[1], 'detail', 'recess', 'midground', 27),
+      liner(EDGE_LINERS[1], 'detail', 'midground', 28),
+      form(APERTURE_MEMBRANES[2], 'detail', 'membrane', 'foreground', 29, APERTURE_MEMBRANES[2].fade),
     );
   }
 
@@ -670,11 +810,19 @@ export function deriveCoreStructure(
     members.push(
       form(WAFERS[2], 'anchor', 'accent', 'midground', 30),
       form(WAFERS[3], 'secondary', 'recess', 'background', 31),
-      form(DIES[0], 'anchor', 'accent', 'foreground', 32),
-      form(DIES[1], 'anchor', 'accent', 'foreground', 33),
-      form(DIES[2], 'secondary', 'recess', 'background', 34),
-      form(ASSEMBLY_STACK[2], 'detail', 'recess', 'midground', 35),
-      path({ ...FOREGROUND_BLADE, closed: false }, 'recess', 'edge', 'foreground', 36),
+      form(WAFERS[5], 'detail', 'accent', 'foreground', 32),
+      form(WAFERS[6], 'detail', 'recess', 'foreground', 33),
+      form(WAFERS[7], 'secondary', 'recess', 'background', 34),
+      form(DIES[0], 'anchor', 'accent', 'foreground', 35),
+      form(DIES[1], 'anchor', 'accent', 'foreground', 36),
+      form(DIES[2], 'secondary', 'recess', 'background', 37),
+      form(DIES[3], 'detail', 'accent', 'foreground', 38),
+      form(DIES[4], 'secondary', 'recess', 'foreground', 39),
+      form(DIES[5], 'detail', 'recess', 'foreground', 40),
+      form(ASSEMBLY_STACK[2], 'detail', 'recess', 'midground', 41),
+      path({ points: MANIFOLDS[3].points, closed: false, halfWidth: MANIFOLDS[3].halfWidth, halfHeight: MANIFOLDS[3].halfHeight, chamfer: 0.4, reference: [0, 0, 1] }, 'secondary', 'edge', 'midground', 42),
+      form(APERTURE_MEMBRANES[3], 'detail', 'membrane', 'foreground', 43, APERTURE_MEMBRANES[3].fade),
+      path({ ...FOREGROUND_BLADE, closed: false }, 'recess', 'edge', 'foreground', 44),
     );
   }
 

@@ -38,6 +38,33 @@ export type CoreCirculation = {
 /** Detail gates, matching the structure's own tiers. */
 const CROSSLINK_DETAIL = 0.5;
 
+/**
+ * The Core's route ids are banded rather than numbered from a shared counter.
+ *
+ * Every route in the scene ends up in one uniform set keyed by id, so two
+ * generators that both start counting near each other are one growth spurt away
+ * from a collision. That is not hypothetical: the crosslinks used to run 40..52
+ * and the ingress runs 60..66, and when the aperture was rebuilt with twice the
+ * interior the crosslinks reached 64 and five ids quietly became shared —
+ * which meant five streams drawn with another route's brightness. The bands are
+ * named and separated here so the next generator added has somewhere to go, and
+ * the Graph's own routes start at 100.
+ */
+const SPINE_ID_BASE = 10;
+const CROSSLINK_ID_BASE = 40;
+const INGRESS_ID_BASE = 70;
+
+/**
+ * How many links the interior circuit is allowed.
+ *
+ * The loop is capped because its length is a property of how many small parts
+ * the aperture happens to contain, and the aperture's contents are a quality
+ * setting. Left uncapped, ULTRA would draw a denser circuit than HIGH for no
+ * reason the machine can express — the parts got smaller, the wiring did not
+ * get longer.
+ */
+const MAX_CROSSLINKS = 10;
+
 const SPINE_STREAMS = 3;
 /**
  * How far a stream runs past the centroid along the spine.
@@ -119,7 +146,7 @@ function spineStreams(structure: CoreStructure, seed: number, detail: number): R
     );
 
     curves.push({
-      id: 10 + stream,
+      id: SPINE_ID_BASE + stream,
       rank: stream,
       // Only the centre stream is a primary channel. The two on either side are
       // the body's background flow and sit a class down, so the interior has a
@@ -136,41 +163,82 @@ function spineStreams(structure: CoreStructure, seed: number, detail: number): R
 }
 
 /**
- * Links between the cut halves of the processing volume and the secondary
- * assemblies: the interior topology that makes the mass look computed-in rather
- * than hollow.
+ * A single circulation loop through the aperture's own volumes.
+ *
+ * This used to be a hub: one curve from every interior volume to a point at the
+ * centre of the mass. At thirteen volumes that was already a fainter version of
+ * the wrong idea, and at twenty-five — which is what a dense aperture costs —
+ * it became a white starburst, the single most diagram-like thing in the frame
+ * and the exact opposite of the flow it was standing in for. Nothing about a
+ * machine's interior looks like everything radiating from one node.
+ *
+ * A loop is both truer and cheaper. The interior volumes are sorted by angle
+ * around the aperture's own centre and each is joined to the next, so the
+ * result is a circuit that visits the machine's working parts and closes on
+ * itself: fewer curves than the hub had, drawn where the parts actually are,
+ * and with no point that is brighter than its neighbours.
+ *
+ * The floor and the body's own plates are excluded by size, because a link that
+ * runs to the back of the recess is a line drawn across the opening.
  */
 function crossLinks(structure: CoreStructure, seed: number): RouteCurve[] {
-  const anchors = structure.members.filter(
-    (member): member is CoreStructureForm => member.shape === 'volume',
-  );
-  const curves: RouteCurve[] = [];
-  const voidPoint = add(structure.centroid, [0.02, 0.06, -0.2]);
+  const aperture: Vector = [0.02, 0.02, 0];
+  const extent = structure.bounds[0];
+  const anchors = structure.members
+    .filter((member): member is CoreStructureForm => member.shape === 'volume')
+    .filter((member) => {
+      const [x, y] = member.position;
+      const width = Math.max(member.scale[0], member.scale[1]);
+      // Interior volumes are small and near the middle; the aperture floor is
+      // body-wide and the assembly plates sit outside the ring.
+      return (
+        width < extent * 0.3 &&
+        Math.hypot(x - aperture[0], y - aperture[1]) < extent * 0.3
+      );
+    })
+    .sort((left, right) => {
+      const leftAngle = Math.atan2(
+        left.position[1] - aperture[1],
+        left.position[0] - aperture[0],
+      );
+      const rightAngle = Math.atan2(
+        right.position[1] - aperture[1],
+        right.position[0] - aperture[0],
+      );
+      if (leftAngle === rightAngle) return left.rank - right.rank;
+      return leftAngle - rightAngle;
+    });
 
-  anchors.forEach((anchor, index) => {
-    const from: Vector = anchor.position;
-    // The bow is small on purpose: this link runs from one interior volume to
-    // the void at the centre of the mass, and a large bow lifts its midpoint out
-    // through the hull where the field will happily draw it in mid-air.
-    const bow = hashSigned(seed, 2200 + index) * 0.12;
+  const curves: RouteCurve[] = [];
+  const links = Math.min(anchors.length, MAX_CROSSLINKS);
+
+  for (let index = 0; index < links; index += 1) {
+    const from = anchors[index]!;
+    const to = anchors[(index + 1) % links]!;
+    if (to === from) continue;
+
+    const bow = hashSigned(seed, 2200 + index) * 0.06;
     curves.push({
-      id: 40 + index,
+      id: CROSSLINK_ID_BASE + index,
       rank: 3 + index,
-      route: 'secondary',
+      route: 'ambient',
       group: CORE_ROUTE_GROUP,
-      start: from,
+      start: from.position,
+      // The bow is small on purpose: this link runs between two parts inside
+      // the recess, and a large bow lifts its midpoint out through the hull
+      // where the field will happily draw it in mid-air.
       control: add(
         [
-          (from[0] + voidPoint[0]) * 0.5,
-          (from[1] + voidPoint[1]) * 0.5,
-          (from[2] + voidPoint[2]) * 0.5,
+          (from.position[0] + to.position[0]) * 0.5,
+          (from.position[1] + to.position[1]) * 0.5,
+          (from.position[2] + to.position[2]) * 0.5,
         ],
         [0, 1, 0],
         bow,
       ),
-      end: voidPoint,
+      end: to.position,
     });
-  });
+  }
 
   return curves;
 }
@@ -191,7 +259,7 @@ function portIngress(structure: CoreStructure, seed: number): RouteCurve[] {
     const inner = add(port.position, inward, reach);
 
     return {
-      id: 60 + index,
+      id: INGRESS_ID_BASE + index,
       rank: 8 + index,
       // A port run is the socket answering the route, not the route. It keeps
       // the `signal` class because the test of a live port is exactly that it is

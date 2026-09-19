@@ -118,16 +118,31 @@ describe('buildCoreStructureGeometry', () => {
     const geometry = buildCoreStructureGeometry(hero);
     const shell = attributeValues(geometry.surfaces.shell).position;
 
-    // A circle well inside the ring's own inner wall. Nothing in the shell class
-    // may enter it: two hulls with a slot between them would fill this, and the
-    // Core would be a blockout with a groove rather than a body with an opening.
-    const RADIUS = 0.5 * 1.9;
+    // The opening is located from the one member that is definitionally at its
+    // centre — the recess back — rather than from the origin. The aperture is
+    // deliberately off the body's centre, so a disc drawn around the origin
+    // would be measuring the thick side of the wall and reporting it as fill.
+    const floor = hero.members.find(
+      (member) => member.surface === 'recess' && 'scale' in member,
+    );
+    expect(floor).toBeDefined();
+    if (!floor || !('scale' in floor)) return;
+    const [centreX, centreY] = floor.position;
+    // A circle well inside the ring's own inner wall: two fifths of the back's
+    // smaller half-extent, which no wall of this thickness can reach.
+    const RADIUS = Math.min(floor.scale[0], floor.scale[1]) * 0.2;
+
     let insideShell = 0;
     for (let vertex = 0; vertex < shell.count; vertex += 1) {
-      if (Math.hypot(shell.getX(vertex), shell.getY(vertex)) < RADIUS) {
+      if (
+        Math.hypot(shell.getX(vertex) - centreX, shell.getY(vertex) - centreY) < RADIUS
+      ) {
         insideShell += 1;
       }
     }
+    // Nothing in the shell class may enter it: two hulls with a slot between them
+    // would fill this, and the Core would be a blockout with a groove rather than
+    // a body with an opening.
     expect(insideShell).toBe(0);
 
     // And the opening has a back rather than going through to the background,
@@ -135,7 +150,9 @@ describe('buildCoreStructureGeometry', () => {
     const recess = attributeValues(geometry.surfaces.recess).position;
     let behind = 0;
     for (let vertex = 0; vertex < recess.count; vertex += 1) {
-      if (Math.hypot(recess.getX(vertex), recess.getY(vertex)) < RADIUS) {
+      if (
+        Math.hypot(recess.getX(vertex) - centreX, recess.getY(vertex) - centreY) < RADIUS
+      ) {
         behind += 1;
       }
     }

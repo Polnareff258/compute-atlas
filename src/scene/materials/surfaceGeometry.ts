@@ -71,12 +71,23 @@ export function deriveMembraneOpacity(fade: number): number {
 
 export type MachineColorTier = keyof Pick<
   typeof MACHINE_PALETTE,
-  'shellHigh' | 'shellMid' | 'shellLow' | 'interior'
+  'shellHigh' | 'shellMid' | 'shellLow' | 'interior' | 'backdrop'
 >;
 
-/** Resolves a structure tier to the luminance tier it should occupy. */
+/**
+ * Resolves a structure tier to the luminance tier it should occupy.
+ *
+ * `backdrop` is the one case that is not a rung of the shell ladder. The four
+ * orientation tiers are distances from the key light within the mass, and the
+ * backdrop is not in the mass at all — it is what the mass is seen against. It
+ * resolves to its own colour rather than to `interior` because the two have
+ * opposite jobs: `interior` is a face inside the body that must stay under
+ * everything, and the backdrop is the field the body's silhouette is cut out of,
+ * which has to stay *above* the scene background or the composition reads as
+ * objects floating in nothing.
+ */
 export function resolveStructureTier(
-  tier: 'anchor' | 'primary' | 'secondary' | 'detail' | 'recess',
+  tier: 'anchor' | 'primary' | 'secondary' | 'detail' | 'recess' | 'backdrop',
 ): MachineColorTier {
   switch (tier) {
     case 'anchor':
@@ -89,5 +100,7 @@ export function resolveStructureTier(
       return 'shellMid';
     case 'recess':
       return 'interior';
+    case 'backdrop':
+      return 'backdrop';
   }
 }
