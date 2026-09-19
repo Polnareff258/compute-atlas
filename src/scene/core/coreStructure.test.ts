@@ -5,8 +5,8 @@ import {
   deriveCoreStructure,
   selectCorePortForDirection,
   type CoreStructureForm,
+  type CoreStructureHull,
   type CoreStructureMember,
-  type CoreStructureSpan,
 } from './coreStructure';
 import type { CoreVisualInput } from './coreTypes';
 
@@ -30,7 +30,7 @@ function shapesOf(members: readonly CoreStructureMember[]): string[] {
   return members.map((member) => member.shape);
 }
 
-/** `filter` cannot narrow a union on its own, so forms and spans narrow here. */
+/** `filter` cannot narrow a union on its own, so the narrowing happens here. */
 function formsOf(
   members: readonly CoreStructureMember[],
   shape: CoreStructureForm['shape'],
@@ -40,25 +40,180 @@ function formsOf(
   );
 }
 
-function spansOf(
-  members: readonly CoreStructureMember[],
-): readonly CoreStructureSpan[] {
+function hullsOf(members: readonly CoreStructureMember[]): readonly CoreStructureHull[] {
   return members.filter(
-    (member): member is CoreStructureSpan => member.shape === 'beam',
+    (member): member is CoreStructureHull => member.shape === 'hull',
   );
 }
 
+function hullByRank(
+  members: readonly CoreStructureMember[],
+  rank: number,
+): CoreStructureHull | undefined {
+  return hullsOf(members).find((member) => member.rank === rank);
+}
+
+/** An interior point of a hull, used where a member's location is all we need. */
+function hullCentre(hull: CoreStructureHull): readonly [number, number, number] {
+  return [
+    (hull.start[0] + hull.end[0]) / 2,
+    (hull.start[1] + hull.end[1]) / 2,
+    (hull.start[2] + hull.end[2]) / 2,
+  ];
+}
+
+/** Where a member sits, whatever shape it is. */
+function memberCentre(member: CoreStructureMember): readonly [number, number, number] {
+  if (member.shape === 'hull' || member.shape === 'beam') {
+    return [
+      (member.start[0] + member.end[0]) / 2,
+      (member.start[1] + member.end[1]) / 2,
+      (member.start[2] + member.end[2]) / 2,
+    ];
+  }
+  return member.position;
+}
+
+/** The widest and narrowest half-height in a hull's section list. */
+function sectionSpread(hull: CoreStructureHull): { widest: number; narrowest: number } {
+  const heights = hull.sections.map((section) => section.halfHeight);
+  return { widest: Math.max(...heights), narrowest: Math.min(...heights) };
+}
+
+/**
+ * The hull's centre line and half-height at a point along x.
+ *
+ * The hulls run mostly along x, so this is how the tests measure the opening
+ * between them: a real window has a measurable vertical extent at the x where
+ * both hulls exist.
+ */
+function hullAt(hull: CoreStructureHull, x: number): { centreY: number; halfHeight: number } {
+  const forward = hull.start[0] <= hull.end[0];
+  const from = forward ? hull.start : hull.end;
+  const to = forward ? hull.end : hull.start;
+  const t = Math.min(1, Math.max(0, (x - from[0]) / (to[0] - from[0])));
+
+  const sections = hull.sections;
+  let index = 0;
+  for (let cursor = 0; cursor < sections.length - 1; cursor += 1) {
+    if (sections[cursor + 1]!.t <= t) index = cursor + 1;
+  }
+  const a = sections[index]!;
+  const b = sections[Math.min(sections.length - 1, index + 1)]!;
+  const span = b.t - a.t;
+  const mix = span < 1e-6 ? 0 : (t - a.t) / span;
+
+  return {
+    centreY: from[1] + (to[1] - from[1]) * t + a.offset[1] + (b.offset[1] - a.offset[1]) * mix,
+    halfHeight: a.halfHeight + (b.halfHeight - a.halfHeight) * mix,
+  };
+}
+
 describe('deriveCoreStructure', () => {
-  it('keeps a diagonal spine and a cut hero volume at every detail level', () => {
+  it('keeps the hero hulls, the spine that carries them and the ports at every detail level', () => {
     for (const structureDetail of [0, 0.12, 0.5, 1]) {
       const structure = deriveCoreStructure({ structureDetail }, SEED);
-      const spans = spansOf(structure.members);
-      const volumes = formsOf(structure.members, 'volume');
+      const hulls = hullsOf(structure.members);
 
-      expect(spans.length).toBeGreaterThanOrEqual(1);
-      // Hero upper, hero lower, and the recessed void between them.
-      expect(volumes.length).toBeGreaterThanOrEqual(3);
+      // Two processing hulls, two end yokes, the void wall and the spine.
+      expect(hulls.length).toBeGreaterThanOrEqual(6);
       expect(structure.ports.length).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('builds the processing hulls from their own sections rather than scaled boxes', () => {
+    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
+    const upper = hullByRank(structure.members, 0);
+    const lower = hullByRank(structure.members, 1);
+
+    for (const hull of [upper, lower]) {
+      expect(hull).toBeDefined();
+      if (!hull) continue;
+      // A lofted hull is defined by sections that differ along its axis. A
+      // transformed unit box has one cross-section for its whole length, which
+      // is exactly what made the old mass read as slabs.
+      expect(hull.sections.length).toBeGreaterThanOrEqual(3);
+      const { widest, narrowest } = sectionSpread(hull);
+      expect(narrowest).toBeLessThan(widest * 0.6);
+      expect(hull.chamfer).toBeGreaterThan(0);
+    }
+  });
+
+  it('runs the spine through both processing hulls instead of past them', () => {
+    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
+    const spine = hullByRank(structure.members, 5);
+    const upper = hullByRank(structure.members, 0);
+    const lower = hullByRank(structure.members, 1);
+
+    expect(spine).toBeDefined();
+    expect(upper).toBeDefined();
+    expect(lower).toBeDefined();
+    if (!spine || !upper || !lower) return;
+
+    // The spine's own endpoints reach past both hulls' centre lines, so it is a
+    // member the mass is hung on rather than a rod laid alongside it.
+    for (const hull of [upper, lower]) {
+      const centre = hullCentre(hull);
+      const toCentre = Math.hypot(
+        centre[0] - spine.start[0],
+        centre[1] - spine.start[1],
+        centre[2] - spine.start[2],
+      );
+      const span = Math.hypot(
+        spine.end[0] - spine.start[0],
+        spine.end[1] - spine.start[1],
+        spine.end[2] - spine.start[2],
+      );
+      expect(toCentre).toBeLessThan(span);
+    }
+  });
+
+  it('holds an explicit void between the hulls and closes it on both sides', () => {
+    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
+    const upper = hullByRank(structure.members, 0);
+    const lower = hullByRank(structure.members, 1);
+    const leftYoke = hullByRank(structure.members, 2);
+    const rightYoke = hullByRank(structure.members, 3);
+
+    expect(upper).toBeDefined();
+    expect(lower).toBeDefined();
+    expect(leftYoke).toBeDefined();
+    expect(rightYoke).toBeDefined();
+    if (!upper || !lower || !leftYoke || !rightYoke) return;
+
+    // The window is what the two yokes hold open, so that is where it is
+    // measured: an opening outside the end walls would be a gap in the
+    // silhouette, not a void cut through the body.
+    const leftWall = hullCentre(leftYoke)[0];
+    const rightWall = hullCentre(rightYoke)[0];
+    expect(rightWall - leftWall).toBeGreaterThan(1.2);
+    expect(rightWall).toBeGreaterThan(leftWall);
+
+    // Half the Core's own height is the ceiling: past that the opening stops
+    // being a void cut through a body and becomes the frame itself.
+    const openings: number[] = [];
+    for (const fraction of [0.25, 0.5, 0.75]) {
+      const x = leftWall + (rightWall - leftWall) * fraction;
+      const top = hullAt(upper, x);
+      const bottom = hullAt(lower, x);
+      const gap = top.centreY - top.halfHeight - (bottom.centreY + bottom.halfHeight);
+      openings.push(gap);
+
+      // A window you can see through, not a seam between two touching slabs...
+      expect(gap).toBeGreaterThan(0.3);
+      // ...and never the dominant feature of the composition.
+      expect(gap).toBeLessThan(structure.bounds[1] * 2 * 0.55);
+    }
+    // It is a shaped opening, not a constant slot: the body tapers around it.
+    expect(Math.max(...openings) - Math.min(...openings)).toBeGreaterThan(0.15);
+
+    // Both hulls have to still be present across the whole opening, otherwise
+    // the "window" is just the end of the structure.
+    for (const hull of [upper, lower]) {
+      const spanStart = Math.min(hull.start[0], hull.end[0]);
+      const spanEnd = Math.max(hull.start[0], hull.end[0]);
+      expect(spanStart).toBeLessThan(leftWall);
+      expect(spanEnd).toBeGreaterThan(rightWall);
     }
   });
 
@@ -76,36 +231,22 @@ describe('deriveCoreStructure', () => {
     expect(counts.at(-1)!).toBeGreaterThan(counts[0]! + 5);
   });
 
-  it('introduces membranes, secondary assemblies, layers and foreground slices at their tiers', () => {
+  it('introduces membranes, pockets, layers and the foreground chip at their tiers', () => {
     expect(shapesOf(deriveCoreStructure({ structureDetail: 0 }, SEED).members))
       .not.toContain('membrane');
     expect(shapesOf(deriveCoreStructure({ structureDetail: 0.25 }, SEED).members))
       .toContain('membrane');
+
+    const hullCountAt = (structureDetail: number): number =>
+      hullsOf(deriveCoreStructure({ structureDetail }, SEED).members).length;
+    // The pockets arrive at the secondary tier, the background rail at tertiary.
+    expect(hullCountAt(0.25)).toBeLessThan(hullCountAt(0.5));
+    expect(hullCountAt(0.5)).toBeLessThan(hullCountAt(0.9));
+
     expect(shapesOf(deriveCoreStructure({ structureDetail: 0.5 }, SEED).members))
-      .toContain('membrane');
+      .not.toContain('slice');
     expect(shapesOf(deriveCoreStructure({ structureDetail: 0.72 }, SEED).members))
       .toContain('slice');
-    expect(shapesOf(deriveCoreStructure({ structureDetail: 1 }, SEED).members))
-      .toContain('slice');
-  });
-
-  it('keeps the hero volume clear of the spine and holds an explicit void gap', () => {
-    const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const upper = structure.members.find(
-      (member) => member.shape === 'volume' && member.rank === 2,
-    );
-    const lower = structure.members.find(
-      (member) => member.shape === 'volume' && member.rank === 3,
-    );
-
-    expect(upper?.shape).toBe('volume');
-    expect(lower?.shape).toBe('volume');
-    if (upper?.shape !== 'volume' || lower?.shape !== 'volume') return;
-
-    const upperBottom = upper.position[1] - upper.scale[1] / 2;
-    const lowerTop = lower.position[1] + lower.scale[1] / 2;
-    // A real gap, not two touching halves: this is the central void.
-    expect(upperBottom - lowerTop).toBeGreaterThan(0.08);
   });
 
   it('separates bands so the composition has front, middle and back', () => {
@@ -117,31 +258,40 @@ describe('deriveCoreStructure', () => {
     expect(bands.has('foreground')).toBe(true);
   });
 
-  it('varies member scale classes rather than repeating one box size', () => {
+  it('varies member scale classes rather than repeating one body size', () => {
     const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const volumes = formsOf(structure.members, 'volume');
-    const volumeExtents = volumes.map((member) => member.scale[0] * member.scale[1]);
-
-    expect(Math.max(...volumeExtents)).toBeGreaterThan(
-      Math.min(...volumeExtents) * 2.5,
+    const hulls = hullsOf(structure.members);
+    const lengths = hulls.map((hull) =>
+      Math.hypot(
+        hull.end[0] - hull.start[0],
+        hull.end[1] - hull.start[1],
+        hull.end[2] - hull.start[2],
+      ),
     );
+
+    expect(Math.max(...lengths)).toBeGreaterThan(Math.min(...lengths) * 2.5);
   });
 
-  it('holds the foreground slices close to the viewer so the viewport clips them', () => {
+  it('holds exactly one small low-contrast element in the foreground', () => {
     const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
     const slices = formsOf(structure.members, 'slice');
 
-    expect(slices.length).toBeGreaterThanOrEqual(2);
-    for (const slice of slices) {
-      expect(slice.position[2]).toBeGreaterThan(1);
-    }
+    // The previous round used two plates over a world unit across, which
+    // swallowed a third of the frame at 1920 and flattened 2560 entirely.
+    expect(slices).toHaveLength(1);
+    const [chip] = slices;
+    expect(chip).toBeDefined();
+    if (!chip) return;
+
+    expect(chip.position[2]).toBeGreaterThan(1);
+    expect(chip.scale[0] * chip.scale[1]).toBeLessThan(0.12);
+    // It has to be the darkest thing in the frame, not a bright overlay.
+    expect(chip.tier).toBe('recess');
   });
 
   it('is asymmetric: no member mirrors another across the origin', () => {
     const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const positions = structure.members
-      .filter((member): member is CoreStructureForm => member.shape !== 'beam')
-      .map((member) => member.position);
+    const positions = structure.members.map((member) => memberCentre(member));
 
     for (const position of positions) {
       const mirrored = positions.find(
@@ -162,9 +312,21 @@ describe('deriveCoreStructure', () => {
 
     for (const member of first.members) {
       const values =
-        'position' in member
-          ? [...member.position, ...member.rotation, ...member.scale]
-          : [...member.start, ...member.end, member.width, member.depth];
+        member.shape === 'hull'
+          ? [
+              ...member.start,
+              ...member.end,
+              member.chamfer,
+              ...member.sections.flatMap((section) => [
+                section.t,
+                section.halfWidth,
+                section.halfHeight,
+                ...section.offset,
+              ]),
+            ]
+          : member.shape === 'beam'
+            ? [...member.start, ...member.end, member.width, member.depth]
+            : [...member.position, ...member.rotation, ...member.scale];
       for (const value of values) expect(Number.isFinite(value)).toBe(true);
     }
 
@@ -187,12 +349,12 @@ describe('deriveCoreStructure', () => {
     }
   });
 
-  it('points the spine along its own endpoints as a unit direction', () => {
+  it('points the spine axis along its own endpoints as a unit direction', () => {
     const structure = deriveCoreStructure({ structureDetail: 1 }, SEED);
-    const spine = structure.members.find((member) => member.shape === 'beam');
+    const spine = hullByRank(structure.members, 5);
 
-    expect(spine?.shape).toBe('beam');
-    if (spine?.shape !== 'beam') return;
+    expect(spine).toBeDefined();
+    if (!spine) return;
 
     const dx = spine.end[0] - spine.start[0];
     const dy = spine.end[1] - spine.start[1];

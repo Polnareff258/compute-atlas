@@ -27,6 +27,20 @@ function toStructureParts(
 ): StructurePart[] {
   return members.map((member): StructurePart => {
     const membrane = member.shape === 'membrane';
+
+    if (member.shape === 'hull') {
+      return {
+        shape: 'hull',
+        tier: member.tier,
+        membrane,
+        start: member.start,
+        end: member.end,
+        facets: member.facets,
+        chamfer: member.chamfer,
+        sections: member.sections,
+      };
+    }
+
     if (member.shape === 'beam') {
       return {
         shape: 'span',

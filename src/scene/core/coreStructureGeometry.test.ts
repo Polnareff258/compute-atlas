@@ -4,7 +4,7 @@ import {
   buildCoreStructureGeometry,
   buildPortGeometry,
 } from './coreStructureGeometry';
-import { deriveCoreStructure } from './coreStructure';
+import { deriveCoreStructure, type CoreStructureHull } from './coreStructure';
 
 const SEED = 17;
 
@@ -24,14 +24,24 @@ describe('buildCoreStructureGeometry', () => {
     const hero = structure();
     const geometry = buildCoreStructureGeometry(hero);
     const membranes = hero.members.filter((member) => member.shape === 'membrane');
-    const solids = hero.members.length - membranes.length;
+    const solids = hero.members.filter((member) => member.shape !== 'membrane');
 
     // Ports are deliberately not merged: the source port lights on its own.
-    const { position } = attributeValues(geometry.solid);
-    expect(position.count).toBe(solids * 24);
-
+    //
+    // Membranes are all flat plates, so each contributes exactly one box's 24
+    // vertices. Solids are lofted hulls whose facet count depends on the profile
+    // and the section list, so the contract there is a floor, not a constant.
     const membranePosition = geometry.membrane.getAttribute('position');
     expect(membranePosition.count).toBe(membranes.length * 24);
+
+    const { position } = attributeValues(geometry.solid);
+    expect(position.count).toBeGreaterThanOrEqual(solids.length * 24);
+    expect(position.count % 4).toBe(0);
+    expect(solids.length).toBeGreaterThan(0);
+
+    // A hull must actually be lofted: if the sections were ignored and every
+    // member collapsed to a transformed unit box, the count would be exact.
+    expect(position.count).toBeGreaterThan(solids.length * 24);
 
     geometry.dispose();
   });
@@ -56,12 +66,17 @@ describe('buildCoreStructureGeometry', () => {
     geometry.dispose();
   });
 
-  it('gives a member six flat, distinct face tones so it reads as a volume', () => {
+  it('shades a lofted hull per facet, with every facet flat and tonally distinct', () => {
     const hero = structure();
+    const firstHull = hero.members.find((member) => member.shape === 'hull');
+    expect(firstHull).toBeDefined();
+    if (!firstHull) return;
+
     const geometry = buildCoreStructureGeometry(hero);
     const { normal, color } = attributeValues(geometry.solid);
 
-    // The first 24 vertices are the first solid member, in member order.
+    // The hull is the first solid member, and this file writes one four-vertex
+    // facet at a time, so the first 24 vertices are its first six facets.
     const toneByNormal = new Map<string, string>();
     for (let vertex = 0; vertex < 24; vertex += 1) {
       const key = [
@@ -72,13 +87,11 @@ describe('buildCoreStructureGeometry', () => {
       const tone = [color.getX(vertex), color.getY(vertex), color.getZ(vertex)]
         .map((channel) => channel.toFixed(5))
         .join(',');
+
       const existing = toneByNormal.get(key);
-      if (existing === undefined) {
-        toneByNormal.set(key, tone);
-      } else {
-        // A face must be internally flat, or the form reads as noise.
-        expect(tone).toBe(existing);
-      }
+      if (existing === undefined) toneByNormal.set(key, tone);
+      // A facet must be internally flat, or the hull reads as noise.
+      else expect(tone).toBe(existing);
 
       for (const channel of [color.getX(vertex), color.getY(vertex), color.getZ(vertex)]) {
         expect(channel).toBeGreaterThanOrEqual(0);
@@ -86,10 +99,19 @@ describe('buildCoreStructureGeometry', () => {
       }
     }
 
-    // Six faces, six different tones: that is what gives a large form its mass
-    // without any runtime lighting.
+    // The first six facets of a hull run around its profile, so they must face
+    // six different directions and carry six different baked tones. That is what
+    // gives a large body its mass without any runtime lighting.
     expect(toneByNormal.size).toBe(6);
     expect(new Set(toneByNormal.values()).size).toBe(6);
+
+    // The hull runs diagonally and tapers, so its facets are tilted relative to
+    // the scene axes. An axis-aligned box would produce normals with two exactly
+    // zero components on every facet.
+    const tilted = [...toneByNormal.keys()].filter(
+      (key) => key.split(',').filter((axis) => axis === '0.000').length < 2,
+    );
+    expect(tilted.length).toBeGreaterThan(0);
 
     geometry.dispose();
   });
@@ -97,19 +119,23 @@ describe('buildCoreStructureGeometry', () => {
   it('aims the diagonal spine along its authored direction', () => {
     const hero = structure(1);
     const geometry = buildCoreStructureGeometry(hero);
-    const spine = hero.members.find((member) => member.shape === 'beam');
+    const spine = hero.members.find(
+      (member): member is CoreStructureHull =>
+        member.shape === 'hull' && member.rank === 5,
+    );
     expect(spine).toBeDefined();
+    if (!spine) return;
 
     geometry.solid.computeBoundingBox();
     const box = geometry.solid.boundingBox!;
     const expectedLength = Math.hypot(
-      spine!.end[0] - spine!.start[0],
-      spine!.end[1] - spine!.start[1],
-      spine!.end[2] - spine!.start[2],
+      spine.end[0] - spine.start[0],
+      spine.end[1] - spine.start[1],
+      spine.end[2] - spine.start[2],
     );
 
     // The spine is the longest member, so the merged box's largest extent is at
-    // least the spine's own length. A beam that failed to rotate would be short.
+    // least the spine's own length. A span that failed to aim would be short.
     const extents = [
       box.max.x - box.min.x,
       box.max.y - box.min.y,
