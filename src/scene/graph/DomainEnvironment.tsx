@@ -11,13 +11,11 @@ import {
   buildPartGeometry,
   buildStructureGeometry,
 } from '../materials/structureGeometry';
-import type { RendererAdapterBackend } from '../../renderer/runtime';
 import { easeApproach } from '../routing/routeFlow';
 import type { DomainEnvironment } from './domainEnvironments';
 
 export type DomainEnvironmentViewProps = {
   readonly environment: DomainEnvironment;
-  readonly backend: RendererAdapterBackend;
   readonly reducedMotion: boolean;
   /** 0 dormant, ~0.55 hovered, 1 focused. */
   readonly activation: number;
@@ -40,7 +38,6 @@ export type DomainEnvironmentViewProps = {
  */
 export function DomainEnvironmentView({
   environment,
-  backend,
   reducedMotion,
   activation,
   label,
@@ -49,7 +46,6 @@ export function DomainEnvironmentView({
   showDescription,
   dimmed,
 }: DomainEnvironmentViewProps) {
-  const webgpu = backend === 'webgpu';
   /**
    * Which way the label runs off its anchor.
    *
@@ -70,30 +66,24 @@ export function DomainEnvironmentView({
       solid: createSurfaceMaterial({
         role: 'volume',
         color: '#ffffff',
-        edgeResponse: 0.5,
-        webgpuPreferred: webgpu,
       }),
       membrane: createSurfaceMaterial({
         role: 'membrane',
         color: MACHINE_PALETTE.membrane,
         baseFade: 0.3,
-        edgeResponse: 0.62,
-        webgpuPreferred: webgpu,
       }),
+      // The domain's own machinery, not a socket: it rests deep and answers
+      // hardest, so a working domain lights from the inside out.
       interior: createSurfaceMaterial({
-        role: 'port',
+        role: 'interior',
         color: MACHINE_PALETTE.portQuiet,
-        edgeResponse: 0.55,
-        webgpuPreferred: webgpu,
       }),
       ingress: createSurfaceMaterial({
         role: 'port',
         color: MACHINE_PALETTE.port,
-        edgeResponse: 0.7,
-        webgpuPreferred: webgpu,
       }),
     };
-  }, [webgpu]);
+  }, []);
 
   const meshesRef = useRef<(THREE.Mesh | null)[]>([]);
   /** Eased locally, so the surfaces settle at the rate the routes do. */
@@ -141,22 +131,18 @@ export function DomainEnvironmentView({
     materials.solid.updateInput({
       activity: pose * presence,
       focus: pose * pose * presence,
-      reducedMotion,
     });
     materials.membrane.updateInput({
       activity: pose * 0.8 * presence,
       focus: pose * presence,
-      reducedMotion,
     });
     materials.interior.updateInput({
       activity: (0.25 + pose * 0.75) * presence,
       focus: pose * presence,
-      reducedMotion,
     });
     materials.ingress.updateInput({
       activity: (0.3 + pose * 0.7) * presence,
       focus: pose * presence,
-      reducedMotion,
     });
   });
 

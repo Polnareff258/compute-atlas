@@ -160,11 +160,7 @@ export function ComputeCore({
 
   return (
     <group ref={groupRef}>
-      <CoreStructureView
-        backend={backend === 'webgpu' ? 'webgpu' : 'webgl2'}
-        structure={structure}
-        visualRef={visualRef}
-      />
+      <CoreStructureView structure={structure} visualRef={visualRef} />
       <RouteDashes
         backend={backend === 'webgpu' ? 'webgpu' : 'webgl2'}
         curves={circulation.curves}

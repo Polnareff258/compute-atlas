@@ -15,8 +15,9 @@ import { deriveAtmosphereDescriptor } from './atmosphereDescriptor';
  * of thin traces and stray points: a backdrop that reads as distance and scale,
  * with nothing in it that could be mistaken for a signal.
  *
- * It takes no backend: the backdrop is the one surface in the scene whose
- * material path does not branch on one (see below).
+ * It takes no backend, and neither does anything else now: every structural
+ * surface in the scene takes one path on both renderers. See the note in
+ * `surfaceMaterial.ts` for the measurement that forced it.
  */
 export function Atmosphere(): JSX.Element {
   const descriptor = useMemo(() => deriveAtmosphereDescriptor(), []);
@@ -26,20 +27,6 @@ export function Atmosphere(): JSX.Element {
       createSurfaceMaterial({
         role: 'volume',
         color: '#ffffff',
-        // Nearly head-on and far away, so the view-edge term is barely asked for.
-        edgeResponse: 0.18,
-        // Deliberately the standard path on both backends, and not a fallback.
-        //
-        // The backdrop is the one surface in the scene that never moves and never
-        // responds, so the node path buys it nothing — and on WebGPU the node path
-        // draws this mesh black. Measured on the same frame, at the frame centre:
-        // node path (2,3,3), standard path (26,33,33), and the scene's own
-        // background colour is (5,6,9). So on WebGL2 the backdrop showed exactly
-        // as authored while WebGPU rendered a frame that was already at or below
-        // the clear colour, meaning the backdrop was contributing nothing there.
-        // The standard path draws it identically on both backends, so the static
-        // backdrop takes that path until the node path is understood.
-        webgpuPreferred: false,
       }),
     [],
   );
@@ -55,7 +42,7 @@ export function Atmosphere(): JSX.Element {
   useEffect(() => {
     // The backdrop carries no activity of its own: it is the one surface in the
     // scene that is not allowed to move.
-    material.updateInput({ activity: 0, focus: 0, reducedMotion: true });
+    material.updateInput({ activity: 0, focus: 0 });
   }, [material]);
 
   return (

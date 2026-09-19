@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef } from 'react';
 
 import { MACHINE_PALETTE } from '../materials/machinePalette';
 import { createSurfaceMaterial } from '../materials/surfaceMaterial';
-import type { RendererAdapterBackend } from '../../renderer/runtime';
 import {
   buildCoreStructureGeometry,
   buildPortGeometry,
@@ -23,7 +22,6 @@ export type CoreStructureViewProps = {
    * material state every frame without re-rendering a single component.
    */
   readonly visualRef: React.RefObject<CoreVisualInput>;
-  readonly backend: RendererAdapterBackend;
 };
 
 /**
@@ -40,9 +38,7 @@ export type CoreStructureViewProps = {
 export function CoreStructureView({
   structure,
   visualRef,
-  backend,
 }: CoreStructureViewProps) {
-  const webgpu = backend === 'webgpu';
   const geometry = useMemo(() => buildCoreStructureGeometry(structure), [structure]);
   const portGeometries = useMemo(
     () => structure.ports.map((port) => buildPortGeometry(port)),
@@ -54,18 +50,14 @@ export function CoreStructureView({
       solid: createSurfaceMaterial({
         role: 'volume',
         color: '#ffffff',
-        edgeResponse: 0.42,
-        webgpuPreferred: webgpu,
       }),
       membrane: createSurfaceMaterial({
         role: 'membrane',
         color: MACHINE_PALETTE.membrane,
         baseFade: 0.34,
-        edgeResponse: 0.5,
-        webgpuPreferred: webgpu,
       }),
     }),
-    [webgpu],
+    [],
   );
 
   const portMaterials = useMemo(
@@ -74,11 +66,9 @@ export function CoreStructureView({
         createSurfaceMaterial({
           role: 'port',
           color: port.rank % 2 === 0 ? MACHINE_PALETTE.port : MACHINE_PALETTE.portQuiet,
-          edgeResponse: 0.6,
-          webgpuPreferred: webgpu,
         }),
       ),
-    [structure, webgpu],
+    [structure],
   );
 
   // The last published activation, so a static frame still reads correctly even
@@ -101,21 +91,16 @@ export function CoreStructureView({
     if (!input) return;
 
     const activation = deriveCorePortActivation(structure, input);
-    const reducedMotion = input.reducedMotion;
     const activity = input.intensity;
     const focus = input.visualState === 'focusing' ? 1 : input.visualState === 'hover_response' ? 0.55 : 0;
 
     // Structural material state only changes when the semantic state does, so a
     // frame that changes nothing writes nothing.
-    const key = `${input.visualState}:${reducedMotion ? 'r' : 'f'}:${Math.round(activity * 64)}`;
+    const key = `${input.visualState}:${Math.round(activity * 64)}`;
     if (key !== appliedRef.current) {
       appliedRef.current = key;
-      materials.solid.updateInput({ activity, focus, reducedMotion });
-      materials.membrane.updateInput({
-        activity: activity * 0.7,
-        focus,
-        reducedMotion,
-      });
+      materials.solid.updateInput({ activity, focus });
+      materials.membrane.updateInput({ activity: activity * 0.7, focus });
     }
 
     for (let index = 0; index < portMaterials.length; index += 1) {
@@ -127,7 +112,6 @@ export function CoreStructureView({
       handle.updateInput({
         activity: isSource ? 0.35 + 0.65 * authority : 0.1 * authority,
         focus,
-        reducedMotion,
       });
     }
   });

@@ -1,210 +1,110 @@
 import * as THREE from 'three';
-import { MeshBasicNodeMaterial } from 'three/webgpu';
-import {
-  float,
-  normalView,
-  normalize,
-  positionView,
-  pow,
-  saturate,
-  uniform,
-  vec3,
-  vec4,
-  vertexColor,
-} from 'three/tsl';
 
-import { deriveMembraneOpacity } from './surfaceGeometry';
+import type { SurfaceRole } from './machinePalette';
+import {
+  deriveSurfaceResponse,
+  type SurfaceInput,
+} from './surfaceResponse';
+
+export type { SurfaceInput, SurfaceRole };
 
 /**
- * Boundary: this factory owns synchronous material allocation and its node
- * graph, plus cleanup when setup fails. It does not build renderer programs:
- * WebGPU compilation and WebGL2 program linking are owned by the existing
- * renderer/scene integration.
+ * Boundary: this factory owns synchronous material allocation and cleanup. It
+ * does not build renderer programs: WebGPU compilation and WebGL2 program
+ * linking are owned by the existing renderer/scene integration.
  *
- * Roles map to distinct physical reads rather than to different colours:
- * - `volume` / `beam` / `port`: solid structure, writes depth, occludes.
- * - `membrane`: thin layered surface, blended, no depth write.
+ * ## One structural path, on both backends
+ *
+ * Every structural surface in the scene is a plain `MeshBasicMaterial`, on
+ * WebGPU and on WebGL2 alike. That is a correctness constraint, not a
+ * preference, and it is worth stating why, because the scene shipped for a
+ * stage with the opposite arrangement and the two backends drew measurably
+ * different images because of it.
+ *
+ * The WebGPU branch was a `MeshBasicNodeMaterial` whose colour node read
+ * `baseColor * vertexColor() + edge`. But three's own
+ * `NodeMaterial.setupDiffuseColor` multiplies `colorNode` by `vertexColor()`
+ * again whenever `vertexColors` is true, so every baked facet luminance in the
+ * scene — the whole mass read of the Core, closed over 0.14 .. 0.95 — was
+ * applied twice. Squaring a luminance is not a subtle error: a face baked at
+ * 0.5 rendered at 0.25. Measured on the same frame at (1152,497), WebGPU read
+ * 83 where WebGL2 read 143, a ratio of 0.58, and it held across every sampled
+ * pixel. The histograms told the same story from the other side — p50 4 / p90
+ * 28 / p99 102 against WebGL2's p50 26 / p90 69 / p99 155 — because squaring
+ * crushes mid-tones hardest and leaves the brightest faces nearly alone.
+ *
+ * The node path is therefore gone rather than patched. Once the double multiply
+ * is removed it computes the same number as the standard path, so keeping it
+ * would mean maintaining two shader permutations to produce one image. What it
+ * genuinely added was a view-dependent edge term, and a term only one backend
+ * can express is exactly the thing that made the two images differ. Orientation
+ * response lives in the baked facet luminance, which both backends read from
+ * the same `color` attribute; activity lives in the colour multiplier below.
+ *
+ * WebGPU's node and storage capability is spent where it buys something the
+ * standard path cannot do at all — the routing flowfield in
+ * `src/scene/routing/routeDashMaterial.ts` — not on static structure.
  */
-export type SurfaceRole = 'volume' | 'beam' | 'port' | 'membrane';
-
 export type SurfaceMaterialConfig = {
   readonly role: SurfaceRole;
   readonly color: string;
   /** Membrane openness at rest, 0 (closed silhouette) .. 1 (fully open). */
   readonly baseFade?: number;
-  /** Strength of the view-dependent edge term. */
-  readonly edgeResponse?: number;
-  /**
-   * Capability choice supplied by the renderer integration. The factory cannot
-   * infer the active renderer, so WebGL2 callers pass false.
-   */
-  readonly webgpuPreferred: boolean;
-};
-
-/** Scalar state only; view layers never allocate this per frame. */
-export type SurfaceInput = {
-  readonly activity: number;
-  readonly focus: number;
-  readonly reducedMotion: boolean;
 };
 
 export type SurfaceMaterialHandle = {
-  readonly material: THREE.Material;
-  readonly backend: 'node' | 'standard';
+  /**
+   * Always a `MeshBasicMaterial`. Stated concretely rather than as `Material`
+   * because the response is written to `color` and `opacity`, and a caller that
+   * cannot see those cannot verify the response landed.
+   */
+  readonly material: THREE.MeshBasicMaterial;
   readonly updateInput: (input: SurfaceInput) => void;
   readonly dispose: () => void;
 };
 
-const DEFAULT_EDGE_RESPONSE = 0.35;
-
-function finite(value: number | undefined, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
-
-function boundedUnit(value: number): number {
-  return Math.min(1, Math.max(0, finite(value, 0)));
-}
-
-function isMembrane(config: SurfaceMaterialConfig): boolean {
-  return config.role === 'membrane';
-}
-
-function createInputState(): {
-  activity: number;
-  focus: number;
-  fade: number;
-} {
-  return { activity: 0, focus: 0, fade: 0 };
-}
-
-type SurfaceInputState = ReturnType<typeof createInputState>;
-
-/**
- * `UniformNode` is a default-only type export, so the uniform's concrete type is
- * derived from the factory instead of imported.
- */
-function createEdgeUniform(edgeResponse: number | undefined) {
-  return uniform(
-    finite(edgeResponse, DEFAULT_EDGE_RESPONSE),
-    'float',
-  ).setName('surfaceEdgeResponse');
-}
-
-type EdgeUniform = ReturnType<typeof createEdgeUniform>;
-
-function applyState(
-  state: SurfaceInputState,
-  input: SurfaceInput,
-  baseFade: number,
-): void {
-  state.activity = boundedUnit(input.activity);
-  state.focus = boundedUnit(input.focus);
-  state.fade = boundedUnit(baseFade + state.activity * 0.34 + state.focus * 0.5);
-}
-
-/**
- * Shared view-edge term: faces seen edge-on brighten, faces seen head-on stay
- * at their baked luminance. This is what keeps large flat panels from reading
- * as paper cut-outs as the camera reframes.
- */
-function createEdgeTerm(edgeUniform: EdgeUniform) {
-  const viewDirection = normalize(positionView.negate());
-  const facing = saturate(normalView.dot(viewDirection).abs());
-  return vec3(pow(float(1).sub(facing), float(2.2)).mul(edgeUniform));
-}
-
-function createNodeHandle(config: SurfaceMaterialConfig): SurfaceMaterialHandle {
-  const baseFade = boundedUnit(config.baseFade ?? 0.5);
-  const inputState = createInputState();
-  const edgeUniform = createEdgeUniform(config.edgeResponse);
-  const activityUniform = uniform(0, 'float').setName('surfaceActivity');
-  const membrane = isMembrane(config);
-  // Alpha rides its own uniform rather than `material.opacity`: a node material
-  // reads built-in material properties through cached nodes, so a property
-  // written after the node graph is built is not guaranteed to reach the shader.
-  const alphaUniform = uniform(1, 'float').setName('surfaceAlpha');
-  const baseColorValue = new THREE.Color(config.color);
-  let material: MeshBasicNodeMaterial | null = null;
-
-  try {
-    material = new MeshBasicNodeMaterial({
-      color: baseColorValue,
-      depthWrite: !membrane,
-      transparent: membrane,
-      vertexColors: true,
-    });
-
-    const baseColor = vec3(
-      baseColorValue.r,
-      baseColorValue.g,
-      baseColorValue.b,
-    );
-    const edge = createEdgeTerm(edgeUniform);
-    material.colorNode = vec4(
-      baseColor.mul(vertexColor().rgb).add(edge.mul(activityUniform.add(float(0.35)))),
-      alphaUniform,
-    );
-  } catch (error) {
-    material?.dispose();
-    throw error;
-  }
-
-  const nodeMaterial = material;
-  let disposed = false;
-
-  return {
-    material: nodeMaterial,
-    backend: 'node',
-    updateInput: (input) => {
-      if (disposed) return;
-
-      applyState(inputState, input, baseFade);
-      edgeUniform.value = finite(config.edgeResponse, DEFAULT_EDGE_RESPONSE) *
-        (input.reducedMotion ? 0.6 : 1);
-      activityUniform.value = inputState.activity * 0.5 + inputState.focus * 0.3;
-      alphaUniform.value = membrane ? deriveMembraneOpacity(inputState.fade) : 1;
-    },
-    dispose: () => {
-      if (disposed) return;
-
-      disposed = true;
-      nodeMaterial.dispose();
-    },
-  };
-}
-
-function createStandardHandle(config: SurfaceMaterialConfig): SurfaceMaterialHandle {
-  const baseFade = boundedUnit(config.baseFade ?? 0.5);
-  const inputState = createInputState();
-  const membrane = isMembrane(config);
+export function createSurfaceMaterial(
+  config: SurfaceMaterialConfig,
+): SurfaceMaterialHandle {
+  const membrane = config.role === 'membrane';
+  const baseFade = Number.isFinite(config.baseFade) ? config.baseFade! : 0;
+  const baseColor = new THREE.Color(config.color);
+  // The multiplier is applied here rather than to `material.color` in place, so
+  // repeated updates cannot compound: every frame writes base * gain.
+  const appliedColor = new THREE.Color();
   const material = new THREE.MeshBasicMaterial({
-    color: new THREE.Color(config.color),
+    color: baseColor.clone(),
     depthWrite: !membrane,
     transparent: membrane,
-    opacity: membrane ? deriveMembraneOpacity(baseFade) : 1,
+    // Depth attenuation is the scene's one shared depth term, and it is the
+    // same term on both backends. A per-material custom depth falloff would be
+    // a second one, free to drift.
+    fog: true,
     vertexColors: true,
   });
 
   let disposed = false;
 
+  const applyResponse = (input: SurfaceInput): void => {
+    const response = deriveSurfaceResponse(config.role, input, baseFade);
+
+    // The colour multiplier is the response. It is written for opaque and
+    // blending tiers alike: a membrane is lit material too, and scaling only its
+    // alpha would make a focused membrane open up without ever brightening.
+    appliedColor.copy(baseColor).multiplyScalar(response.gain);
+    material.color.copy(appliedColor);
+
+    if (membrane) material.opacity = response.alpha;
+  };
+
+  applyResponse({ activity: 0, focus: 0 });
+
   return {
     material,
-    backend: 'standard',
     updateInput: (input) => {
       if (disposed) return;
 
-      applyState(inputState, input, baseFade);
-      if (membrane) {
-        material.opacity = deriveMembraneOpacity(inputState.fade);
-        return;
-      }
-
-      // Baked luminance already carries the read; opacity only adds the
-      // activity gradient, and never becomes the primary fix.
-      material.opacity = Math.min(
-        1,
-        0.82 + inputState.activity * 0.14 + inputState.focus * 0.06,
-      );
+      applyResponse(input);
     },
     dispose: () => {
       if (disposed) return;
@@ -213,20 +113,4 @@ function createStandardHandle(config: SurfaceMaterialConfig): SurfaceMaterialHan
       material.dispose();
     },
   };
-}
-
-export function createSurfaceMaterial(
-  config: SurfaceMaterialConfig,
-): SurfaceMaterialHandle {
-  if (!config.webgpuPreferred) {
-    return createStandardHandle(config);
-  }
-
-  try {
-    return createNodeHandle(config);
-  } catch {
-    // Preserve a safe built-in fallback rather than failing the whole scene
-    // when node material support is unusable in the active runtime.
-    return createStandardHandle(config);
-  }
 }

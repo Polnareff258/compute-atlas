@@ -213,7 +213,6 @@ export function KnowledgeGraph({
         return (
           <DomainEnvironmentView
             activation={isFocused ? 1 : isHovered ? HOVER_ACTIVATION : 0}
-            backend={backend}
             description={copy?.description ?? ''}
             dimmed={othersRecede}
             environment={entry.environment}
