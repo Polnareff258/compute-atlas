@@ -92,6 +92,142 @@ export const ROUTE_FACING_EPSILON = 0.2;
  */
 export const ROUTE_FACING_BLEND_FLOOR = 0.02;
 
+/**
+ * How wide a band each route class scatters its packets across, in world units.
+ *
+ * This is the whole of the volumetric weave. The field used to draw every packet
+ * exactly on its curve, so a route was a line with dots on it however many dots
+ * there were, and the only way to make traffic read as heavy was to draw more of
+ * them. Scattering the packets of one route across a band instead turns that line
+ * into a braid: many filaments travelling together, dense enough to accumulate
+ * into a sheet under additive blending rather than resolving into separate marks.
+ *
+ * The classes differ because the things they stand for differ. `primary` is a
+ * shared trunk carrying everything on its side of the graph, so it is a cable.
+ * `secondary` is one domain's branch and is thinner. `signal` is the short
+ * arrival at an ingress, which has to stay precise — an ingress that sprayed
+ * would not read as a socket. `ambient` is the machine's own circulation, which
+ * wants the least of all: it is the surface a braid is read *against*.
+ */
+export const ROUTE_CLASS_SPREAD: Readonly<Record<RouteClass, number>> =
+  Object.freeze({
+    primary: 0.085,
+    secondary: 0.055,
+    signal: 0.014,
+    ambient: 0.035,
+  });
+
+/**
+ * `ROUTE_CLASS_SPREAD` as four numbers in `ROUTE_CLASS_ORDER`.
+ *
+ * The vertex shader has no record type and no uniform array it wants to spend a
+ * slot on, so it indexes the table the way it indexes every other per-class
+ * quantity: a four-component constant dotted with the class basis. Kept derived
+ * from the table rather than typed out again, so a class that is re-weighted
+ * cannot be re-weighted on one backend only.
+ */
+export const ROUTE_CLASS_SPREAD_VECTOR: readonly [number, number, number, number] =
+  Object.freeze([
+    ROUTE_CLASS_SPREAD.primary,
+    ROUTE_CLASS_SPREAD.secondary,
+    ROUTE_CLASS_SPREAD.signal,
+    ROUTE_CLASS_SPREAD.ambient,
+  ] as const);
+
+/**
+ * How much of its band a packet occupies at a given point along its route.
+ *
+ * The band is not uniform, and the shape of it is the point. Both ends of every
+ * curve in the scene are authored the same way round — progress 0 is the Core
+ * end and progress 1 is the destination — so tightening at 0 and opening toward
+ * 1 puts the compression zone exactly where the brief asks for it: many
+ * filaments converging into one trunk as they approach the machine, and fanning
+ * out into a sheet as they leave it. `ROUTE_SPREAD_OPENNESS_FLOOR` is what keeps
+ * a packet near the Core from collapsing onto the centreline, which would put the
+ * braid back to being a line at precisely the place it is most visible.
+ */
+export const ROUTE_SPREAD_OPENNESS_FLOOR = 0.15;
+
+/**
+ * How far the weave deploys as the field commits to a route.
+ *
+ * `compression` is reused rather than adding a second scalar, because it is
+ * already the field's own statement of how committed it is: it is what bunches
+ * packets in front of an ingress on hover and focus. A braid that takes its width
+ * from the same number cannot disagree with the bunching it is carrying.
+ */
+export const ROUTE_SPREAD_COMMITMENT_FLOOR = 0.6;
+export const ROUTE_SPREAD_COMMITMENT_GAIN = 0.8;
+
+export function deriveDashSpread(
+  route: RouteClass,
+  progress: number,
+  compression: number,
+): number {
+  const base = ROUTE_CLASS_SPREAD[route] ?? 0;
+  const boundedProgress = Number.isFinite(progress)
+    ? Math.min(1, Math.max(0, progress))
+    : 0;
+  const boundedCompression = Number.isFinite(compression)
+    ? Math.min(1, Math.max(0, compression))
+    : 0;
+  const openness =
+    ROUTE_SPREAD_OPENNESS_FLOOR +
+    (1 - ROUTE_SPREAD_OPENNESS_FLOOR) * boundedProgress;
+  const commitment =
+    ROUTE_SPREAD_COMMITMENT_FLOOR +
+    boundedCompression * ROUTE_SPREAD_COMMITMENT_GAIN;
+  return base * openness * commitment;
+}
+
+/**
+ * Where one packet's band offset comes from, in a form both backends can run.
+ *
+ * Two multipliers, not one, so the two axes get independent values: a band
+ * scattered by a single hash would place every packet on a diagonal through its
+ * own band and read as a stripe rather than as a braid. The multipliers are
+ * irrational-looking primes for the same reason the rest of the field uses them —
+ * they decorrelate from the phase's own value, so consecutive packets in a lane
+ * do not land at consecutive offsets.
+ */
+export const ROUTE_SCATTER_ACROSS_FREQUENCY = 37.13;
+export const ROUTE_SCATTER_THROUGH_FREQUENCY = 91.7;
+
+/**
+ * How thick the band is along the route's third axis, as a fraction of its width.
+ *
+ * Below 1 on purpose. A braid that is as deep as it is wide is a tube, and a tube
+ * hides its own centre; the weave is meant to read as a sheet of filaments seen
+ * slightly off-axis, where the near ones pass in front of the far ones.
+ */
+export const ROUTE_SCATTER_THROUGH_SCALE = 0.5;
+
+/**
+ * The two signed scatter values that place one packet inside its band.
+ *
+ * Derived from the packet's own `phase` rather than stored, which is what keeps
+ * this a placement rule instead of another per-vertex channel: `phase` is already
+ * hashed per packet and per lane, so two packets on one route never share an
+ * offset, and one packet keeps its offset for its whole life — a packet that
+ * wandered across its band while travelling would read as noise, not as flow.
+ *
+ * `across` places it laterally and `through` gives the band its thickness along
+ * the route's third axis. Both are in [-1, 1).
+ */
+export function deriveDashScatter(phase: number): {
+  readonly across: number;
+  readonly through: number;
+} {
+  const bounded = Number.isFinite(phase) ? phase - Math.floor(phase) : 0;
+  const across = fractional(bounded * ROUTE_SCATTER_ACROSS_FREQUENCY) * 2 - 1;
+  const through = fractional(bounded * ROUTE_SCATTER_THROUGH_FREQUENCY) * 2 - 1;
+  return { across, through };
+}
+
+function fractional(value: number): number {
+  return value - Math.floor(value);
+}
+
 function quadratic(
   start: Vector,
   control: Vector,

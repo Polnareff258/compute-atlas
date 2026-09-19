@@ -21,9 +21,16 @@ import {
 import {
   RIBBON_CHANNEL_GAIN,
   ROUTE_CLASS_ORDER,
+  ROUTE_CLASS_SPREAD_VECTOR,
   ROUTE_FACING_AXIS,
   ROUTE_FACING_BLEND_FLOOR,
   ROUTE_FACING_EPSILON,
+  ROUTE_SCATTER_ACROSS_FREQUENCY,
+  ROUTE_SCATTER_THROUGH_FREQUENCY,
+  ROUTE_SCATTER_THROUGH_SCALE,
+  ROUTE_SPREAD_COMMITMENT_FLOOR,
+  ROUTE_SPREAD_COMMITMENT_GAIN,
+  ROUTE_SPREAD_OPENNESS_FLOOR,
   ROUTE_VISIBILITY_FLOOR,
   type RouteFlowState,
 } from './routeDash';
@@ -221,9 +228,43 @@ function createDashPositionNode(uniforms: RouteFlowUniforms) {
   const arrivalProximity = saturate(float(1).sub(float(1).sub(progress).div(ARRIVAL_FRACTION)));
   const wakeWidth = float(1).add(arrivalProximity.mul(uniforms.wake).mul(WAKE_WIDTH_GAIN));
 
+  // The weave: the packet's own lateral placement inside its route's band.
+  //
+  // Every packet used to be drawn exactly on its curve, so a route reached the
+  // frame as one line however many packets were on it, and the only way to make
+  // it read as heavy traffic was to draw more of them. Offsetting each packet
+  // across its band instead accumulates the field into a braid at the same
+  // packet count. Both scatters come from `dashPhase`, which is already hashed
+  // per packet, so no new attribute is needed and a packet keeps its place in
+  // the band for its whole life — one that drifted across its own band while
+  // travelling would read as noise rather than as flow.
+  const phaseHashAcross = phase.mul(ROUTE_SCATTER_ACROSS_FREQUENCY).fract().mul(float(2)).sub(float(1));
+  const phaseHashThrough = phase.mul(ROUTE_SCATTER_THROUGH_FREQUENCY).fract().mul(float(2)).sub(float(1));
+  const routeIndex = floatAttribute('dashRoute');
+  const bandWidth = createBasis4(routeIndex, 0)
+    .dot(vec4(...ROUTE_CLASS_SPREAD_VECTOR))
+    .mul(
+      float(ROUTE_SPREAD_OPENNESS_FLOOR).add(
+        saturate(progress).mul(float(1 - ROUTE_SPREAD_OPENNESS_FLOOR)),
+      ),
+    )
+    .mul(
+      float(ROUTE_SPREAD_COMMITMENT_FLOOR).add(
+        uniforms.compression.mul(float(ROUTE_SPREAD_COMMITMENT_GAIN)),
+      ),
+    );
+  // The band's own axes: laterally along the same across-axis the quad is
+  // widened against, and in depth along the route's third axis. `across` is
+  // already unit length and the tangent is too, so their cross product is.
+  const through = cross(tangent, across);
+  const weave = across
+    .mul(phaseHashAcross)
+    .add(through.mul(phaseHashThrough.mul(float(ROUTE_SCATTER_THROUGH_SCALE))))
+    .mul(bandWidth);
+
   const offset = across.mul(corner.y.sub(float(0.5))).mul(width.mul(uniforms.widthScale).mul(wakeWidth));
 
-  return positionAlong.add(offset);
+  return positionAlong.add(offset).add(weave);
 }
 
 /** Shared per-route weight term: lane class weight times route group weight. */

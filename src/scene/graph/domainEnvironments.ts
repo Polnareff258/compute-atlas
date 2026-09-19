@@ -57,7 +57,19 @@ export type DomainEnvironment = {
   readonly frame: readonly StructurePart[];
   /** Moving interior layers, in activation order. */
   readonly movables: readonly DomainMovable[];
-  /** Everything baked into one mass, frame first so draw order is stable. */
+  /**
+   * What is baked into the domain's one merged mass — the frame, and only the
+   * frame.
+   *
+   * This used to be `[...frame, ...movables]`, and the view bakes `parts` while
+   * also drawing every movable as its own mesh. Both halves are right on their
+   * own and together they are a defect: at rest `pose` is zero, so each movable
+   * sat exactly on top of its own baked copy and every domain carried three to
+   * five coplanar pairs fighting for the same depth — and once a movable did
+   * move, the merged copy stayed behind as a ghost of where it had been. Five
+   * domains each fighting themselves is most of why they read as broken frames
+   * rather than as machines.
+   */
   readonly parts: readonly StructurePart[];
   /** Ingress mouth, in domain-local space. */
   readonly ingress: DomainIngress;
@@ -584,7 +596,7 @@ export function deriveDomainEnvironment(
     anchor,
     frame: trimmed.frame,
     movables,
-    parts: [...trimmed.frame, ...movables.map((movable) => movable.part)],
+    parts: trimmed.frame,
     ingress,
     ingressLocal: subtract(ingress.position, anchor),
     activationAxis: axis,

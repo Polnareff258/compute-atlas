@@ -7,10 +7,14 @@ import * as THREE from 'three';
 import type { RendererAdapterBackend } from '../../renderer/runtime';
 import { MACHINE_PALETTE } from '../materials/machinePalette';
 import {
+  ROUTE_CLASS_ORDER,
+  ROUTE_SCATTER_THROUGH_SCALE,
   WEBGL2_DASH_CEILING,
   compressRouteProgress,
   deriveDashEnvelope,
   deriveDashPhase,
+  deriveDashScatter,
+  deriveDashSpread,
   deriveRouteAcross,
   deriveRouteDashDensity,
   deriveRouteDashIntensity,
@@ -429,10 +433,36 @@ function Webgl2DashField({
       scratch.xAxis.set(scratch.tangent[0]!, scratch.tangent[1]!, scratch.tangent[2]!);
       scratch.yAxis.set(scratch.across[0]!, scratch.across[1]!, scratch.across[2]!);
       scratch.zAxis.crossVectors(scratch.xAxis, scratch.yAxis).normalize();
+
+      // The weave, mirrored from the vertex shader: without this the fallback
+      // would draw every packet on its curve and the two backends would disagree
+      // about what the field looks like, which is the one thing a fallback is not
+      // allowed to do. The scatter hashes `phase` with the same frequencies as
+      // the shader, so a packet sits at the same place in its band on both.
+      //
+      // One offset for the whole quad rather than one per end: the instance is a
+      // rigid stretch of ribbon between its own tail and head, so it can only be
+      // placed, not slewed. The head's progress is the one that places it.
+      const routeIndex = attributes.route[vertex]!;
+      const scatter = deriveDashScatter(attributes.phase[vertex]!);
+      const bandWidth = deriveDashSpread(
+        ROUTE_CLASS_ORDER[routeIndex] ?? 'ambient',
+        head,
+        compression,
+      );
+      const weaveAcross = scatter.across * bandWidth;
+      const weaveThrough = scatter.through * bandWidth * ROUTE_SCATTER_THROUGH_SCALE;
+
       scratch.position.set(
-        (scratch.tail[0]! + scratch.head[0]!) * 0.5,
-        (scratch.tail[1]! + scratch.head[1]!) * 0.5,
-        (scratch.tail[2]! + scratch.head[2]!) * 0.5,
+        (scratch.tail[0]! + scratch.head[0]!) * 0.5 +
+          scratch.across[0]! * weaveAcross +
+          scratch.zAxis.x * weaveThrough,
+        (scratch.tail[1]! + scratch.head[1]!) * 0.5 +
+          scratch.across[1]! * weaveAcross +
+          scratch.zAxis.y * weaveThrough,
+        (scratch.tail[2]! + scratch.head[2]!) * 0.5 +
+          scratch.across[2]! * weaveAcross +
+          scratch.zAxis.z * weaveThrough,
       );
       scratch.scale.set(arcLength, attributes.width[vertex]! * (1 + wake * 1.4), 1);
 

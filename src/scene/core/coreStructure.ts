@@ -149,8 +149,14 @@ export type CoreStructure = {
  * it taller instead costs nothing and fixes the composition: at 16:9 a body that
  * is twice as wide as it is tall can only ever occupy a horizontal band, which
  * is what left the lower third of the frame empty.
+ *
+ * Depth is the monolith's own, and it grew when the ring's profile started
+ * carrying its asymmetry in `halfHeight`. The body now reaches further behind
+ * the front plane down the left flank than it ever did, so the bound has to
+ * follow it — a member outside these numbers would be cropped by whatever reads
+ * them next rather than by the frame.
  */
-const LOCAL_BOUNDS: Vector = [1.84, 1.5, 0.58];
+const LOCAL_BOUNDS: Vector = [1.84, 1.5, 0.68];
 
 /**
  * Additive detail gates, in ascending order. SAFE keeps the monolith, its
@@ -192,66 +198,181 @@ const CORE_SCALE = 2.2;
  *
  * The second is where the opening is and how thick the material around it is.
  * An opening in the middle of an even wall is a doughnut whatever its aspect:
- * the eye reads the wall, finds it the same everywhere, and stops. Here the
- * wall runs from 0.26 across at the crown to 0.54 down the left flank, and the
- * opening sits up and to the right of the body's own centre as a result. The
- * mass is a heavy lower-left shoulder with a slot cut toward its light corner,
- * which is what an asymmetric body actually is.
+ * the eye reads the wall, finds it the same everywhere, and stops. So the wall
+ * is heaviest down the left flank — 1.32 — and the opening ends up left of the
+ * body's own centre and low in it. The mass is a heavy lower-left shoulder with
+ * a slot cut toward its light corner, which is what an asymmetric body actually
+ * is.
+ *
+ * Two captures were spent learning which number makes that true, and the first
+ * answer was wrong in a way worth recording. The wall's *thickness ratio* was
+ * taken to be the lever: 0.23 to 0.56 is 2.4:1 and read as a torus, so the wall
+ * was walked out to 0.32 to 1.32 — 4.4:1 — on the argument that a rim and a
+ * shoulder are different objects. The frame got an asymmetric rim and the
+ * thumbnail still read as a ring, and the reason is that the ratio describes the
+ * *rim* while the torus read comes from the *hole*. At 2.12 by 1.51 the opening
+ * was 59% of the body's width and 52% of its height: the mass was the border of
+ * the picture, however unevenly its border was drawn.
+ *
+ * So the crown was thickened — 0.16 half-width at the crown walked out to 0.40,
+ * and the shoulder and right wall with it — and the opening is 1.86 by 1.03 now,
+ * 52% of the body's width and 36% of its height. The ratio fell to 2.1:1 as a
+ * consequence and it does not matter, because the deck's stepped lands carry the
+ * asymmetry the ratio was bought for. What is left is a heavy body with a
+ * low-set, off-centre slot in it, which is the read the wall-thickness argument
+ * was trying to buy and could not: a thin crown is a rim, and a rim is a ring.
+ *
+ * The outer boundary did not move to get there. Each point was solved from the
+ * outline it had — `point = outline − halfWidth × normal`, taking the outline
+ * from the previous revision — so the silhouette, the bounds every framing
+ * contract is written against, and the position of every port are all exactly
+ * where they were. What changed is only how much of the body is *inside* that
+ * outline, which is the one thing the previous ring could not vary.
+ *
+ * There is a third ratio, and it took a capture to find it: the wall's *depth*.
+ *
+ * Width alone was not enough, and the reason is worth recording because it is
+ * not obvious from the numbers. A closed path swept from a section whose depth
+ * is the same at every point presents the camera one extruded band, and the band
+ * around this opening is between a sixth and a third of the frame tall — so the
+ * three quarters of the body that are not the aperture resolved as one large
+ * flat surface, evenly lit, with no interior. That is the exact failure the
+ * surface language exists to avoid, and no amount of surface response fixes it,
+ * because a single face has a single normal and therefore a single value.
+ *
+ * So `halfHeight` carries the asymmetry, and the profile walks from a third of a
+ * unit deep at the crown to over a whole unit down the left. But the first
+ * attempt put all of that variation on the *back* face, and the back face is the
+ * one surface of the ring the camera never sees. Every point was solved so that
+ * `z + halfHeight` came out at exactly 0.30, which made the front a plane to six
+ * decimal places: a large, evenly lit, perfectly flat annulus, and a capture that
+ * did not move a single pixel when the depth was doubled. The asymmetry was real
+ * and it was entirely behind the machine.
+ *
+ * The deck is therefore authored on the side the camera is on. `z + halfHeight`
+ * now steps rather than sitting still — 0.44 across the left shoulder, down to
+ * 0.22 over the crown, back out to 0.40 at the right shoulder, 0.28 down the
+ * flank, 0.42 at the foot and 0.20 along the left. Paired points share a value,
+ * so each height is a flat *land* with a genuine step to the next one, and the
+ * quads that bridge those steps are tilted rather than flat. A face whose normal
+ * is 28 degrees off the view axis bakes at 0.34 where the flat plane baked at
+ * 0.65, so the annulus resolves as a ladder of distinct plate values instead of
+ * one number — which is the internal layering the surface language could not
+ * produce on a single normal and the geometry has to carry instead.
+ *
+ * The steps are not free. Between two points the front face rotates about the
+ * run between them, so a step of 0.22 over a run of 0.41 is the same 28 degrees as
+ * the same step over a run of 0.82 is sixteen — the crown and the left flank tilt
+ * gently, the shoulder tilts hard, and the distribution of those angles round the
+ * body is what keeps the result reading as cut plate rather than as a wave. The
+ * outer boundary, the wall widths in `halfWidth` and the entire back face are
+ * exactly what they were: the silhouette, the aperture and every framing contract
+ * derived from them are untouched.
  */
 const MONOLITH = {
   points: [
-    [-1.27, 0.62, 0.06],
-    [-1.2, 0.96, 0.1],
-    [-0.8, 1.14, 0.1],
-    [0.0, 1.18, 0.08],
-    [0.8, 1.06, 0.04],
-    [1.36, 0.82, 0.0],
-    [1.46, 0.2, 0.0],
-    [1.36, -0.44, 0.04],
-    [0.8, -0.86, 0.04],
-    [-0.1, -0.94, 0.0],
-    [-0.98, -0.8, 0.02],
-    [-1.24, -0.24, 0.04],
+    [-1.215, 0.596, 0.12],
+    [-1.12, 0.9, 0.11],
+    [-0.745, 0.959, 0.03],
+    [-0.003, 1.01, 0.11],
+    [0.807, 0.938, 0.17],
+    [1.325, 0.783, 0.14],
+    [1.429, 0.215, 0.03],
+    [1.379, -0.447, -0.03],
+    [0.787, -0.845, -0.03],
+    [-0.088, -0.861, -0.09],
+    [-0.903, -0.737, -0.22],
+    [-1.182, -0.227, -0.18],
   ],
-  halfWidth: [0.5, 0.44, 0.3, 0.26, 0.28, 0.32, 0.32, 0.36, 0.44, 0.5, 0.54, 0.54],
-  halfHeight: [0.3, 0.3, 0.28, 0.28, 0.3, 0.32, 0.34, 0.32, 0.3, 0.3, 0.28, 0.28],
+  halfWidth: [0.52, 0.5, 0.46, 0.4, 0.36, 0.34, 0.32, 0.34, 0.44, 0.58, 0.66, 0.62],
+  halfHeight: [0.32, 0.33, 0.19, 0.17, 0.23, 0.26, 0.25, 0.31, 0.45, 0.51, 0.42, 0.38],
   chamfer: 0.1,
   reference: [0, 0, 1],
 } as const;
 
 /**
- * The front bezel: a thin plate standing proud of the ring, cut to its outline.
+ * The front bezel: the parting rail inset into the ring's front deck.
  *
  * This is what stops the body reading as a stone. A ring swept with one section
  * presents one band to the camera, and however its facets are shaded it is a
  * single continuous surface — at the idle framing a large, round, evenly lit
- * one, which the eye resolves as a rock rather than as a machined part. A
- * second, much thinner ring raised in front of it and set a tier down breaks
- * that band into an edge and a face at two depths, which is the cheapest way to
- * say "this was cut" without adding a single moving part.
+ * one, which the eye resolves as a rock rather than as a machined part. A second,
+ * much thinner ring laid into it breaks that band into an edge and a face at two
+ * depths, which is the cheapest way to say "this was cut" without adding a single
+ * moving part.
  *
- * It shares the body's own points and carries a profile a little wider at every
- * one, so it overhangs the wall it sits on. A bezel flush with its housing is a
- * panel line, and a panel line at this scale would vanish at 480x270.
+ * That was the intent, and for two revisions the part did the opposite of it.
+ * The rib was authored *wider* than the wall at every point — 0.32 to 0.60
+ * against the ring's 0.26 to 0.54 — so although it is drawn in front, what it
+ * does is hide. The ring's front face is the only `anchor`-tier surface the body
+ * has, and it was covered end to end by a `secondary` plate, which left the
+ * largest surface in the frame a single flat value at a single depth: the very
+ * "large grey surface with no interior" this part was added to prevent. Measured
+ * off the frame, a quarter of the composition sat at one luminance to within
+ * four percent, and the bright tier the whole shell ladder is tuned around
+ * appeared nowhere outside the aperture.
+ *
+ * So the rib is half the wall's width now and runs down the middle of it. That is
+ * the one arrangement where both parts are visible and both are doing a job: the
+ * deck reads as machined land on either side of the rail, the rail reads as a
+ * feature laid into it, and the annulus around the aperture becomes land, rail,
+ * land at two depths instead of one plane. The inset is proportional so the rail
+ * keeps its scale against the wall round the whole body, and the floor at the
+ * crown keeps a hairline rather than closing it where the wall is thinnest.
+ *
+ * Two things changed with the deck, and both matter more than the width.
+ *
+ * The first is that the rail *follows* it — `z` is the deck's own front height
+ * plus a constant, so the rail is the same 0.065 proud all the way round instead
+ * of standing on stilts over the low end and sinking into the high one. Because
+ * the deck is stepped, the rail is stepped with it, and its top face carries the
+ * same tilts the deck does; what it does not share is their value, because a tier
+ * down is a different colour and not a darker shade of the same one.
+ *
+ * The second is that it is a `recess` tier rather than a `secondary` one, and
+ * that is the point of it rather than a detail. The deck it sits on bakes between
+ * 0.34 and 0.65 of the pale shell tier; a rail that was merely a shade darker
+ * would vanish into the darker lands and read only on the brightest ones, which
+ * is a feature that appears and disappears as it goes round. At the interior
+ * tier it is a dark line whatever it crosses — the same value over a 0.65 land as
+ * over a 0.34 one — and a dark line that holds its value across a stepped surface
+ * is exactly what a parting line is. It is the one place in the body where a
+ * *cut* is drawn rather than implied.
+ *
+ * Its height is derived from the deck rather than written out beside it. The two
+ * numbers are the same twelve points and the same twelve heights, and a copy kept
+ * by hand is a copy that stops agreeing the first time the deck is re-solved —
+ * which is precisely the failure this part has already been through once.
  */
+const BEZEL_RAIL_OFFSET = 0.035;
+const BEZEL_HALF_HEIGHT = 0.03;
+
+/**
+ * The rail's width as a fraction of the wall it is cut into.
+ *
+ * This is the number that decides whether the body is a mass with a line cut
+ * across it or a bullseye, and half was the wrong answer. At half the wall's
+ * width the annulus resolves as a quarter bright land, a half dark channel and
+ * another quarter bright land — and a half of a wall between two thirds of a unit
+ * and one and a third of a unit wide is a band, so at thumbnail size the dark
+ * channel was the largest shape in the composition and the machine read as a dark
+ * ring with a lit rim. A fifth of the wall leaves four fifths of the deck as
+ * plate and turns the rail into what it was always meant to be: a line that says
+ * where the part was split, not a region of its own.
+ */
+const BEZEL_WALL_FRACTION = 0.22;
+
 const FRONT_BEZEL = {
-  points: [
-    [-1.27, 0.62, 0.42],
-    [-1.2, 0.96, 0.44],
-    [-0.8, 1.14, 0.44],
-    [0.0, 1.18, 0.42],
-    [0.8, 1.06, 0.42],
-    [1.36, 0.82, 0.4],
-    [1.46, 0.2, 0.4],
-    [1.36, -0.44, 0.42],
-    [0.8, -0.86, 0.42],
-    [-0.1, -0.94, 0.42],
-    [-0.98, -0.8, 0.42],
-    [-1.24, -0.24, 0.42],
-  ],
-  halfWidth: [0.56, 0.5, 0.36, 0.32, 0.34, 0.38, 0.38, 0.42, 0.5, 0.56, 0.6, 0.6],
-  halfHeight: 0.035,
-  chamfer: 0.14,
+  points: MONOLITH.points.map(
+    (point, index): Vector => [
+      point[0],
+      point[1],
+      point[2] + (MONOLITH.halfHeight[index] ?? 0) + BEZEL_RAIL_OFFSET,
+    ],
+  ),
+  halfWidth: MONOLITH.halfWidth.map((half) => half * BEZEL_WALL_FRACTION),
+  halfHeight: BEZEL_HALF_HEIGHT,
+  chamfer: 0.2,
   reference: [0, 0, 1],
 } as const;
 
@@ -317,12 +438,20 @@ const FLANK_FOLD = {
  * Both leave the aperture more than half open, and neither is large: they are
  * the near edges of folds that continue over the body, and the eye reads them
  * as such because they do not close.
+ *
+ * The shelf's height is set by the opening, not chosen. When the crown was
+ * thickened the aperture's roof came down from 1.09 to 0.61 and the shelf was
+ * left sitting inside the wall it was supposed to cross — a fold that had become
+ * a layer of the shell. It is placed 0.22 lower for that reason, which puts its
+ * near edge back across the mouth, and its lower face is held clear of the disc
+ * the geometry contract proves empty: measured from the opening's centre, that
+ * disc reaches 0.324 and the shelf's lowest vertex is 0.39.
  */
 const INNER_SHELF = {
   points: [
-    [-1.07, 0.74, 0.34],
-    [-0.27, 0.82, 0.4],
-    [0.57, 0.66, 0.34],
+    [-1.07, 0.56, 0.34],
+    [-0.27, 0.63, 0.4],
+    [0.57, 0.54, 0.34],
   ],
   halfWidth: [0.16, 0.22, 0.18],
   halfHeight: 0.05,
@@ -358,11 +487,20 @@ type HullDefinition = Omit<
  * depth baked into the `recess` class darkens that back further than anything
  * on the front plane. It is the single largest surface inside the body, and it
  * is the one the routing field runs across.
+ *
+ * It is sized twice over, and both bounds are load-bearing. Large enough to
+ * cover the whole of the opening, or the aperture would show background through
+ * its own corners; small enough that its edges stay buried inside the wall all
+ * the way round, or a flat plate would stick out past the body's outline on the
+ * thin side. The ring's inner boundary runs from 0.61 out of the centre at the
+ * crown to 0.29 at the foot, so the opening's own centroid is at (0.11, 0.19)
+ * and the back is placed there rather than at the body's centre — the body
+ * centre is now inside the heavy shoulder, which the opening is not.
  */
 const APERTURE_FLOOR = {
-  position: [0.19, 0.24, -0.36],
+  position: [0.11, 0.19, -0.36],
   rotation: [0, 0, 0],
-  scale: [2.2, 1.6, 0.05],
+  scale: [1.6, 1.12, 0.05],
 } as const;
 
 /**
@@ -370,16 +508,35 @@ const APERTURE_FLOOR = {
  * angles. They are the scale contrast the composition needs — the body is four
  * units across and these are a third of a unit, so the eye gets a dense local
  * region to read rather than one uniform level of detail everywhere.
+ *
+ * They were also the brightest thing in the frame, and that was the wrong way
+ * round. Every one of them was authored at the pale tier, so the aperture — the
+ * one part of the body the camera is meant to look *into* — sat two and a half
+ * times the value of the mass around it, and the eye went straight through the
+ * opening to a handful of flat cards while the machine they were cut into stayed
+ * at one dark number. The mass is the subject; an opening is deep because what is
+ * inside it is darker than what surrounds it, and no amount of layering survives
+ * a hierarchy that is inverted. So the wafers are smaller and most of them are a
+ * tier or two down, the aperture's internal range now runs below the deck's
+ * rather than above it, and the two that stayed pale are small enough to read as
+ * signal rather than as the subject.
+ *
+ * Three of them were moved inboard when the aperture shrank, and the move is the
+ * part worth keeping: at the old opening's size they sat clear of the wall, and
+ * against the new one the same coordinates put them a third to two thirds buried
+ * in it. A wafer that is inside the shell is not a small wafer, it is a wafer
+ * that is not there, and the composition loses it silently — nothing fails, the
+ * density at the aperture just quietly drops by three parts in eight.
  */
 const WAFERS = [
-  { position: [-0.43, 0.36, -0.24], rotation: [0.06, -0.22, 0.1], scale: [1.0, 0.56, 0.035], surface: 'accent' },
-  { position: [0.45, 0.1, -0.06], rotation: [-0.05, 0.18, -0.08], scale: [0.88, 0.46, 0.03], surface: 'recess' },
-  { position: [0.95, 0.4, -0.2], rotation: [0.1, 0.3, 0.12], scale: [0.46, 0.3, 0.028], surface: 'accent' },
-  { position: [-0.81, -0.06, -0.14], rotation: [-0.08, -0.3, -0.1], scale: [0.52, 0.34, 0.03], surface: 'recess' },
-  { position: [-0.11, 0.66, 0.16], rotation: [0.14, -0.34, 0.18], scale: [0.7, 0.3, 0.022], surface: 'recess' },
-  { position: [0.71, -0.22, 0.2], rotation: [-0.12, 0.26, -0.16], scale: [0.62, 0.26, 0.02], surface: 'accent' },
-  { position: [-0.65, 0.28, 0.26], rotation: [0.18, 0.4, 0.08], scale: [0.42, 0.5, 0.018], surface: 'recess' },
-  { position: [0.31, 0.5, -0.34], rotation: [-0.16, -0.2, 0.22], scale: [0.46, 0.32, 0.016], surface: 'recess' },
+  { position: [-0.43, 0.36, -0.24], rotation: [0.06, -0.22, 0.1], scale: [0.74, 0.4, 0.028], surface: 'accent' },
+  { position: [0.45, 0.1, -0.06], rotation: [-0.05, 0.18, -0.08], scale: [0.66, 0.34, 0.024], surface: 'recess' },
+  { position: [0.95, 0.4, -0.2], rotation: [0.1, 0.3, 0.12], scale: [0.42, 0.26, 0.024], surface: 'accent' },
+  { position: [-0.46, -0.06, -0.14], rotation: [-0.08, -0.3, -0.1], scale: [0.44, 0.28, 0.024], surface: 'recess' },
+  { position: [-0.11, 0.4, 0.1], rotation: [0.14, -0.34, 0.18], scale: [0.58, 0.24, 0.018], surface: 'recess' },
+  { position: [0.71, -0.22, 0.16], rotation: [-0.12, 0.26, -0.16], scale: [0.5, 0.22, 0.016], surface: 'accent' },
+  { position: [-0.65, 0.28, 0.16], rotation: [0.18, 0.4, 0.08], scale: [0.36, 0.42, 0.016], surface: 'recess' },
+  { position: [0.31, 0.4, -0.34], rotation: [-0.16, -0.2, 0.22], scale: [0.4, 0.28, 0.014], surface: 'recess' },
 ] as const;
 
 /**
@@ -391,14 +548,40 @@ const WAFERS = [
  * width suggests they need, and their sizes are deliberately uneven: a dense
  * local region reads as density, whereas a region of equal parts reads as a
  * pattern, and a pattern is a diagram.
+ *
+ * Only one of them stays at the pale tier, and it is the one in the middle of the
+ * opening. A single pale block at the centre of a dark chamber is a focal point;
+ * two of them, which is what this was, is a pair of lights competing with the
+ * mass they are set into.
  */
 const DIES = [
   { position: [0.07, 0.02, -0.14], rotation: [0.1, 0.2, 0.06], scale: [0.22, 0.16, 0.12], surface: 'accent' },
   { position: [0.79, 0.46, -0.1], rotation: [-0.08, -0.16, -0.1], scale: [0.18, 0.14, 0.1], surface: 'accent' },
-  { position: [-0.77, 0.58, -0.2], rotation: [0.05, 0.24, 0.12], scale: [0.16, 0.2, 0.09], surface: 'recess' },
-  { position: [0.53, -0.14, 0.18], rotation: [0.12, -0.28, 0.16], scale: [0.13, 0.11, 0.09], surface: 'accent' },
+  { position: [-0.5, 0.42, -0.2], rotation: [0.05, 0.24, 0.12], scale: [0.16, 0.2, 0.09], surface: 'recess' },
+  { position: [0.53, -0.14, 0.14], rotation: [0.12, -0.28, 0.16], scale: [0.13, 0.11, 0.09], surface: 'accent' },
   { position: [-0.39, -0.3, 0.06], rotation: [-0.14, 0.18, -0.2], scale: [0.15, 0.12, 0.1], surface: 'recess' },
-  { position: [1.07, 0.14, 0.24], rotation: [0.08, 0.32, -0.12], scale: [0.12, 0.16, 0.08], surface: 'recess' },
+  { position: [1.07, 0.14, 0.18], rotation: [0.08, 0.32, -0.12], scale: [0.12, 0.16, 0.08], surface: 'recess' },
+] as const;
+
+/**
+ * The interior bus: thin ribs standing across the back of the aperture.
+ *
+ * The aperture had structure in it and no *machine* in it. Eight plates at eight
+ * angles read as eight plates, however carefully they are arranged, because
+ * nothing about them says what they are attached to; a bus is the cheapest way to
+ * say it, and it is the same argument the routing manifolds are built on. These
+ * are the ribs the wafers and dies are mounted between, they are all vertical
+ * because a bus has one direction, and their heights step down from the centre
+ * toward the mouth so the group has a shape rather than a count.
+ *
+ * They are all `recess` finish and a tier below the wafers they carry, which is
+ * what a mounting rib is: a shadow the parts stand in front of.
+ */
+const INTERIOR_BUS = [
+  { position: [-0.3, 0.18, -0.2], rotation: [0.04, -0.14, 0.06], scale: [0.06, 0.66, 0.04] },
+  { position: [0.19, 0.08, -0.16], rotation: [-0.03, 0.12, -0.05], scale: [0.05, 0.54, 0.035] },
+  { position: [0.62, 0.24, -0.24], rotation: [0.06, 0.2, 0.1], scale: [0.045, 0.4, 0.03] },
+  { position: [-0.44, 0.04, -0.1], rotation: [-0.05, -0.24, -0.08], scale: [0.04, 0.34, 0.03] },
 ] as const;
 
 /**
@@ -407,12 +590,20 @@ const DIES = [
  * Five of them rather than two, at depths from the back of the recess to well
  * in front of the ring, so the aperture is something the eye looks *into*
  * through several sheets rather than a card with a panel standing on it.
+ *
+ * Their heights are bounded by the deck they float in front of. The front three
+ * used to sit at 0.2 to 0.34, which was clear of the old front plane at 0.30 —
+ * and once the deck steps down to 0.20 along the left flank, a sheet at 0.30 is
+ * no longer inside the aperture at all, it is a pane standing off the wall on
+ * the outside of the machine. They are set below the deck's own low point now and
+ * pay for it in nothing: the membrane is translucent, so the depth it gains is
+ * depth the eye can read through it.
  */
 const APERTURE_MEMBRANES = [
-  { position: [-0.13, 0.26, 0.2], rotation: [0.08, -0.26, 0.14], scale: [1.2, 0.66, 0.01], fade: 0.42 },
+  { position: [-0.13, 0.26, 0.1], rotation: [0.08, -0.26, 0.14], scale: [1.2, 0.66, 0.01], fade: 0.42 },
   { position: [0.67, 0.18, -0.18], rotation: [-0.06, 0.2, -0.1], scale: [0.92, 0.52, 0.01], fade: 0.3 },
-  { position: [-0.49, -0.08, 0.3], rotation: [0.1, 0.34, -0.18], scale: [0.66, 0.44, 0.008], fade: 0.36 },
-  { position: [0.95, 0.52, 0.34], rotation: [-0.12, -0.3, 0.2], scale: [0.54, 0.38, 0.008], fade: 0.28 },
+  { position: [-0.49, -0.08, 0.16], rotation: [0.1, 0.34, -0.18], scale: [0.66, 0.44, 0.008], fade: 0.36 },
+  { position: [0.86, 0.32, 0.26], rotation: [-0.12, -0.3, 0.2], scale: [0.54, 0.38, 0.008], fade: 0.28 },
   { position: [0.03, 0.42, -0.3], rotation: [0.16, 0.12, 0.06], scale: [1.06, 0.4, 0.006], fade: 0.24 },
 ] as const;
 
@@ -660,13 +851,14 @@ function normalizedDetail(value: number): number {
  * Deterministic hero structure for the Compute Core.
  *
  * The composition is one asymmetric monolith rather than an assembly. A closed
- * swept path forms the main mass and cuts a deep central aperture through it;
- * four folded shells — over the crown, down the flank, and the two that break
- * the opening's own edge — leave the outline at their ends so the body reads as
- * layered plate; an aperture floor, eight wafers, five membranes and six
- * compute dies give that opening its own density and its own darkening; four
- * manifolds are cut into the mass as channels; and two processing assemblies
- * are attached to the shoulder and the foot.
+ * swept path forms the main mass and cuts a deep central aperture through it,
+ * and its front face is a stepped deck rather than a plane; four folded shells —
+ * over the crown, down the flank, and the two that break the opening's own edge —
+ * leave the outline at their ends so the body reads as layered plate; an aperture
+ * floor, a bus, eight wafers, five membranes and six compute dies give that
+ * opening its own density and its own darkening, all of it below the deck's own
+ * value; four manifolds are cut into the mass as channels; and two processing
+ * assemblies are attached to the shoulder and the foot.
  *
  * There is no member that crosses the body at an angle and no member that is a
  * transformed unit box standing in for a machined form. The only box-shaped
@@ -767,7 +959,7 @@ export function deriveCoreStructure(
     hull(ASSEMBLY_FOOT, 'secondary', 'shell', 'foreground', 5),
     path({ ...INNER_SHELF, closed: false }, 'primary', 'shell', 'foreground', 6),
     path({ ...LOWER_LIP, closed: false }, 'secondary', 'shell', 'foreground', 7),
-    path({ ...FRONT_BEZEL, closed: true }, 'secondary', 'shell', 'foreground', 8),
+    path({ ...FRONT_BEZEL, closed: true }, 'recess', 'shell', 'foreground', 8),
   );
 
   if (detail >= WAFER_DETAIL) {
@@ -808,17 +1000,21 @@ export function deriveCoreStructure(
 
   if (detail >= DIE_DETAIL) {
     members.push(
-      form(WAFERS[2], 'anchor', 'accent', 'midground', 30),
+      form(WAFERS[2], 'primary', 'accent', 'midground', 30),
       form(WAFERS[3], 'secondary', 'recess', 'background', 31),
       form(WAFERS[5], 'detail', 'accent', 'foreground', 32),
       form(WAFERS[6], 'detail', 'recess', 'foreground', 33),
       form(WAFERS[7], 'secondary', 'recess', 'background', 34),
       form(DIES[0], 'anchor', 'accent', 'foreground', 35),
-      form(DIES[1], 'anchor', 'accent', 'foreground', 36),
+      form(DIES[1], 'secondary', 'accent', 'foreground', 36),
       form(DIES[2], 'secondary', 'recess', 'background', 37),
       form(DIES[3], 'detail', 'accent', 'foreground', 38),
       form(DIES[4], 'secondary', 'recess', 'foreground', 39),
       form(DIES[5], 'detail', 'recess', 'foreground', 40),
+      form(INTERIOR_BUS[0], 'detail', 'recess', 'background', 45),
+      form(INTERIOR_BUS[1], 'detail', 'recess', 'background', 46),
+      form(INTERIOR_BUS[2], 'detail', 'recess', 'background', 47),
+      form(INTERIOR_BUS[3], 'detail', 'recess', 'background', 48),
       form(ASSEMBLY_STACK[2], 'detail', 'recess', 'midground', 41),
       path({ points: MANIFOLDS[3].points, closed: false, halfWidth: MANIFOLDS[3].halfWidth, halfHeight: MANIFOLDS[3].halfHeight, chamfer: 0.4, reference: [0, 0, 1] }, 'secondary', 'edge', 'midground', 42),
       form(APERTURE_MEMBRANES[3], 'detail', 'membrane', 'foreground', 43, APERTURE_MEMBRANES[3].fade),

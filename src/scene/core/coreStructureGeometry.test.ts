@@ -128,9 +128,20 @@ describe('buildCoreStructureGeometry', () => {
     expect(floor).toBeDefined();
     if (!floor || !('scale' in floor)) return;
     const [centreX, centreY] = floor.position;
-    // A circle well inside the ring's own inner wall: two fifths of the back's
-    // smaller half-extent, which no wall of this thickness can reach.
-    const RADIUS = Math.min(floor.scale[0], floor.scale[1]) * 0.2;
+    // A circle well inside the opening, sized as a fraction of the back's
+    // smaller half-extent.
+    //
+    // The fraction is not free. It has to clear two different distances, and the
+    // smaller of them is not the wall — it is `INNER_SHELF`, which is *authored*
+    // to reach across the mouth of the aperture and so is the nearest shell
+    // geometry to the opening's centre by a wide margin. Measured from the centre
+    // the back is placed at, the ring's inner wall is 0.42 design units away and
+    // the shelf's near edge reaches 0.32, so a radius of 0.134 clears the wall
+    // with room and the shelf by a hair — and it is the shelf, not the wall, that
+    // sets the ceiling. Sizing this off the back's extents alone is what made it
+    // read as two fifths and then stop being two fifths of anything once the back
+    // was resized to the opening rather than to the body.
+    const RADIUS = Math.min(floor.scale[0], floor.scale[1]) * 0.12;
 
     let insideShell = 0;
     for (let vertex = 0; vertex < shell.count; vertex += 1) {

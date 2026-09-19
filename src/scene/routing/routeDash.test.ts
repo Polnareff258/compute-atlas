@@ -10,6 +10,8 @@ import {
   ROUTE_VISIBILITY_FLOOR,
   deriveDashEnvelope,
   deriveDashPhase,
+  deriveDashScatter,
+  deriveDashSpread,
   deriveRouteAcross,
   deriveRouteDashAttributes,
   deriveRouteDashDrawRange,
@@ -17,6 +19,8 @@ import {
   deriveStaticFlowState,
   MAX_ROUTE_GROUPS,
   ROUTE_CLASS_ORDER,
+  ROUTE_CLASS_SPREAD,
+  ROUTE_CLASS_SPREAD_VECTOR,
   sampleRoutePoint,
   sampleRouteTangent,
   type RouteCurve,
@@ -689,6 +693,125 @@ describe('packet geometry', () => {
     // And the cap is real: a packet is never most of the route it runs on.
     for (const { world, route } of measured) {
       expect(world / route).toBeLessThan(0.35);
+    }
+  });
+});
+
+describe('the routing weave', () => {
+  it('indexes the spread table in the class order the shader assumes', () => {
+    // The vertex shader indexes the spread table with the same four-component
+    // basis it uses for every other per-class quantity, so the vector has to be
+    // the table read in `ROUTE_CLASS_ORDER` and nothing else. Written as a test
+    // rather than trusted because the failure mode is two backends quietly
+    // scattering different classes by different amounts.
+    expect(ROUTE_CLASS_ORDER).toEqual(['primary', 'secondary', 'signal', 'ambient']);
+    expect([...ROUTE_CLASS_SPREAD_VECTOR]).toEqual(
+      ROUTE_CLASS_ORDER.map((route) => ROUTE_CLASS_SPREAD[route]),
+    );
+  });
+
+  it('opens the band along the route and closes it at the machine', () => {
+    for (const route of ROUTE_CLASS_ORDER) {
+      const atCore = deriveDashSpread(route, 0, 0);
+      const midway = deriveDashSpread(route, 0.5, 0);
+      const atDomain = deriveDashSpread(route, 1, 0);
+
+      // Every curve in the scene is authored Core-end at progress 0, so this
+      // ordering is the compression zone: filaments converge as they approach
+      // the machine and fan out as they leave it.
+      expect(atCore).toBeLessThan(midway);
+      expect(midway).toBeLessThan(atDomain);
+      // But a trunk does not pinch to a line at the Core, which would be the one
+      // place a braid is most visible.
+      expect(atCore).toBeGreaterThan(0);
+    }
+  });
+
+  it('orders the classes by how much traffic each one carries', () => {
+    const at = (route: (typeof ROUTE_CLASS_ORDER)[number]) =>
+      deriveDashSpread(route, 1, 0);
+
+    expect(at('primary')).toBeGreaterThan(at('secondary'));
+    expect(at('secondary')).toBeGreaterThan(at('ambient'));
+    // The ingress stays precise: a socket that sprayed would not read as one.
+    expect(at('signal')).toBeLessThan(at('ambient'));
+  });
+
+  it('deploys the braid as the field commits, without ever inverting', () => {
+    for (const route of ROUTE_CLASS_ORDER) {
+      const idle = deriveDashSpread(route, 1, 0);
+      const focus = deriveDashSpread(route, 1, 1);
+
+      // Idle-to-focus is the one transition that must not go backwards: a braid
+      // that narrowed as the field committed would read as the route losing
+      // traffic at the moment it gains it.
+      expect(focus).toBeGreaterThan(idle);
+      // And "focus" is not an order of magnitude: the widest band the field can
+      // reach still has to sit near its own channel, or the strands detach from
+      // the route they belong to and the weave becomes spray.
+      expect(focus).toBeLessThan(idle * 4);
+    }
+  });
+
+  it('places every packet in its band, and never two in the same place', () => {
+    const seen = new Set<string>();
+    // Where a packet sits laterally, mapped to the depths seen at that lateral
+    // position. The two axes are hashed independently, and this is what says so:
+    // a single hash puts every packet on a diagonal through its own band, one
+    // depth per lateral position, which is a stripe — and a stripe across a band
+    // is exactly the line the weave is meant to replace.
+    const depthsPerLateral = new Map<string, Set<string>>();
+
+    for (let index = 0; index < 256; index += 1) {
+      const phase = (index * 0.6180339887) % 1;
+      const { across, through } = deriveDashScatter(phase);
+
+      expect(across).toBeGreaterThanOrEqual(-1);
+      expect(across).toBeLessThan(1);
+      expect(through).toBeGreaterThanOrEqual(-1);
+      expect(through).toBeLessThan(1);
+      seen.add(`${across.toFixed(6)}:${through.toFixed(6)}`);
+      const key = across.toFixed(1);
+      const depths = depthsPerLateral.get(key) ?? new Set<string>();
+      depths.add(through.toFixed(1));
+      depthsPerLateral.set(key, depths);
+    }
+
+    expect(seen.size).toBe(256);
+    for (const depths of depthsPerLateral.values()) {
+      expect(depths.size).toBeGreaterThan(1);
+    }
+  });
+
+  it('scatters from the packet phase it is given, and stays finite for any of it', () => {
+    for (const phase of [Number.NaN, Number.POSITIVE_INFINITY, -0.4, 3.75]) {
+      const { across, through } = deriveDashScatter(phase);
+      expect(Number.isFinite(across)).toBe(true);
+      expect(Number.isFinite(through)).toBe(true);
+    }
+
+    // The same packet keeps its place in the band: the offset is a function of
+    // the packet, so it cannot wander while it travels, which would read as
+    // noise rather than as flow. Compared closely rather than exactly, because
+    // `phase - floor(phase)` is not bit-identical across a whole-number step and
+    // the scatter multiplies that residue by ninety.
+    expect(deriveDashScatter(0.37)).toEqual(deriveDashScatter(0.37));
+    const oneTurn = deriveDashScatter(1.37);
+    expect(oneTurn.across).toBeCloseTo(deriveDashScatter(0.37).across, 9);
+    expect(oneTurn.through).toBeCloseTo(deriveDashScatter(0.37).through, 9);
+  });
+
+  it('stays finite for hostile spread inputs', () => {
+    for (const route of ROUTE_CLASS_ORDER) {
+      for (const [progress, compression] of [
+        [Number.NaN, Number.NaN],
+        [-3, 9],
+        [Number.POSITIVE_INFINITY, 0.5],
+      ] as const) {
+        const spread = deriveDashSpread(route, progress, compression);
+        expect(Number.isFinite(spread)).toBe(true);
+        expect(spread).toBeGreaterThanOrEqual(0);
+      }
     }
   });
 });

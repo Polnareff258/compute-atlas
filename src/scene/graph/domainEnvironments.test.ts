@@ -241,12 +241,13 @@ describe('deriveDomainEnvironment', () => {
     for (const nodeId of DOMAIN_IDS) {
       const environment = environmentFor(nodeId, 1);
 
-      // Movables are drawn separately from the merged mass, so no movable part
-      // may also be baked into it, and none may be baked twice.
-      expect(environment.parts.length).toBe(
-        environment.frame.length + environment.movables.length,
-      );
+      // Movables are drawn separately from the merged mass, so the merged mass
+      // is the frame and nothing else. Asserting the count as `frame + movables`
+      // would be asserting the bug: the view bakes `parts` *and* renders each
+      // movable, so anything in both is drawn twice in the same place.
+      expect(environment.parts).toEqual(environment.frame);
       for (const movable of environment.movables) {
+        expect(environment.parts).not.toContain(movable.part);
         expect(environment.frame).not.toContain(movable.part);
       }
     }
