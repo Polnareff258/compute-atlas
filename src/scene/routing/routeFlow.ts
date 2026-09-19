@@ -123,13 +123,19 @@ export function deriveRouteFlowTarget(
     groupWeights: deriveGraphGroupWeights(routing, {
       activeDomainId: activeDomainId === 'core' ? null : activeDomainId,
       focused,
-      // Idle is 0.55 rather than 0.3 because the field's visibility floor moved
-      // up above the idle domain weights, and the Core's own circulation is not
-      // a domain: it is the thing the idle frame is *of*. Left at 0.3 it would
-      // have been culled along with the branches, and the brief's idle picture —
-      // a still machine with a slow weave turning over inside it — would have
-      // been a machine with nothing running in it at all.
-      coreWeight: focused ? 0.92 : hasTarget ? 0.66 : 0.55,
+      // Idle is above the field's visibility floor rather than at the 0.3 it
+      // used to be, because the floor moved up underneath it. Left where it was
+      // the Core's circulation would have been culled along with the branches,
+      // and the brief's idle picture — a still machine with a slow weave turning
+      // over inside it — would have been a machine with nothing running in it.
+      //
+      // Not far above it, though. The first number tried here was 0.55, and the
+      // interior is dense enough that at 0.55 the aperture fills with bright
+      // crossings at every angle and the field stops reading as flow: a weave
+      // drawn in light lines is a weave, and the same weave drawn bright is
+      // scribble. The floor is what keeps it visible; the margin over the floor
+      // is what keeps it a texture rather than a subject.
+      coreWeight: focused ? 0.92 : hasTarget ? 0.54 : 0.42,
       // Only read at rest; `deriveGraphGroupWeights` says why.
       ...(restingProminence === undefined ? {} : { restingProminence }),
     }),
