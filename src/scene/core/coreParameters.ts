@@ -1,33 +1,45 @@
 import { getQualityProfile } from '../../config/quality';
 import type { QualityProfile } from '../../renderer/types';
+import { ROUTE_CLASS_ORDER } from '../routing/routeDash';
 import type { CoreParameters, CoreVisualInput } from './coreTypes';
 
-/** Compatibility helper: the configured core budget remains available to callers. */
-export function deriveCoreTelemetryParticleCount(
-  parameters: Pick<CoreParameters, 'configuredFieldBudget' | 'particleBudget'>,
-): number {
-  return parameters.configuredFieldBudget ?? parameters.particleBudget;
+function finiteClamp(value: number, minimum: number, maximum: number): number {
+  return Number.isFinite(value) ? Math.max(minimum, Math.min(maximum, value)) : 0;
+}
+
+/**
+ * Bounds controller scalars in place.
+ *
+ * The frame loop owns exactly one live input object, so it sanitizes that object
+ * rather than building a replacement — a per-frame copy of a visual input is
+ * precisely the allocation the React/GPU split exists to avoid.
+ */
+export function sanitizeCoreVisualInput(target: CoreVisualInput): void {
+  target.pointerX = finiteClamp(target.pointerX, -1, 1);
+  target.pointerY = finiteClamp(target.pointerY, -1, 1);
+  target.focusX = finiteClamp(target.focusX, -1, 1);
+  target.focusY = finiteClamp(target.focusY, -1, 1);
+  target.focusZ = finiteClamp(target.focusZ, -1, 1);
+  target.intensity = finiteClamp(target.intensity, 0, 1.2);
 }
 
 /** Sanitizes controller scalars at the serializable visual boundary. */
 export function deriveCoreVisualInput(input: CoreVisualInput): CoreVisualInput {
-  const finiteClamp = (value: number, minimum: number, maximum: number) =>
-    Number.isFinite(value) ? Math.max(minimum, Math.min(maximum, value)) : 0;
-  return {
-    pointerX: finiteClamp(input.pointerX, -1, 1),
-    pointerY: finiteClamp(input.pointerY, -1, 1),
-    focusX: finiteClamp(input.focusX, -1, 1),
-    focusY: finiteClamp(input.focusY, -1, 1),
-    focusZ: finiteClamp(input.focusZ, -1, 1),
-    intensity: finiteClamp(input.intensity, 0, 1.2),
-    visualState: input.visualState,
-    reducedMotion: input.reducedMotion,
-  };
+  const sanitized: CoreVisualInput = { ...input };
+  sanitizeCoreVisualInput(sanitized);
+  return sanitized;
 }
 
 /**
- * Converts the existing quality settings into deterministic V2 structural budgets.
- * Semantic topology remains present at SAFE; graph density only scales detail.
+ * Converts a renderer quality profile into the hero's structure and field
+ * budgets.
+ *
+ * The profile's job is not to change a point count: SAFE keeps the Hero
+ * silhouette, spine and main route, MEDIUM adds membranes and low-density flow,
+ * HIGH adds secondary surfaces and interaction response, and ULTRA turns on GPU
+ * advection and the densest route field. Those tiers are carried by
+ * `structureDetail`, `domainDetail`, `routeLanes` and `advection`; the field
+ * budget only ever caps the result.
  */
 export function getCoreParameters(profile: QualityProfile): CoreParameters {
   const quality = getQualityProfile(profile);
@@ -35,17 +47,14 @@ export function getCoreParameters(profile: QualityProfile): CoreParameters {
   return {
     profile,
     configuredFieldBudget: quality.coreParticleBudget,
-    fieldSampleBudget: Math.min(
-      quality.coreParticleBudget,
-      quality.coreFieldResolution * quality.coreFieldResolution * 10,
+    structureDetail: quality.coreStructureDetail,
+    // The flowfield packs lanes by route class, so more than the class count is
+    // not a tier, it is a clamp. Exposing the ceiling keeps the parameter honest.
+    routeLanes: Math.max(
+      1,
+      Math.min(ROUTE_CLASS_ORDER.length, Math.round(quality.coreRouteLanes)),
     ),
-    activeSignalBudget: Math.max(1, Math.round(quality.graphDensity * 4)),
-    particleBudget: quality.coreParticleBudget,
-    topologyNodeBudget: Math.max(12, Math.round(20 * quality.graphDensity)),
-    topologyEdgeBudget: Math.max(11, Math.round(20 * quality.graphDensity)),
-    fragmentBudget: Math.max(1, Math.round(quality.coreParticleBudget / 600)),
-    trajectoryBudget: Math.max(8, Math.round(12 * quality.graphDensity)),
-    fieldResolution: quality.coreFieldResolution,
-    allowBloom: quality.allowBloom,
+    advection: quality.coreAdvection,
+    domainDetail: quality.domainDetail,
   };
 }

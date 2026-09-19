@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  deriveCoreTelemetryParticleCount,
-  deriveCoreVisualInput,
-  getCoreParameters,
-} from './coreParameters';
+import { deriveCoreVisualInput, getCoreParameters } from './coreParameters';
+import { ROUTE_CLASS_ORDER } from '../routing/routeDash';
 import { createCameraController } from '../camera/cameraController';
 
 describe('deriveCoreVisualInput', () => {
@@ -12,7 +9,11 @@ describe('deriveCoreVisualInput', () => {
     const controller = createCameraController({ reducedMotion: true });
     controller.setPointerTarget(0.4, -0.2);
     controller.setFocusTarget(-0.6, 0.3, 0.8);
-    controller.update(0.016);
+
+    // Reduced motion dampens the transition rather than snapping, so the
+    // controller has to be allowed to settle before its scalars are read.
+    for (let frame = 0; frame < 60; frame += 1) controller.update(0.016);
+
     const read = (visualState: 'idle' | 'hover_response' | 'focusing') => {
       controller.setVisualState(visualState);
       return deriveCoreVisualInput({
@@ -25,8 +26,8 @@ describe('deriveCoreVisualInput', () => {
     const idle = read('idle');
     const hover = read('hover_response');
     const focus = read('focusing');
-    expect(idle.pointerX).toBe(0.4);
-    expect(focus.focusZ).toBe(0.8);
+    expect(idle.pointerX).toBeCloseTo(0.4, 3);
+    expect(focus.focusZ).toBeCloseTo(0.8, 3);
     expect(hover.visualState).toBe('hover_response');
     expect(focus.visualState).toBe('focusing');
     expect(hover.intensity).toBeGreaterThan(idle.intensity);
@@ -47,75 +48,67 @@ describe('deriveCoreVisualInput', () => {
 });
 
 describe('getCoreParameters', () => {
-  it('keeps telemetry particle count on the configured core budget', () => {
-    const parameters = getCoreParameters('ultra');
-
-    expect(deriveCoreTelemetryParticleCount(parameters)).toBe(parameters.particleBudget);
-  });
-
-
-  it('derives deterministic V2 budgets from the renderer quality profile', () => {
+  it('derives monotonically richer visual tiers from the quality profile', () => {
     const ultra = getCoreParameters('ultra');
     const high = getCoreParameters('high');
     const medium = getCoreParameters('medium');
     const safe = getCoreParameters('safe');
 
     for (const key of [
-      'particleBudget',
-      'topologyNodeBudget',
-      'topologyEdgeBudget',
-      'fragmentBudget',
-      'trajectoryBudget',
+      'configuredFieldBudget',
+      'structureDetail',
+      'routeLanes',
+      'domainDetail',
     ] as const) {
       expect(ultra[key]).toBeGreaterThanOrEqual(high[key]);
       expect(high[key]).toBeGreaterThanOrEqual(medium[key]);
       expect(medium[key]).toBeGreaterThanOrEqual(safe[key]);
     }
 
-    expect(ultra.fieldResolution).toBeGreaterThanOrEqual(high.fieldResolution);
-    expect(high.fieldResolution).toBeGreaterThanOrEqual(medium.fieldResolution);
-    expect(medium.fieldResolution).toBeGreaterThanOrEqual(safe.fieldResolution);
-    expect(ultra.allowBloom).toBe(true);
-    expect(safe.allowBloom).toBe(false);
-    expect(getCoreParameters('ultra')).toEqual(getCoreParameters('ultra'));
+    // ULTRA is the only tier that pays for GPU advection.
+    expect(ultra.advection).toBe(true);
+    expect(safe.advection).toBe(false);
   });
 
-  it('keeps every V2 budget finite and positive', () => {
-    for (const profile of ['ultra', 'high', 'medium', 'safe'] as const) {
-      const parameters = getCoreParameters(profile);
-
-      for (const key of [
-        'particleBudget',
-        'topologyNodeBudget',
-        'topologyEdgeBudget',
-        'fragmentBudget',
-        'trajectoryBudget',
-        'fieldResolution',
-      ] as const) {
-        expect(Number.isFinite(parameters[key])).toBe(true);
-        expect(parameters[key]).toBeGreaterThan(0);
-      }
-    }
-  });
-
-  it('keeps SAFE structural budgets non-zero', () => {
-    const safe = getCoreParameters('safe');
-
-    expect(safe.topologyNodeBudget).toBeGreaterThan(0);
-    expect(safe.topologyEdgeBudget).toBeGreaterThan(0);
-    expect(safe.fragmentBudget).toBeGreaterThan(0);
-    expect(safe.trajectoryBudget).toBeGreaterThan(0);
-    expect(safe.fieldResolution).toBeGreaterThan(0);
-  });
-
-  it('exposes V2 budgets without retired spherical layer parameters', () => {
+  it('changes more than the point count between tiers', () => {
     const ultra = getCoreParameters('ultra');
     const safe = getCoreParameters('safe');
 
-    for (const parameters of [ultra, safe]) {
-      expect(parameters).not.toHaveProperty('shellRadius');
-      expect(parameters).not.toHaveProperty('cageSegments');
-      expect(parameters).not.toHaveProperty('orbitalCount');
+    // The brief's SAFE requirement is that the Hero silhouette, spine and main
+    // route survive; a budget alone would not carry that.
+    expect(safe.structureDetail).toBeGreaterThan(0);
+    expect(safe.routeLanes).toBeGreaterThanOrEqual(1);
+    expect(safe.domainDetail).toBeGreaterThan(0);
+    expect(ultra.structureDetail).toBeGreaterThan(safe.structureDetail);
+    expect(ultra.domainDetail).toBeGreaterThan(safe.domainDetail);
+  });
+
+  it('never exposes more route lanes than the packed class order can hold', () => {
+    for (const profile of ['ultra', 'high', 'medium', 'safe'] as const) {
+      const parameters = getCoreParameters(profile);
+
+      expect(parameters.routeLanes).toBeLessThanOrEqual(ROUTE_CLASS_ORDER.length);
+      expect(Number.isFinite(parameters.configuredFieldBudget)).toBe(true);
+      expect(parameters.configuredFieldBudget).toBeGreaterThan(0);
+    }
+  });
+
+  it('is deterministic and free of retired particle-era budgets', () => {
+    const ultra = getCoreParameters('ultra');
+
+    expect(getCoreParameters('ultra')).toEqual(ultra);
+    for (const retired of [
+      'shellRadius',
+      'cageSegments',
+      'orbitalCount',
+      'topologyNodeBudget',
+      'topologyEdgeBudget',
+      'fragmentBudget',
+      'trajectoryBudget',
+      'fieldResolution',
+      'particleBudget',
+    ]) {
+      expect(ultra).not.toHaveProperty(retired);
     }
   });
 });

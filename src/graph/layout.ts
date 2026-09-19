@@ -1,22 +1,29 @@
-import type {
-  GraphEdge,
-  GraphLayout,
-  GraphManifest,
-  GraphPosition,
-} from './types';
+import type { GraphLayout, GraphManifest } from './types';
 
+/**
+ * Deliberately asymmetric and depth-separated.
+ *
+ * An earlier revision mirrored the domains in near-identical pairs, which is
+ * exactly what makes a graph read as a diagram rather than a place. Each domain
+ * now sits at its own distance, height and depth so the composition has a near
+ * side and a far side, and GRAPHICS sits clearly to the left of the Core: it is
+ * the domain the focus choreography reframes against.
+ *
+ * The Core stays at the semantic origin. Its off-centre placement in the frame
+ * is a camera concern, so it is not encoded here.
+ */
 const NODE_LAYOUT: GraphLayout = {
   core: [0, 0, 0],
-  ai: [-2.96, 1.02, 0.78],
-  graphics: [-3.02, -1.06, -0.52],
-  'game-analysis': [0.04, 1.82, -1.12],
-  systems: [2.96, 1.02, 0.56],
-  research: [3.02, -1.16, -0.86],
+  graphics: [-3.35, -0.62, 0.35],
+  ai: [-2.55, 1.42, -0.95],
+  // Held lower and further back than its original height: at the idle framing a
+  // domain at y 2.35 sits within one domain-extent of the top edge, so the
+  // assembly arrived as a box cut in half with its label off the frame. Depth
+  // also keeps it in the far group, which is where the file's spread is checked.
+  'game-analysis': [0.95, 1.5, 0.4],
+  systems: [3.05, 0.72, -0.65],
+  research: [2.35, -1.75, 1.05],
 };
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(Math.max(value, minimum), maximum);
-}
 
 export function deriveGraphLayout(manifest: GraphManifest): GraphLayout {
   for (const node of manifest.nodes) {
@@ -27,42 +34,4 @@ export function deriveGraphLayout(manifest: GraphManifest): GraphLayout {
   }
 
   return NODE_LAYOUT;
-}
-
-export function deriveGraphEdgePoints(
-  edge: GraphEdge,
-  layout: GraphLayout,
-  graphDensity: number,
-): readonly GraphPosition[] {
-  const start = layout[edge.source];
-  const end = layout[edge.target];
-  const subdivisions = Math.max(3, Math.round(clamp(graphDensity, 0.1, 1) * 6));
-  const points: GraphPosition[] = [];
-  const dx = end[0] - start[0];
-  const dy = end[1] - start[1];
-  const length = Math.max(Math.hypot(dx, dy), 0.001);
-  const normalX = -dy / length;
-  const normalY = dx / length;
-  const identity = Array.from(edge.id).reduce((sum, character) => sum + character.charCodeAt(0), 0);
-  const sign = identity % 2 === 0 ? 1 : -1;
-  const bend = sign * (0.28 + edge.strength * 0.16);
-  const control = [
-    (start[0] + end[0]) * 0.5 + normalX * bend,
-    (start[1] + end[1]) * 0.5 + normalY * bend,
-    (start[2] + end[2]) * 0.5 + (identity % 3 - 1) * 0.22,
-  ] as const;
-
-  for (let index = 0; index <= subdivisions; index += 1) {
-    const progress = index / subdivisions;
-    const inverse = 1 - progress;
-    const curve: GraphPosition = [
-      inverse * inverse * start[0] + 2 * inverse * progress * control[0] + progress * progress * end[0],
-      inverse * inverse * start[1] + 2 * inverse * progress * control[1] + progress * progress * end[1],
-      inverse * inverse * start[2] + 2 * inverse * progress * control[2] + progress * progress * end[2],
-    ];
-    const fanOffset = index === subdivisions - 1 ? sign * 0.065 : 0;
-    points.push([curve[0] + normalX * fanOffset, curve[1] + normalY * fanOffset, curve[2]]);
-  }
-
-  return points;
 }

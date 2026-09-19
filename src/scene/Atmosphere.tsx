@@ -2,63 +2,68 @@
 
 import type { JSX } from 'react';
 import { useEffect, useMemo } from 'react';
-import * as THREE from 'three';
 
+import { createSurfaceMaterial } from './materials/surfaceMaterial';
+import { buildStructureGeometry } from './materials/structureGeometry';
 import { deriveAtmosphereDescriptor } from './atmosphereDescriptor';
 
-type AtmosphereProps = {
-  readonly reducedMotion?: boolean;
-};
-
-export function Atmosphere({ reducedMotion = false }: AtmosphereProps): JSX.Element {
+/**
+ * Depth behind the composition.
+ *
+ * Three large depth-separated planes in the machine's recessed tier, merged into
+ * one mass and graded by the scene fog. This replaces the previous constellation
+ * of thin traces and stray points: a backdrop that reads as distance and scale,
+ * with nothing in it that could be mistaken for a signal.
+ *
+ * It takes no backend: the backdrop is the one surface in the scene whose
+ * material path does not branch on one (see below).
+ */
+export function Atmosphere(): JSX.Element {
   const descriptor = useMemo(() => deriveAtmosphereDescriptor(), []);
-  const resources = useMemo(() => {
-    const lines = descriptor.traces.map((trace) => {
-      const values = new Float32Array(trace.points.length * 3);
-      trace.points.forEach((point, index) => values.set(point, index * 3));
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(values, 3));
-      const material = new THREE.LineBasicMaterial({
-        color: '#859a9a',
-        depthWrite: false,
-        opacity: trace.opacity * (reducedMotion ? 0.76 : 1),
-        transparent: true,
-      });
-      const line = new THREE.Line(geometry, material);
-      line.frustumCulled = false;
-      return line;
-    });
-    const pointValues = new Float32Array(
-      descriptor.traces.flatMap((trace) => trace.points.flatMap((point) => [...point])),
-    );
-    const pointGeometry = new THREE.BufferGeometry();
-    pointGeometry.setAttribute('position', new THREE.BufferAttribute(pointValues, 3));
-    const pointMaterial = new THREE.PointsMaterial({
-      color: '#afc0bf',
-      depthWrite: false,
-      opacity: reducedMotion ? 0.08 : 0.13,
-      size: 0.018,
-      sizeAttenuation: true,
-      transparent: true,
-    });
-    const points = new THREE.Points(pointGeometry, pointMaterial);
-    points.frustumCulled = false;
-    return { lines, points };
-  }, [descriptor, reducedMotion]);
+  const geometry = useMemo(() => buildStructureGeometry(descriptor.parts), [descriptor]);
+  const material = useMemo(
+    () =>
+      createSurfaceMaterial({
+        role: 'volume',
+        color: '#ffffff',
+        // Nearly head-on and far away, so the view-edge term is barely asked for.
+        edgeResponse: 0.18,
+        // Deliberately the standard path on both backends, and not a fallback.
+        //
+        // The backdrop is the one surface in the scene that never moves and never
+        // responds, so the node path buys it nothing — and on WebGPU the node path
+        // draws this mesh black. Measured on the same frame, at the frame centre:
+        // node path (2,3,3), standard path (26,33,33), and the scene's own
+        // background colour is (5,6,9). So on WebGL2 the backdrop showed exactly
+        // as authored while WebGPU rendered a frame that was already at or below
+        // the clear colour, meaning the backdrop was contributing nothing there.
+        // The standard path draws it identically on both backends, so the static
+        // backdrop takes that path until the node path is understood.
+        webgpuPreferred: false,
+      }),
+    [],
+  );
 
-  useEffect(() => () => {
-    for (const line of resources.lines) {
-      line.geometry.dispose();
-      line.material.dispose();
-    }
-    resources.points.geometry.dispose();
-    resources.points.material.dispose();
-  }, [resources]);
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      material.dispose();
+    },
+    [geometry, material],
+  );
+
+  useEffect(() => {
+    // The backdrop carries no activity of its own: it is the one surface in the
+    // scene that is not allowed to move.
+    material.updateInput({ activity: 0, focus: 0, reducedMotion: true });
+  }, [material]);
 
   return (
-    <group name="scene-atmosphere">
-      {resources.lines.map((line, index) => <primitive key={'trace-' + index} object={line} />)}
-      <primitive object={resources.points} />
-    </group>
+    <mesh
+      geometry={geometry.solid}
+      material={material.material}
+      name="scene-atmosphere"
+      renderOrder={-1}
+    />
   );
 }

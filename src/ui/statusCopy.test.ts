@@ -20,7 +20,7 @@ function createState(
 }
 
 describe('getRendererStatusCopy', () => {
-  it('describes a ready WebGPU renderer without inventing hardware metrics', () => {
+  it('states backend and tier in one line and nothing else', () => {
     expect(
       getRendererStatusCopy(
         createState({
@@ -29,43 +29,36 @@ describe('getRendererStatusCopy', () => {
           rendererName: 'Three.js WebGPURenderer',
         }),
       ),
-    ).toEqual({
-      label: 'WEBGPU READY',
-      detail: 'Three.js WebGPURenderer',
-      tone: 'ready',
-    });
+    ).toEqual({ label: 'WEBGPU · ULTRA', detail: '', tone: 'ready' });
+  });
+
+  it('names the active tier rather than a fixed one', () => {
+    expect(
+      getRendererStatusCopy(
+        createState({ status: 'ready', backend: 'webgpu', quality: 'safe' }),
+      ).label,
+    ).toBe('WEBGPU · SAFE');
   });
 
   it('describes a ready WebGL2 renderer when it is the available backend', () => {
     expect(
       getRendererStatusCopy(
-        createState({
-          status: 'ready',
-          backend: 'webgl2',
-          rendererName: 'Three.js WebGLRenderer',
-        }),
+        createState({ status: 'ready', backend: 'webgl2' }),
       ),
-    ).toEqual({
-      label: 'WEBGL2 READY',
-      detail: 'Three.js WebGLRenderer',
-      tone: 'ready',
-    });
+    ).toEqual({ label: 'WEBGL2 · ULTRA', detail: '', tone: 'ready' });
   });
+
   it('makes a WebGL2 fallback explicit', () => {
-    expect(
-      getRendererStatusCopy(
-        createState({
-          status: 'fallback',
-          backend: 'webgl2',
-          rendererName: 'Three.js WebGLRenderer',
-          error: 'WebGPU initialization failed: device lost',
-        }),
-      ),
-    ).toEqual({
-      label: 'WEBGL2 FALLBACK',
-      detail: 'Three.js WebGLRenderer',
-      tone: 'fallback',
-    });
+    const copy = getRendererStatusCopy(
+      createState({
+        status: 'fallback',
+        backend: 'webgl2',
+        error: 'WebGPU initialization failed: device lost',
+      }),
+    );
+
+    expect(copy.label).toBe('WEBGL2 FALLBACK · ULTRA');
+    expect(copy.tone).toBe('fallback');
   });
 
   it('reports a degraded shell when no renderer is available', () => {
@@ -77,9 +70,32 @@ describe('getRendererStatusCopy', () => {
         }),
       ),
     ).toEqual({
-      label: 'GRAPHICS DEGRADED',
+      label: 'GRAPHICS UNAVAILABLE',
       detail: 'WebGPU and WebGL2 are unavailable',
       tone: 'degraded',
     });
+  });
+
+  it('keeps a pending state legible to the readiness probe', () => {
+    // The capture harness waits for the status to stop reading as initializing,
+    // so the word itself is a contract rather than a wording choice.
+    expect(getRendererStatusCopy(createState()).label).toMatch(/INITIALIZING/);
+    expect(getRendererStatusCopy(createState({ status: 'stopped' })).detail).toBe(
+      'Renderer stopped',
+    );
+  });
+
+  it('never claims hardware the runtime did not report', () => {
+    for (const state of [
+      createState({ status: 'ready', backend: 'webgpu' }),
+      createState({ status: 'ready', backend: 'webgl2' }),
+      createState({ status: 'fallback', backend: 'webgl2' }),
+      createState({ status: 'degraded', error: 'no adapters' }),
+      createState({ status: 'idle' }),
+    ]) {
+      const copy = getRendererStatusCopy(state);
+      expect(copy.label).not.toMatch(/fps|frame|ms\b/i);
+      expect(copy.detail).not.toMatch(/fps|frame|ms\b/i);
+    }
   });
 });

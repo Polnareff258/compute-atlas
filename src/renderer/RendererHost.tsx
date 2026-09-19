@@ -18,6 +18,11 @@ import {
   createRendererRuntime,
   type RendererRuntimeState,
 } from './runtime';
+import { useReducedMotionPreference } from './reducedMotion';
+import {
+  BASE_CAMERA_DISTANCE,
+  CAMERA_FOV_DEGREES,
+} from '../scene/camera/cameraController';
 import { SceneHost } from '../scene/SceneHost';
 import type { QualityProfile } from './types';
 import type { RendererTelemetrySnapshot } from '../telemetry/rendererTelemetry';
@@ -52,6 +57,11 @@ export function RendererHost() {
   const latestTelemetryRef = useRef<RendererTelemetrySnapshot | null>(null);
   const lastTelemetryLogRef = useRef(0);
   const [runtimeState, setRuntimeState] = useState(INITIAL_RUNTIME_STATE);
+  const prefersReducedMotion = useReducedMotionPreference();
+  // Read by the once-created `renderScene` closure, so it is synced in an effect
+  // rather than written during render.
+  const prefersReducedMotionRef = useRef(prefersReducedMotion);
+  const renderSceneRef = useRef<(() => void) | null>(null);
   const handleTelemetry = useCallback((snapshot: RendererTelemetrySnapshot) => {
     latestTelemetryRef.current = snapshot;
 
@@ -95,6 +105,7 @@ export function RendererHost() {
         <SceneHost
           quality={nextState.quality}
           backend={nextState.backend}
+          reducedMotion={prefersReducedMotionRef.current}
           onTelemetry={handleTelemetry}
           onCommandBusReady={(bus) => {
             commandBusRef.current = bus;
@@ -135,7 +146,18 @@ export function RendererHost() {
 
         root = createRoot(canvas);
         await root.configure({
-          camera: { fov: 48, position: [0, 0, 6] },
+          // R3F otherwise installs ACES filmic tone mapping, whose shadow toe
+          // returns about an eighth of its input below mid-grey. The machine
+          // palette is authored display-referred and its whole hierarchy lives in
+          // that range, so the default silently flattens every recessed tier and
+          // the far half of the composition into the background. The scene lights
+          // itself by baking orientation luminance, so it wants its authored
+          // values on screen rather than a film response curve applied to them.
+          flat: true,
+          camera: {
+            fov: CAMERA_FOV_DEGREES,
+            position: [0, 0, BASE_CAMERA_DISTANCE],
+          },
           events: (store) => {
             const manager = events(store);
             return {
@@ -152,6 +174,7 @@ export function RendererHost() {
           gl: rendererRef.current,
         });
         renderScene(nextState);
+        renderSceneRef.current = () => renderScene(runtime.getState());
       },
     });
 
@@ -205,10 +228,19 @@ export function RendererHost() {
         window.removeEventListener(devQualityEvent, handleDevQuality);
       }
       sceneStore = null;
+      renderSceneRef.current = null;
       root?.unmount();
       runtime.stop();
     };
   }, [handleTelemetry]);
+
+  // A preference change is a semantic scene input, not a canvas opacity tweak.
+  // The ref is updated first so the scene it re-renders already sees the new
+  // value, and so nothing writes a ref during render.
+  useEffect(() => {
+    prefersReducedMotionRef.current = prefersReducedMotion;
+    renderSceneRef.current?.();
+  }, [prefersReducedMotion]);
 
   return (
     <section className="renderer-host" aria-label="Graphics runtime">
