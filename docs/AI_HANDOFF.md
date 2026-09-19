@@ -5,7 +5,7 @@
 Repository: Polnareff258/compute-atlas
 Default branch: master
 Current branch: `master`
-Stage 3.5.1 implementation commit: latest local commit at handoff; see `git log -1` for the SHA. Push target: `origin/master` via the configured v2rayN proxy.
+Stage 3.5.2 implementation commit: latest local commit at handoff; see `git log -1` for the SHA. Push target: `origin/master` via the configured v2rayN proxy.
 
 ## Product
 
@@ -16,10 +16,11 @@ Future stages add deterministic commands, a local Agent gateway and runnable exp
 
 ## Current Stage
 
-Stage 3.5.1 implementation ready for review; visual evidence closeout is incomplete.
-Next: resolve the screenshot/browser-evidence gap, then Visual Review / Sol Review.
+Stage 3.5.2 visual reconstruction is implemented and captured on both backends.
+Next: Visual Review / Sol Review, carrying the one documented node-material divergence as an open item.
 Stage 6 is not started and must remain out of scope until separately requested.
 
+Stage 3.5.2 supersedes the Stage 3.5.1 visual layer. Stage 3.5.1 never produced its own screenshots, so nothing in `artifacts/` is Stage 3.5.1 evidence — the `stage352-*` files are this stage's, and the `stage35-*` files are historical V2 evidence only.
 Stage 3.5 is an inserted visual identity slice, not a replacement for the existing Stage 0–5.1 history.
 Do not start Stage 6 work in a Stage 3.5 review.
 
@@ -80,7 +81,8 @@ Stage 4 — Data-driven Knowledge Graph, deterministic layout, spatial hover/foc
 Stage 5 — Typed synchronous Command Bus, registry, results and graph/renderer semantic adapters.
 Stage 5.1 — Independent hover/focus ownership, runtime-to-renderer quality propagation, truthful WebGL2 status and this handoff.
 Stage 3.5 — Asymmetric Compute Core V2 composition, structure-changing states, WebGPU/WebGL2 browser evidence and fallback point-size correction.
-Stage 3.5.1 — Deterministic primary/secondary route hierarchy, compact zoned GPU field, layered processing nucleus, five distinct domain silhouettes, bent graph routes, sparse depth atmosphere and explicit configured/rendered/signal telemetry counts. Implementation is in the current worktree; local screenshots and browser WebGL2/reduced-motion verification remain outstanding.
+Stage 3.5.1 — Deterministic route hierarchy, compact zoned GPU field, layered nucleus, five domain silhouettes, bent graph routes and explicit configured/rendered/signal telemetry counts. Its visual layer is superseded by Stage 3.5.2, and it never produced its own screenshots.
+Stage 3.5.2 — Rebuilt hero Core (diagonal structural spine, asymmetric processing volume, central void, route ports and ingress, structural slices), a semantic routing flowfield of velocity-stretched dashes with route compression and arrival wake, five distinct domain sub-environments, one shared procedural surface material across both backends, and a reduced-motion path that stops the scene instead of dimming the canvas. Captured on WebGPU and WebGL2 at 1920×1080 and 2560×1440 with 31 local artifacts.
 
 ## Current State Ownership
 
@@ -91,11 +93,13 @@ Renderer backend owner: RendererRuntime plus the selected WebGPU/WebGL2 adapter.
 Renderer DPR owner: the active renderer handle plus the R3F RootStore setDpr seam.
 Camera focus owner: SceneHost's existing CameraController; Graph only supplies semantic interaction.
 Compute Core response owner: SceneHost maps graph state to ComputeCoreVisualState; ComputeCore remains graph-blind.
-Compute Core V2 visual owner: ComputeCore composes deterministic topology, field, fragment, trajectory and signal views; coreFlowMaterial.ts owns the WebGPU/WebGL2 material seam.
-Stage 3.5.1 topology owner: `coreTopology.ts` supplies route/region/depth descriptors; `CoreTopologyView.tsx` owns instanced primary members and separate secondary/ambient/signal buffers.
-Stage 3.5.1 field owner: `coreField.ts` supplies stable zoned attributes and visible sample counts; `coreFlowMaterial.ts` consumes bounded scalar state; only signal/route views update small per-frame buffers.
-Stage 3.5.1 domain-view owner: `domainVisuals.ts` supplies deterministic silhouettes; `KnowledgeGraph` retains hover/focus reducer ownership; `GraphEdges.tsx` draws view-only bent routes and related pulses.
-Stage 3.5.1 telemetry owner: `coreTelemetry.ts` distinguishes configured field budget, visible field samples and active signal samples; `rendererTelemetry.ts` preserves `particleCount` as visible field samples.
+Compute Core visual owner: ComputeCore composes deterministic structure, circulation and signal views and stays graph-blind.
+Stage 3.5.2 structure owner: `coreStructure.ts` supplies the spine, processing volume, void, ports and slices; `coreStructureGeometry.ts` and `structureGeometry.ts` bake them into solid and membrane geometry; `CoreStructureView.tsx` mounts them.
+Stage 3.5.2 circulation owner: `coreCirculation.ts` supplies the deterministic route field and its stretched-dash samples. Only discrete semantic state (hover, focus, quality, reduced motion) crosses from React; continuous intensity, time and progress stay in refs and uniforms.
+Stage 3.5.2 domain-view owner: `domainEnvironments.ts` supplies perimeter descriptors and `domainCircuits.ts` the per-domain local topology; `DomainEnvironment.tsx` renders them. `KnowledgeGraph` retains hover/focus reducer ownership and `GraphEdges.tsx` draws view-only routes.
+Stage 3.5.2 material owner: `surfaceMaterial.ts` is the single factory for every structural role on both backends; `surfaceGeometry.ts` owns baked orientation luminance and the bounded membrane opacity band.
+Stage 3.5.2 reduced-motion owner: `reducedMotion.ts` reads and subscribes to the media query; `RendererHost` passes the preference into `SceneHost`, which is where motion actually stops.
+Stage 3.5.2 telemetry owner: `SceneHost` samples `src/telemetry/rendererTelemetry.ts` from `coreCirculation` counts, distinguishing configured field budget, rendered field samples and active signal samples; `particleCount` remains rendered field samples.
 
 ## Quality Propagation
 
@@ -118,32 +122,42 @@ Backend selection is not changed by quality changes.
 - Stage 11: performance instrumentation and frame-budget tuning.
 - Stage 12: final visual polish and regression pass.
 
-Do not add palette, parser, Ollama, Agent, SSE, trace, overlay, Stage 11 or Stage 12 work while reviewing Stage 3.5.
+Do not add palette, parser, Ollama, Agent, SSE, trace, overlay, Stage 11 or Stage 12 work while reviewing Stage 3.5.2.
 
 ## Known Issues / Debt
 
 - KnowledgeGraph pointer projection is O(N) per pointer move; this is acceptable for five domain nodes.
 - The browser logs known library/environment notices: missing `/favicon.ico`, Three.Clock deprecation, WebGPU PCFSoftShadowMap remapping, headless powerPreference/zero-vertex notices and software WebGL2 ReadPixels notices.
-- Stage 3.5.1 review gaps: only live WebGPU overview/focus/Escape were inspected in the Codex in-app browser (1280×720, DPR 2, 2560×1440 drawing buffer; adapter name unavailable). Browser WebGL2 fallback and active reduced-motion mode were not exercised. Two visual iterations were inspected in the UI, but browser URL policy blocked local screenshot export; no `artifacts/stage351-*.png` files exist. Do not cite Stage 3.5 screenshots as Stage 3.5.1 evidence.
+- **Open, localised, not fixed: the WebGPU node material path renders the machine's mid-tones darker than the standard path.** Same frame at (1152,497): WebGPU 83 against WebGL2 143, ratio 0.58 across sampled pixels. Histograms: WebGPU p50 4 / p90 28 / p99 102 against WebGL2 p50 26 / p90 69 / p99 155. Forcing the standard path on WebGPU reproduces the WebGL2 histogram to within 1–2 levels (p50 28/26, p90 70/69, p99 156/155, p99.9 219/208), which localises the divergence inside the node material path and not in the renderer's output transform, fog or colour management. Three's `VertexColorNode`, the GLSL and node fog formulas and the node alpha path were each checked and ruled out. Carried as debt; do not describe WebGPU and WebGL2 output as identical.
+- Stage 3.5.1 evidence gaps are now historical: that stage never produced screenshots and its WebGL2/reduced-motion browser runs were never performed. Stage 3.5.2 re-ran all of them, so treat the `stage352-*` artifacts as the current evidence and the `stage35-*` files as historical V2 evidence only.
 - No sustained FPS, GPU utilization, VRAM or thermal claim has been made.
 - The development-only quality dispatch event exists solely for browser verification; it is not a production command API or UI.
 
 ## Verification
 
-Latest committed Stage 3.5 suite: 21 files, 136 tests passed.
-Stage 3.5.1 validation: `npm.cmd test` passed, 24 files / 149 tests; `npm.cmd run typecheck` passed; ESLint over all changed source/test areas passed; `npm.cmd run build` passed on Next.js 16.3.5.
-Stage 3.5.1 browser: WebGPU `boot=skip`, `Three.js WebGPURenderer`, `WEBGPU READY`, ULTRA; 1280×720 viewport, DPR 2, 2560×1440 drawing buffer, adapter name unavailable. GRAPHICS focus exposed its description; Escape cleared the focused state. Fresh post-fix console sample had no errors; known warnings: Three.Clock deprecation and WebGPU PCFSoftShadowMap remapping.
-Stage 3.5.1 browser gaps: no actual WebGL2 or reduced-motion browser run; no local screenshot artifacts. Unit tests cover WebGL2 material selection and reduced-motion mapping but are not substitutes for those browser checks.
-Previous Stage 3.5 screenshot evidence remains: `artifacts/stage35-core-v2-overview-webgpu.png`, `artifacts/stage35-core-v2-hover-webgpu.png`, `artifacts/stage35-core-v2-focused-webgpu.png`, `artifacts/stage35-core-v2-overview-2560-webgpu.png`, plus the corresponding WebGL2 files. These are historical V2 evidence only.
+Stage 3.5.2 validation: `npm.cmd test` passed, 32 files / 237 tests; `npm.cmd run typecheck` passed; `npm.cmd run lint` passed; `NEXT_TELEMETRY_DISABLED=1 npm.cmd run build` passed on Next.js 16.3.5.
+
+Stage 3.5.2 browser capture uses a zero-dependency Chrome DevTools Protocol harness over Node 24's built-in `WebSocket` (`scripts/stage352-capture.mjs`) against `?boot=skip&telemetry=1`. No dependency or `package.json` entry was added to support it; browser temp profiles live in the OS temp directory, never in the repository.
+- WebGPU, 1920×1080 and 2560×1440 × {overview, hover-GRAPHICS, focus-GRAPHICS, Escape}: 10 files, 34 console messages — info 25, warning 9, error 0, fatal 0.
+- WebGL2, the same matrix, reached by shadowing `navigator.gpu` before document start: 10 files, 28 console messages — info 24, warning 4, error 0, fatal 0. No NaN, invalid buffer or WebGPU validation error on either backend.
+- A 480×270 downscale of each overview is captured alongside it; the Hero, the processing volume and the primary route stay recognisable at that size.
+- Reduced motion is measured rather than asserted. Sampling the same scene twice ~3 s apart inside one session: normal mode 1.82% of pixels (37,772 px) changed; reduced motion 0.00% (0 px) changed, mean luminance identical to three decimals. Evidence: `artifacts/stage352-motionprobe-{normal,reduced}-{a,b}.png`.
+- Quality profiles change structure, not only counts. SAFE vs ULTRA differ by 16.60% (overview) and 17.08% (hover); ULTRA reaches p99.9 215 / peak 255 against SAFE's 147 / 231. The SAFE overview still reads as the Hero, its spine, all five domain silhouettes and the main routes.
+- 31 `artifacts/stage352-*.png` files in total, all local: `.gitignore` excludes `artifacts/` and only the 7 historical `stage35-*` files were force-added past it, so none of this stage's evidence is in the repository. Re-run `scripts/stage352-capture.mjs` to regenerate it; do not expect the PNGs to be present on a fresh clone.
+
+Two real defects were found by running this matrix and fixed; neither was visible to the test suite:
+- The entire membrane tier rendered nothing on both backends (three samples an alpha map in the green channel; the map was a single-channel red texture, so every membrane fragment was discarded against a constant zero). Forcing the alpha test to 0 changed 4.60% of the frame (95,407 px), which is the proof it had been drawing nothing. The dither was replaced with a bounded blend.
+- `Atmosphere` diverged by backend on the depth backdrop: (2,3,3) on the node path against the scene background of (5,6,9). It no longer branches on backend and now reads (26,33,33) at centre and (11–12,14–16,17) at the corners on WebGPU, matching WebGL2.
 
 ## Current Visual Review / Sol Review Guidance
 
-Before reviewing Stage 3.5.1:
-1. Read this file and the Stage 3.5.1 section in `docs/PROJECT_STATUS.md`.
-2. Confirm the current HEAD and worktree against `origin/master`; preserve the documented evidence gaps.
+Before reviewing Stage 3.5.2:
+1. Read `docs/STAGE352_REVIEW_BRIEF.md` first — it is written to be read instead of re-deriving the measured facts — then this file and the Stage 3.5.2 section in `docs/PROJECT_STATUS.md`.
+2. Confirm the current HEAD and worktree against `origin/master`, and confirm the pre-existing user changes (`vitest.config.ts`, `START_STAGE351_REVIEW.cmd`, `scripts/`, `tests/stage351-review-launcher.test.mjs`) are still present and unmodified.
 3. Review only the relevant files listed below; do not scan the whole repository without evidence.
-4. Treat the live WebGPU focus/Escape check as verified, but treat screenshot artifacts, browser WebGL2 fallback and reduced-motion browser behavior as open evidence gaps.
-5. Keep Stage 6 and later work out of this review.
+4. Inspect the `artifacts/stage352-*.png` captures directly if they are present in your worktree; if they are not, regenerate them with `scripts/stage352-capture.mjs` rather than reviewing from these descriptions. Both backends, both resolutions, hover, focus, Escape, the 480×270 downscales, the reduced-motion pair and the SAFE-vs-ULTRA pair are all covered, so unlike Stage 3.5.1 there is no screenshot gap to accept.
+5. Keep the node-material mid-tone divergence open rather than assuming the backends match.
+6. Keep Stage 6 and later work out of this review.
 
 Review the ownership seams before reviewing visual behavior.
 Treat the reducer tests as the authority for hover/focus semantics.
@@ -181,27 +195,36 @@ Scene integration:
 src/scene/SceneHost.tsx
 src/scene/camera/cameraController.ts
 
-Compute Core V2:
+Compute Core (Stage 3.5.2):
 src/scene/core/ComputeCore.tsx
-src/scene/core/coreTopology.ts
-src/scene/core/CoreTopologyView.tsx
-src/scene/core/coreField.ts
-src/scene/core/coreFlowMaterial.ts
-src/scene/core/coreTrajectories.ts
-src/scene/core/coreTelemetry.ts
-src/scene/core/CoreNucleus.tsx
-src/scene/core/CoreFlowField.tsx
-src/scene/core/CoreTrajectoryPaths.tsx
-src/scene/core/CoreSignals.tsx
+src/scene/core/CoreStructureView.tsx
+src/scene/core/coreStructure.ts
+src/scene/core/coreStructureGeometry.ts
+src/scene/core/coreCirculation.ts
+src/scene/core/coreParameters.ts
+src/scene/core/coreTypes.ts
 
-Stage 3.5.1 Graph / atmosphere:
-src/scene/graph/domainVisuals.ts
-src/scene/graph/GraphNode.tsx
+Structure / material system (Stage 3.5.2):
+src/scene/materials/surfaceMaterial.ts
+src/scene/materials/surfaceGeometry.ts
+src/scene/materials/structureGeometry.ts
+src/scene/materials/machinePalette.ts
+src/scene/Atmosphere.tsx
+src/scene/atmosphereDescriptor.ts
+
+Domains / graph (Stage 3.5.2):
+src/scene/graph/DomainEnvironment.tsx
+src/scene/graph/domainEnvironments.ts
+src/scene/graph/domainCircuits.ts
 src/scene/graph/GraphEdges.tsx
 src/scene/graph/KnowledgeGraph.tsx
 src/graph/layout.ts
-src/scene/atmosphereDescriptor.ts
-src/scene/Atmosphere.tsx
+
+Reduced motion / UI (Stage 3.5.2):
+src/renderer/reducedMotion.ts
+src/renderer/RendererHost.tsx
+src/ui/statusCopy.ts
+src/ui/RendererStatus.tsx
 
 Status:
 src/ui/statusCopy.ts
@@ -212,4 +235,4 @@ not implemented yet
 
 ## Next Gate
 
-Resolve or explicitly accept the Stage 3.5.1 visual-evidence gaps, then perform Visual Review / Sol Review. Do not start Stage 6 as part of this task.
+Perform Visual Review / Sol Review of Stage 3.5.2 against the captured artifacts, with the node-material mid-tone divergence reviewed as a known open item rather than a surprise. Do not start Stage 6 as part of this task.

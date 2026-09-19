@@ -3,7 +3,7 @@
 **As of:** 2026-09-19
 **Repository:** `Polnareff258/compute-atlas`
 **Current phase:** Phase 1
-**Current stage:** Stage 3.5.1 implementation is ready for review; local screenshot evidence and browser fallback checks remain incomplete. Stage 6 is not started.
+**Current stage:** Stage 3.5.2 visual reconstruction is implemented and captured on both backends; local screenshot evidence for 3.5.1 is superseded by 3.5.2. One known, localised material divergence is documented rather than fixed. Stage 6 is not started.
 
 ## Confirmed architecture
 
@@ -28,7 +28,8 @@
 | Stage 5 — Command Bus | Complete | Typed synchronous dispatch, graph/quality adapters, structured results and unavailable future commands are verified. |
 | Stage 5.1 — corrective pass | Complete | Hover/focus ownership separated; runtime quality now reaches canvas/R3F DPR; AI handoff added. |
 | Stage 3.5 — Compute Core Visual Identity V2 | Complete | Non-spherical V2 composition, structure-changing states, WebGPU/WebGL2 evidence and fallback correction are complete. |
-| Stage 3.5.1 — Visual Composition Reconstruction | Implementation ready for review; evidence incomplete | Deterministic machine topology, local field, five domain silhouettes and truthful draw-count telemetry are implemented. WebGPU overview/focus/Escape were inspected live; required local screenshots and browser WebGL2/reduced-motion runs were not captured. |
+| Stage 3.5.1 — Visual Composition Reconstruction | Superseded by Stage 3.5.2 | Deterministic machine topology, local field, five domain silhouettes and truthful draw-count telemetry were introduced here. Its own screenshot pass was never captured in-browser; Stage 3.5.2 rebuilt the visual layer and produced the evidence instead. |
+| Stage 3.5.2 — Visual Reconstruction | Implemented; captured on WebGPU and WebGL2 | Rebuilt hero Core, semantic routing flowfield, five domain sub-environments, unified surface material and reduced-motion fix. 31 local evidence PNGs (plus the 7 historical V2 files), error 0 / fatal 0 on both backends. One known node-material mid-tone divergence is documented below. |
 | Stage 6 — Command Palette | Not started | No palette UI has been added. |
 | Stage 7 — backend/Ollama health | Not started | Browser gateway intentionally remains NOT INITIALIZED until this stage. |
 | Stage 8 — Agent tool calling | Not started | No model or tool call is made from the browser. |
@@ -210,3 +211,42 @@ This corrective slice rebuilds the Core/Graph composition while keeping Stage 0�
 - Browser WebGL2 fallback and active `prefers-reduced-motion` were not exercised in this in-app session. Their material/state contracts are covered by the passing test suite, but that is not a browser-run substitute.
 - Two live visual iterations were inspected, but the browser URL policy blocked converting the captured screenshot bytes into local downloadable files. No `artifacts/stage351-*.png` files were created; do not treat the older Stage 3.5 screenshots as Stage 3.5.1 evidence.
 - Therefore this is implementation-ready for Visual Review / Sol Review, not an evidence-complete stage closeout. Stage 6 remains not started.
+
+## Stage 3.5.2 — Visual Reconstruction
+
+This slice rebuilds the presentation layer — hero Core, routing flowfield, domain sub-environments, material system and UI typography — without moving any Stage 0–5.1 ownership boundary. It does not start Stage 6 and adds no palette, parser, Ollama, Agent Gateway, Trace or Developer Overlay.
+
+- `src/scene/materials/structureGeometry.ts` bakes a whole structure into two geometries — solid and membrane — with tier colour and per-face orientation luminance pre-multiplied into vertex colours. A structure's mass therefore costs two draw calls rather than one per box, and the luminance a rotated face should carry is computed after its own transform, which is what gives large forms mass without a light.
+- `src/scene/materials/surfaceGeometry.ts` owns the baked luminance response and the bounded membrane opacity band. `deriveSurfaceLuminance` produces six distinct monotonic tiers across a box; `deriveMembraneOpacity` keeps a membrane between 0.16 and 0.46 so it always reads as a layer and never as a wall.
+- `src/scene/materials/surfaceMaterial.ts` is the single material factory for every structural role on both backends: a WebGPU `MeshBasicNodeMaterial` path and a `MeshBasicMaterial` path that share one visual spec. Solids write depth and occlude; membranes blend and do not.
+- `src/scene/core/coreStructure.ts`, `coreStructureGeometry.ts` and `CoreStructureView.tsx` replace the stacked transparent boxes with one diagonal structural spine, one large asymmetric processing volume, secondary processing assemblies, a central void, route ports with real ingress and a small number of structural slices near the camera.
+- `src/scene/core/coreCirculation.ts` is the Core's internal circulation: velocity-stretched dashes rather than dots, with a compression zone at the route throat, ingress accumulation, a source-to-target burst and an arrival wake.
+- `src/scene/routing/routeDash.ts`, `routeDashMaterial.ts` and `RouteDashes.tsx` carry that same signal language along the graph routes. WebGPU advects dash count, phase, life and stretch in the vertex shader; WebGL2 drives a bounded instanced dash set on the CPU with the same envelope maths, so the two backends share one language rather than one look and one fallback.
+- `src/scene/graph/DomainEnvironment.tsx` gives each of the five domains a distinct local computational behaviour — trunk-and-buffer for AI, layered framebuffer membrane and interference scan plane for GRAPHICS, comparison branch and decision chamber for GAME ANALYSIS, stepped processing stack and vertical bus for SYSTEMS, open interference sheet with lattice and probe endpoint for RESEARCH — all from the shared geometry/material language above.
+- Reduced motion is now a real stop rather than a canvas opacity change: the preference travels from the media query through `RendererHost` into `SceneHost`, and under it the scene advances no duration, circulates no signals and drifts no camera.
+
+### Stage 3.5.2 defects found and fixed
+
+- **The membrane tier rendered nothing at all, on both backends.** The tier faded by ordered dither — an alpha map plus an alpha test, so it could stay in the depth pass without transparency sorting. Three samples an alpha map in the green channel and the map was built as a single-channel red texture, so every membrane fragment in the scene was discarded against a constant zero. Proven by forcing the alpha test to 0: **4.60% of the frame (95,407 px) changed** when membranes were allowed to draw. Fixing the channel only exposed the rest of the problem — at roughly two hundred pixels per world unit a Bayer cell aliases into a visible checkerboard across the large plates and into diagonal moiré across the small ones — so the dither was replaced with a genuine bounded blend. No test in the 237-test suite could have caught this; only running the acceptance matrix did.
+- **The backdrop diverged by backend.** `Atmosphere` branched on backend and its node path drew the depth backdrop at (2,3,3) against the scene's own background of (5,6,9). It no longer takes a backend at all: the standard path is the correct permanent choice for a static, non-responsive surface. The same frame now reads (26,33,33) at centre and (11–12,14–16,17) at the corners on WebGPU, matching WebGL2.
+
+### Stage 3.5.2 verification evidence
+
+- `npm.cmd test` — pass: 32 files, 237 tests.
+- `npm.cmd run typecheck` — pass. `npm.cmd run lint` — pass.
+- `NEXT_TELEMETRY_DISABLED=1 npm.cmd run build` — pass on Next.js 16.3.5.
+- Zero-dependency CDP capture harness (`scripts/stage352-capture.mjs`) against `?boot=skip&telemetry=1`, at 1920×1080 and 2560×1440 × {overview, hover-GRAPHICS, focus-GRAPHICS, Escape}, plus a 480×270 downscale of each overview. 31 `artifacts/stage352-*.png` files.
+- **Those 31 captures are local only.** `.gitignore` excludes `artifacts/`, and only the 7 historical `stage35-*` files were force-added past it. Nothing in this stage's evidence travels with the repository: a reviewer on another machine must re-run `scripts/stage352-capture.mjs` (no dependency install required) rather than expect the PNGs in the tree. Force-adding them is a deliberate commit-time decision, not something this record assumes.
+- WebGPU: 10 files, 34 console messages — info 25, warning 9, **error 0, fatal 0**. No NaN, invalid buffer or WebGPU validation error.
+- WebGL2 (via shadowing `navigator.gpu` before document start): 10 files, 28 console messages — info 24, warning 4, **error 0, fatal 0**.
+- Reduced motion is measured, not asserted. Sampling the same scene twice ~3 s apart inside one session: normal mode **1.82% of pixels (37,772 px) changed**; reduced motion **0.00% (0 px) changed**, mean luminance identical to three decimals. Evidence: `artifacts/stage352-motionprobe-{normal,reduced}-{a,b}.png`.
+- Quality profiles change structure, not just counts. SAFE vs ULTRA differ by 16.60% (overview) and 17.08% (hover); ULTRA reaches p99.9 215 / peak 255 against SAFE's 147 / 231. The SAFE overview still reads as the Hero, its spine, all five domain silhouettes and the main routes.
+- All pre-existing work-tree changes were preserved: `vitest.config.ts`, `START_STAGE351_REVIEW.cmd`, `scripts/`, `tests/stage351-review-launcher.test.mjs` are untouched. No dependency, `package.json` entry or machine-local file was added.
+
+### Stage 3.5.2 known gap, not fixed
+
+The WebGPU node material path renders the machine's mid-tones darker than the standard path. Measured on the same frame at (1152,497): WebGPU 83 against WebGL2 143, a ratio of 0.58 that holds across sampled pixels. Histograms: WebGPU p50 4 / p90 28 / p99 102 against WebGL2 p50 26 / p90 69 / p99 155. Forcing the standard path on WebGPU reproduces the WebGL2 histogram to within 1–2 levels (p50 28/26, p90 70/69, p99 156/155, p99.9 219/208), which localises the divergence inside the node material path rather than in the renderer's output transform, fog or colour management. Three's `VertexColorNode` (a plain attribute read with a white fallback), the GLSL and node fog formulas (numerically equivalent) and the node alpha path were each checked and ruled out. This is documented rather than fixed; no performance or hardware claim is made from it.
+
+### Stage 3.5.2 handoff
+
+Stage 3.5.2 is implemented and captured. The next isolated slice remains Stage 6 — Command Palette; do not start it as part of this record.
