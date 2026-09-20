@@ -604,13 +604,13 @@ export function createInkMaterial(
   resolved = mix(resolved, sharpnessEmission.mul(options.gain).mul(depthFade), modeIs(12));
 
   /*
-   * Mode 13 - the primary-core candidate. **Nothing in the shipping path reads this yet.**
+   * Mode 13 - the primary-core band.
    *
-   * `speed` is `fluvial.z`: the static channel the bake writes before the regions, the basin
-   * and the pigment veil are mixed in, so unlike the composite body it is a property of the
-   * rivers and it cannot drift with the advection. Its value at a channel centre is essentially
-   * that river's own flow rate, and the live rates are well separated - primary 0.95, secondary
-   * 0.80, then 0.67 and below. The band below is chosen to hold the first and exclude the second.
+   * This is the node the shipping thalweg reads: `primaryCore` is defined once, beside the
+   * fluvial sample, and both this view and the material's own 10% layer take it from there. The
+   * view exists to check the *candidate* in isolation - one continuous primary path, no large
+   * regions lit, no second highlight on the secondary - and it stays after the replacement
+   * because that check remains worth being able to repeat.
    */
   resolved = mix(resolved, vec3(primaryCore).mul(depthFade), modeIs(13));
 

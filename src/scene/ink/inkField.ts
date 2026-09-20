@@ -367,6 +367,10 @@ export function createInkField(options: InkFieldOptions): InkField {
     material.depthTest = false;
     material.depthWrite = false;
     material.toneMapped = false;
+    // Stated rather than defaulted. These passes must *replace* their target; a blending mode
+    // would mix the new state with the old, and the simulation would accumulate a blend of its
+    // own history rather than holding its state.
+    material.blending = THREE.NoBlending;
     return material;
   };
 
@@ -401,13 +405,16 @@ export function createInkField(options: InkFieldOptions): InkField {
     // the visitor's; a world that started with pressure already in it would show the
     // aftermath of an event nobody caused.
     seedMaterial = configure(new MeshBasicNodeMaterial());
-    seedMaterial.colorNode = Fn(() => {
+    // `outputNode`, not `colorNode`: an opaque material forces the fragment alpha to one, so a
+    // vec4 written through `colorNode` loses its fourth component entirely. See the module
+    // note - this is the defect that saturated the pressure channel on every frame.
+    seedMaterial.outputNode = Fn(() => {
       const authored = texture(baseTextureSource, uv());
       return vec4(authored.x, authored.y, authored.z, float(0));
     })();
 
     advectMaterial = configure(new MeshBasicNodeMaterial());
-    advectMaterial.colorNode = Fn(() => {
+    advectMaterial.outputNode = Fn(() => {
       const coord = uv();
 
       // --- Velocity -----------------------------------------------------------
@@ -580,7 +587,7 @@ export function createInkField(options: InkFieldOptions): InkField {
     // The copy pass. Its only job is to move `write` back into `read`, so the graph
     // above can keep sampling one fixed target for the life of the field.
     copyMaterial = configure(new MeshBasicNodeMaterial());
-    copyMaterial.colorNode = texture(write.texture, uv());
+    copyMaterial.outputNode = texture(write.texture, uv());
   }
 
   buildMaterials();
