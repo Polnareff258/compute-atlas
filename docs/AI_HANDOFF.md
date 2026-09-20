@@ -5,7 +5,11 @@
 Repository: Polnareff258/compute-atlas
 Default branch: master
 Current branch: `master`
-Stage 3.5.4 implementation commit: latest local commit at handoff; see `git log -1` for the SHA. Push target: `origin/master` via the configured v2rayN proxy, `http.proxy=http://127.0.0.1:10808`.
+Stage 3.5.4 implementation commit: `9a452d9` (`feat: rebuild the scene as a rift, a
+data-matter field and five phenomena`), baseline `5711cbf`, pushed to
+`origin/master`. Push target: `origin/master` via the configured v2rayN proxy,
+`git -c http.proxy=http://127.0.0.1:10808 push origin master` (port 10808; 8088
+does not work).
 
 ## Product
 
@@ -17,7 +21,7 @@ Future stages add deterministic commands, a local Agent gateway and runnable exp
 ## Current Stage
 
 Stage 3.5.4 — Total Visual Rebuild — is implemented and captured on both
-backends, and **uncommitted at the time this line was written**. It replaced the
+backends, and committed as `9a452d9`. It replaced the
 visual implementation rather than adjusting it: the grey polygon Core, the
 lofted hull, the `BoxGeometry` domains, the dashed routes, the four-plate
 atmosphere and the radius-5 radial layout are all gone from the render tree.

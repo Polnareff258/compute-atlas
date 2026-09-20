@@ -8,8 +8,8 @@ over `e8384e2..a880637`. That pass's subject was an apertured monolith with a
 bezel rail on a four-plate backdrop, and none of it is in the render tree any
 more. It also supersedes `docs/STAGE353_REVIEW_BRIEF.md` for regeneration.
 
-Baseline: `5711cbf`. **This stage's work is uncommitted at the time of writing**;
-the diff to review is the working tree against that commit.
+Baseline: `5711cbf`. This stage is `9a452d9` — 27 files, +5579 / −400, pushed to
+`origin/master`. Review the diff `5711cbf..9a452d9`.
 
 ---
 
