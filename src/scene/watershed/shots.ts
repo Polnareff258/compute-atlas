@@ -118,15 +118,25 @@ export const CENTRAL_BAND: Rect = Object.freeze({ left: 0.225, top: 0.225, right
 export const TARGET_ASPECTS = Object.freeze({ '2560x1440': 16 / 9, '1920x1080': 16 / 9, '480x270': 16 / 9 });
 
 /**
- * The key light. Above and behind the camera's left shoulder, so the basin is
- * front-lit.
+ * The key light. Low, off the camera's left, and forward of it.
  *
  * Exported because it is not only a shot's property: the terrain's baked vertex
  * colour carries the same light as an orientation term, and half-lambert against
  * a *different* direction would put a second sun in the frame. The bake and the
  * shots read this one value so they cannot disagree.
+ *
+ * **Why it is not higher.** It was `[-0.38, 0.66, 0.65]` — above the camera's
+ * shoulder, which front-lit the basin, and that was the intent. Front-lighting a
+ * height field is the one thing a height field cannot survive: a surface seen
+ * from a low graze shows mostly slopes facing the lens, and a light from behind
+ * the lens lights every one of them equally, so the whole landscape flattens into
+ * a single tone and the only thing left with any form is its silhouette. The
+ * measured frame read as smooth fabric. Lowering the elevation to 0.40 and moving
+ * it out to the side gives the same field slopes that face toward it and slopes
+ * that face away, which is what depth is made of — while keeping a positive Z so
+ * the basin's far wall, which is the one surface meant to be seen, stays lit.
  */
-export const KEY_LIGHT: Vector3 = [-0.38, 0.66, 0.65];
+export const KEY_LIGHT: Vector3 = [-0.58, 0.4, 0.71];
 
 /** FOV, in degrees. Matches `CAMERA_FOV_DEGREES`; owned here so a shot may differ. */
 const SHOT_FOV = 48;

@@ -6,6 +6,7 @@ import {
   clamp,
   dot,
   float,
+  floor,
   mix,
   mx_fractal_noise_float,
   positionLocal,
@@ -25,7 +26,7 @@ import type { FlowField } from '../watershed/flowField';
  * The ground's material: the hero effect the brief calls Data Erosion and
  * Reformation.
  *
- * Three of the four things this does are the *displacement*, and they are the
+ * Four of the five things this does are the *displacement*, and they are the
  * whole reason it is a material rather than a picture painted on the mesh:
  *
  *  1. **Erosion.** Where the flow field says water is working the ground, the
@@ -39,7 +40,12 @@ import type { FlowField } from '../watershed/flowField';
  *     This is the idle frame's one moving structural event and it is *at the
  *     basin*, not everywhere: a world that breathed as a whole would read as a
  *     wobbling model rather than as a place with something happening in it.
- *  4. **Relief.** Fine procedural detail, which is the fourth item because it is
+ *  4. **Strata.** The basin's shells, quantised out of its own radius so the
+ *     depression reads as a structure with a count rather than as a bowl. This is
+ *     the one thing here that is not about the water — see `STRATA_COUNT` — and
+ *     it is what gives the middle distance, where nothing else in the frame has
+ *     any shape, something for the eye to land on.
+ *  5. **Relief.** Fine procedural detail, which is the last item because it is
  *     the one that is decoration rather than statement. It exists so the mesh's
  *     own tessellation is not legible as a grid of triangles on the near ground.
  *
@@ -83,6 +89,23 @@ const RELIEF_SCALE = 0.082;
 const RELIEF_AMPLITUDE = 0.85;
 
 /**
+ * How much of the relief survives on ground the flow field says nothing is
+ * happening to.
+ *
+ * Not zero, and that is the point: perfectly smooth ground reads as untextured
+ * geometry, and the tessellation underneath it becomes the only thing there is to
+ * see. It was tried at a quarter and the result was worse than the problem — the
+ * near field turned to polished glass, which is a surface finish with *no* grain
+ * rather than one with the wrong grain, and the eye reads the glass as clearly as
+ * it reads the crinkle. Most of the relief therefore stays everywhere, and the
+ * modulation is the small difference between quiet ground and worked ground
+ * rather than a near-total suppression of the former: worked ground carries about
+ * a third more detail than the ground beside it, which is a difference in
+ * *character* a viewer can see without either state being an absence.
+ */
+const RELIEF_QUIET = 0.72;
+
+/**
  * What the sheen is made of.
  *
  * A Fresnel term rather than a specular one, because there is no light to
@@ -96,6 +119,28 @@ const SHEEN_POWER = 3.0;
 
 /** How much of the active region's accent may land on its own ground. */
 const REGION_LIFT = 0.5;
+
+/**
+ * The basin's strata: how many shells, and how tall one riser is.
+ *
+ * This is the one thing in the material that is not about the water. A
+ * Convergence Basin is not a bowl — a bowl is what a crater is, and a crater is
+ * an *absence*. What the brief asks for is a place that has been accumulating for
+ * longer than anything around it, and accumulation leaves layers: five shells of
+ * ground, each one stepping down toward the centre, each one a surface with its
+ * own lit edge. Quantising the basin's radius is what turns a smooth depression
+ * into a structure with a *count*, and a countable structure is the first thing
+ * the eye can read in the middle distance, where nothing else in the frame has
+ * any shape at all.
+ *
+ * Five, and not more: at `BASIN_REACH` the shells are 38 world units across, so
+ * the risers are wide enough to hold a lit face at the vista's distance rather
+ * than collapsing into shading noise. A step is 1.5 world units — the risers
+ * together add about seven and a half units across the whole basin, which is
+ * under a fifth of its depth and so cannot fill it in.
+ */
+const STRATA_COUNT = 5;
+const STRATA_STEP = 1.5;
 
 export type TerrainMaterial = {
   readonly material: MeshBasicNodeMaterial;
@@ -151,6 +196,23 @@ export function createTerrainMaterial(
   // Squared so the release is a longer, quieter part of the cycle than the
   // compression: a symmetric pulse reads as a heartbeat, and a watershed is not
   // beating.
+  // --- The basin's strata -----------------------------------------------------
+  //
+  // `toBasin` is the radius, so quantising it gives concentric shells. `riser`
+  // rises over the outer part of each shell and the inner part is flat, which is
+  // what makes it a staircase rather than a cone: the flat tread is the surface
+  // the eye reads, and a ramp with no tread has no ledges to catch anything.
+  //
+  // The stair descends *inward* — the tread height is the shell's own index — so
+  // the deepest point is the centre. That is the direction a basin fills from:
+  // everything the world sheds arrives at the middle last, so the oldest and
+  // thickest ground is the outermost shell and the newest is the floor.
+  const ringPhase = toBasin.mul(STRATA_COUNT);
+  const ring = floor(ringPhase);
+  const withinRing = ringPhase.sub(ring);
+  const riser = smoothstep(float(0.58), float(1), withinRing);
+  const strata = ring.add(riser).mul(inBasin).mul(STRATA_STEP);
+
   const pulse = sin(u.uFlowPhase.mul(TAU * 1.5)).mul(0.5).add(0.5);
   const compression = pulse
     .pow(2)
@@ -165,11 +227,29 @@ export function createTerrainMaterial(
   const drift = sin(along.mul(TAU * 2).sub(u.uFlowPhase.mul(TAU * 3)).add(rate.mul(4)));
   const breathe = drift.mul(erosion).mul(0.55);
 
+  // How much relief this ground carries, which is a statement about the water
+  // rather than about the ground: unworked terrain is smooth, and the detail is
+  // where something is cutting or settling. Without this the same noise is laid
+  // over the whole world at the same amplitude, and the near field — which is the
+  // largest area in the frame and the one the eye has most time to read — becomes
+  // an even crinkle with no structure in it, which is the "noise" the brief names
+  // as the failure mode of the previous composition. The flow field already knows
+  // where the work is; this asks it. Applied to the relief alone and never to the
+  // mesh's own shape, so the silhouette the shots are framed against is unchanged.
+  const worked = smoothstep(float(0.04), float(0.55), erosion.max(deposit));
+  const reliefGain = mix(float(RELIEF_QUIET), float(1), worked);
+
   const relief = mx_fractal_noise_float(positionLocal.mul(RELIEF_SCALE), 3, 2.0, 0.5)
     .mul(RELIEF_AMPLITUDE)
-    .mul(u.uQuality);
+    .mul(u.uQuality)
+    .mul(reliefGain);
 
-  const displacement = relief.sub(cut).add(built).sub(compression).add(breathe);
+  const displacement = relief
+    .sub(cut)
+    .add(built)
+    .sub(compression)
+    .add(breathe)
+    .add(strata);
   material.positionNode = positionLocal.add(vec3(0, displacement, 0));
 
   // --- What the fragment stage is told ----------------------------------------
@@ -180,6 +260,11 @@ export function createTerrainMaterial(
   const vRelief = varying(relief);
   const vInBasin = varying(inBasin);
   const vPulse = varying(pulse);
+  const vRiser = varying(riser);
+  // The innermost shell, as its own signal: `1 - ring` is 1 on the floor and 0
+  // on every shell outside it, so the heart of the basin survives the trip to the
+  // fragment stage as a shape rather than as a radius.
+  const vHeart = varying(float(1).sub(ring).max(0).mul(inBasin));
 
   // Which region this ground is, against which region is answering. A `step`
   // window rather than a lookup, because a dynamic index into a uniform array is
@@ -213,23 +298,38 @@ export function createTerrainMaterial(
   // share of that one region's brightness.
   const lift = wetColour.mul(activeWeight).mul(u.uHighlight).mul(REGION_LIFT);
 
-  // The basin's compression, as light. Rationed: it is the frame's one white, and
-  // it appears at the compression's own phase rather than around the rim.
+  // The basin's own light, and the frame's one white. It sits on the innermost
+  // shell — the floor everything the world sheds finally arrives at — and beats
+  // with the compression rather than sitting on, so the basin reads as *working*
+  // rather than as lit. Rationed to this one place: the `0.25` floor is what it
+  // is at rest, and the pulse is what it is at the top of its cycle.
   const flare = u.uPeak
-    .mul(vInBasin)
-    .mul(vPulse.pow(6))
+    .mul(vHeart)
+    .mul(vPulse.pow(2).mul(0.75).add(0.25))
     .mul(u.uActivity.max(0.4))
-    .mul(clamp(u.uFocus.add(u.uHover).add(0.35), 0, 1))
-    .mul(0.55);
+    .mul(clamp(u.uFocus.add(u.uHover).add(0.5), 0, 1))
+    .mul(0.9);
+
+  // The ledges. Every riser faces a different way from the tread it stands on, so
+  // a small fixed lift is enough to make the staircase legible as steps instead
+  // of as a smooth slope with banding painted on it. Deliberately small: it is
+  // structure, not a second highlight.
+  const ledge = vRiser.mul(vInBasin).mul(0.16);
 
   // Deposits read as freshly laid material: brighter than the ground around them,
   // and cool, because what settles here is mineral rather than lit.
   const silt = mix(baseColour, u.uMass, vDeposit.mul(0.5)).mul(vDeposit.mul(1.5).add(1));
 
+  // The ledges are mineral, like the deposits, but cooler and tipped toward the
+  // flow's own colour: what faces the sky in the basin is the same material as
+  // what gathers on the floor, seen at a different angle.
+  const ledgeColour = mix(u.uMass, u.uFlow, 0.55);
+
   const colour = silt
     .add(vec3(reliefLight, reliefLight, reliefLight))
     .add(wetColour.mul(wet))
     .add(lift)
+    .add(ledgeColour.mul(ledge))
     .add(flare);
 
   material.colorNode = colour;
