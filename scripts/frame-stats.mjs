@@ -195,6 +195,21 @@ function main() {
     };
   });
 
+  /*
+   * Bright-pixel coverage, at fixed thresholds.
+   *
+   * Fixed rather than scaled to the frame, because a self-scaling measure would report the same
+   * coverage for a bright frame and a dark one. These are the numbers a comparison between two
+   * diagnostic views should use; the median is a magnitude and cannot be treated as a share.
+   */
+  const brightCoverage = [32, 64, 128, 180].map((threshold) => {
+    let count = 0;
+    for (let i = 0; i < total; i += 1) {
+      if (luma[i] > threshold) count += 1;
+    }
+    return { threshold, share: +((count / total) * 100).toFixed(2) };
+  });
+
   const grid = [];
   for (let gy = 0; gy < gridH; gy += 1) {
     const row = [];
@@ -221,6 +236,7 @@ function main() {
     meanSaturation: +(satSum / total).toFixed(4),
     nearGreyShare: `${((greyPixels / total) * 100).toFixed(2)}%`,
     horizontalGradientEnergy: +(gradSum / Math.max(1, gradCount)).toFixed(3),
+    brightCoverage,
     dominantColours: top,
     luminanceGrid: grid,
   }, null, 2));

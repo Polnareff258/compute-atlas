@@ -476,24 +476,30 @@ export function createInkMaterial(
   // ten percent: a crest that was merely a little brighter than the wash would not
   // be a crest.
   const pigmentGlow = pigment.pow(1.25).mul(u.uActivity.mul(0.35).add(0.30));
-  const emission = pigmentGlow
-    .mul(ambient)
-    /*
-     * Raised from 0.22 back to 0.40.
-     *
-     * This is the term that puts colour in the water, and cutting it too far was the
-     * second over-correction: at 0.22 the emission no longer reached the shaded base
-     * anywhere except the crest, so the river lost its hue and the frame came back grey.
-     * What keeps it from re-creating the first failure is that `ambient` now carries
-     * grey-violet as the pigment rises, so the glow desaturates where the water is deep
-     * instead of doubling down on a single hue.
-     */
-    .mul(0.3)
-    .add(u.uBone.mul(sharpness.pow(1.35)))
-    // The point bars. Raised from 0.5: pink is the frame's only warm hue and at the
-    // lower gain it never survived the exposure of the rest of the stack, which is why
-    // both vision passes reported no warm tone anywhere in the picture.
-    .add(u.uPalePink.mul(settleTerm.mul(1.15)).mul(u.uActivity.mul(0.4).add(0.5)));
+
+  /*
+   * The emission, as three named terms and their sum.
+   *
+   * **These are split out for the diagnostic, and the split has to be the only place the
+   * formulas live.** The first version of the debug views re-typed the expressions instead of
+   * referencing them, and immediately drifted: the view for "emission without settle" was
+   * written with a pigment gain of 0.4 while the shipping emission had moved to 0.3, so a view
+   * whose entire purpose was to be a term-for-term difference from the real frame was quietly
+   * measuring a different formula. Nothing failed, because a re-typed expression that is
+   * slightly wrong still renders a plausible picture - which is exactly the kind of error the
+   * instrument exists to prevent, and it was in the instrument.
+   *
+   * So the rule for anything added here is that `emission` is the sum of these three and that
+   * every view references them. A view may scale, mask or reinterpret a term; it may not restate
+   * one.
+   */
+  const pigmentEmission = pigmentGlow.mul(ambient).mul(0.3);
+  const sharpnessEmission = u.uBone.mul(sharpness.pow(1.35));
+  const settleEmission = u.uPalePink
+    .mul(settleTerm.mul(1.15))
+    .mul(u.uActivity.mul(0.4).add(0.5));
+
+  const emission = pigmentEmission.add(sharpnessEmission).add(settleEmission);
 
   const surface = coloured
     .mul(lit)
@@ -542,26 +548,28 @@ export function createInkMaterial(
     .mul(options.gain)
     .add(u.uBone.mul(granuleTerm).mul(0.18));
 
-  const emissionNoSettle = pigmentGlow
-    .mul(ambient)
-    .mul(0.4)
-    .add(u.uBone.mul(sharpness.pow(1.35)));
-
-  const settleEmissionOnly = u.uPalePink
-    .mul(settleTerm.mul(1.15))
-    .mul(u.uActivity.mul(0.4).add(0.5));
+  /*
+   * Every contribution view is scaled by the same `gain` and the same `depthFade` the real
+   * frame applies, and that is not cosmetic: without them a view would be a different picture
+   * from `final` for reasons that have nothing to do with the term under examination, and the
+   * comparison the bisection rests on would not hold.
+   */
 
   let resolved = surface.mul(depthFade);
-  resolved = mix(resolved, vec3(body), modeIs(1));
-  resolved = mix(resolved, vec3(scour), modeIs(2));
-  resolved = mix(resolved, vec3(settle), modeIs(3));
-  resolved = mix(resolved, vec3(pressure), modeIs(4));
-  resolved = mix(resolved, coloured, modeIs(5));
-  resolved = mix(resolved, emission, modeIs(6));
-  resolved = mix(resolved, surfaceNoEmission, modeIs(7));
-  resolved = mix(resolved, settleEmissionOnly, modeIs(8));
+  resolved = mix(resolved, vec3(body).mul(options.gain).mul(depthFade), modeIs(1));
+  resolved = mix(resolved, vec3(scour).mul(options.gain).mul(depthFade), modeIs(2));
+  resolved = mix(resolved, vec3(settle).mul(options.gain).mul(depthFade), modeIs(3));
+  resolved = mix(resolved, vec3(pressure).mul(options.gain).mul(depthFade), modeIs(4));
+  resolved = mix(resolved, coloured.mul(options.gain).mul(depthFade), modeIs(5));
+  resolved = mix(resolved, emission.mul(options.gain).mul(depthFade), modeIs(6));
+  resolved = mix(resolved, surfaceNoEmission.mul(depthFade), modeIs(7));
+  resolved = mix(resolved, settleEmission.mul(options.gain).mul(depthFade), modeIs(8));
   resolved = mix(resolved, vec3(depthFade), modeIs(9));
-  resolved = mix(resolved, emissionNoSettle, modeIs(10));
+  // Referenced, never restated: see the note on the emission terms for what happened the first
+  // time this was written out by hand.
+  resolved = mix(resolved, pigmentEmission.add(sharpnessEmission).mul(options.gain).mul(depthFade), modeIs(10));
+  resolved = mix(resolved, pigmentEmission.mul(options.gain).mul(depthFade), modeIs(11));
+  resolved = mix(resolved, sharpnessEmission.mul(options.gain).mul(depthFade), modeIs(12));
 
   material.colorNode = resolved;
 
