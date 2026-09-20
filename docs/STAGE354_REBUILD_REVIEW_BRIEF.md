@@ -36,8 +36,8 @@ Every item on that list is gone from the render tree. What is mounted is:
 | Post | `src/scene/post/PostPipeline.tsx` | Bloom, DOF, chromatic aberration, hand-built vignette, all driven from one energy term. |
 | Shading | `src/scene/materials/energyMaterial.ts` | One authored TSL model for every solid surface in the scene. |
 
-`SceneHost.tsx` mounts exactly those five. The old tree is still on disk and is
-**not imported by anything** — see §6.
+`SceneHost.tsx` mounts exactly those five. The old tree was still on disk when
+this section was written; it has since been deleted — see §13 and §6.
 
 ## 2. The four layers the brief named
 
@@ -345,3 +345,48 @@ rather than branching — §6 item 7's octave change reduced this and did not
 remove it. And this pass is the clearest evidence for the brief's own process
 requirement: none of it was visible in the code, and all of it was visible in a
 capture.
+
+## 13. Addendum: the old tree is gone
+
+The brief permits deleting the superseded schemes outright rather than leaving
+them parked, and §9 listed them as still on disk. They are now deleted — 39 files,
+no importers, confirmed before removal:
+
+```
+src/scene/core/            11 files  the Core, its topology, fragments, flow
+                                     field, trajectory paths, signals, and the
+                                     coreStructure / coreStructureGeometry /
+                                     coreParameters / coreCirculation layer
+src/scene/Atmosphere.tsx             + atmosphere.test.ts, atmosphereDescriptor.ts
+src/scene/graph/            7 files  DomainEnvironment, GraphEdges, KnowledgeGraph,
+                                     domainCircuits, domainEnvironments
+src/scene/materials/        4 files  surfaceMaterial, surfaceResponse + tests
+src/scene/routing/         14 files  RouteDashes, routeDash, routeDashGeometry,
+                                     routeDashMaterial, graphRoutes,
+                                     routeContract, routeFlow, routeTelemetry
+                                     + tests
+```
+
+`src/scene/graph/` and `src/scene/routing/` no longer exist as directories.
+
+Three of the routing files (`routeContract`, `routeFlow`, `routeTelemetry`) were
+not in the deletion list and survived the first pass. They did not survive
+typecheck: their only purpose was consuming `graphRoutes`, `routeDash` and
+`coreStructure`, so deleting those left them uncompilable with zero importers of
+their own. They were not separable from the named deletion.
+
+**Not deleted, and why.** `RendererRuntime`, `SceneHost`, `CameraController` and
+`ComputeCore`'s architecture boundary all remain — the brief protects them. The
+`ComputeCore` *view* layer is gone; the runtime contract it sat behind is not.
+`machinePalette.ts`, `surfaceGeometry.ts`, `structureGeometry.ts` and
+`energyMaterial.ts` are the surviving material system and are load-bearing.
+
+**Verification after the deletion:** `typecheck` clean · `lint` 0 errors / 0
+warnings · `test` 20 files / 110 tests pass (35/312 before — the 15 deleted test
+files account exactly for the difference) · `build` succeeds, 3 static pages.
+
+**The deletion is off the render path, and that was measured, not assumed.** An
+idle 1920×1080 ULTRA WebGPU capture after the deletion reports `spread 253.0`,
+`lit 72.84%`, `error 0, fatal 0`, against the pre-deletion `spread 252.8` on the
+same state. The frame is unchanged: seams, spine, foreground plate fan and the
+five domain labels all present.

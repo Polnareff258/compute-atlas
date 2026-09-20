@@ -6,8 +6,10 @@ Repository: Polnareff258/compute-atlas
 Default branch: master
 Current branch: `master`
 Stage 3.5.4 implementation commit: `9a452d9` (`feat: rebuild the scene as a rift, a
-data-matter field and five phenomena`), baseline `5711cbf`, pushed to
-`origin/master`. Push target: `origin/master` via the configured v2rayN proxy,
+data-matter field and five phenomena`), baseline `5711cbf`. Same-stage follow-ups,
+all pushed: `13a55bc` (massif segmentation and a second bake term), `faee10c`
+(post-change cost in the brief), `2f1b3f2` (the old scene tree deleted). Push
+target: `origin/master` via the configured v2rayN proxy,
 `git -c http.proxy=http://127.0.0.1:10808 push origin master` (port 10808; 8088
 does not work).
 
@@ -68,8 +70,8 @@ SceneHost composes the R3F scene and maps semantic interaction to camera behavio
 ## Hard Boundaries
 
 - No visual module imports Command or Agent. The old `ComputeCore`, whose boundary
-  this bullet used to name, is no longer in the render tree; `src/scene/` now
-  mounts five view modules, none of which import Command or Agent.
+  this bullet used to name, is deleted as of 3.5.4; `src/scene/` mounts five view
+  modules, none of which import Command or Agent.
 - V2 pure descriptor generators do not contain Three.js objects; scene resources stay in R3F view modules.
 - Graph data and graph reducer do not import Three.js objects, Agent or Command core.
 - Graph core does not import Agent.
@@ -117,17 +119,14 @@ Quality owner: RendererRuntime state, observable by RendererHost; SceneHost rece
 Renderer backend owner: RendererRuntime plus the selected WebGPU/WebGL2 adapter.
 Renderer DPR owner: the active renderer handle plus the R3F RootStore setDpr seam.
 Camera focus owner: SceneHost's existing CameraController; Graph only supplies semantic interaction.
-Compute Core response owner: SceneHost maps graph state to ComputeCoreVisualState; ComputeCore remains graph-blind.
-Compute Core visual owner: ComputeCore composes deterministic structure, circulation and signal views and stays graph-blind.
-Stage 3.5.2 structure owner: `coreStructure.ts` supplies the spine, processing volume, void, ports and slices; `coreStructureGeometry.ts` and `structureGeometry.ts` bake them into solid and membrane geometry; `CoreStructureView.tsx` mounts them.
-Stage 3.5.2 circulation owner: `coreCirculation.ts` supplies the deterministic route field and its stretched-dash samples. Only discrete semantic state (hover, focus, quality, reduced motion) crosses from React; continuous intensity, time and progress stay in refs and uniforms.
-Stage 3.5.2 domain-view owner: `domainEnvironments.ts` supplies perimeter descriptors and `domainCircuits.ts` the per-domain local topology; `DomainEnvironment.tsx` renders them. `KnowledgeGraph` retains hover/focus reducer ownership and `GraphEdges.tsx` draws view-only routes.
-Stage 3.5.2 material owner: `surfaceMaterial.ts` is the single factory for every structural role on both backends; `surfaceGeometry.ts` owns baked orientation luminance and the bounded membrane opacity band.
+Compute Core response owner: **deleted in 3.5.4.** `ComputeCore`, `CoreStructureView`, `ComputeCoreVisualState` and the `coreStructure` / `coreStructureGeometry` / `coreParameters` / `coreCirculation` layer are gone from disk, not parked. The boundary the bullet described still holds in what replaced it: `SceneHost` maps graph state to field uniform state and the view layer is graph-blind.
+Stage 3.5.2 domain-view owner: **deleted in 3.5.4.** `domainEnvironments`, `domainCircuits`, `DomainEnvironment`, `KnowledgeGraph` and `GraphEdges` are gone. Graph hover/focus reducer ownership stays where it was — `SceneHost`'s `GraphInteractionState` — and the five regions now render through `src/scene/domains/domainPhenomena.ts`.
+Stage 3.5.2 material owner: **deleted in 3.5.4.** `surfaceMaterial.ts` and `surfaceResponse.ts` are gone. The single material factory is now `src/scene/materials/energyMaterial.ts`; `surfaceGeometry.ts` still owns baked orientation luminance.
 Stage 3.5.2 reduced-motion owner: `reducedMotion.ts` reads and subscribes to the media query; `RendererHost` passes the preference into `SceneHost`, which is where motion actually stops.
-Stage 3.5.2 telemetry owner: `SceneHost` samples `src/telemetry/rendererTelemetry.ts` from `coreCirculation` counts, distinguishing configured field budget, rendered field samples and active signal samples; `particleCount` is derived from rendered field samples.
-Stage 3.5.3 routing-contract owner: `src/scene/routing/routeContract.ts` owns the route group ids (`CORE_ROUTE_GROUP`, `DOMAIN_ROUTE_GROUP_BASE`, `TRUNK_ROUTE_GROUP_BASE`, `MAX_ROUTE_GROUPS`) so `coreCirculation.ts` does not import `graphRoutes.ts`. It is graph-neutral and must stay so.
-Stage 3.5.3 field-density owner: `src/scene/routing/routeDash.ts` owns `deriveRouteDashDensity` (per world unit of route), `deriveRouteCurveLength` and `deriveCurveDashCounts(curves, density, capacity?)`. `routeTelemetry.ts` counts through the same function the packer calls, so telemetry cannot describe a field the renderer was not asked to draw. A count floor is a floor on coverage, not only on count — see the `MIN_PACKETS_PER_CURVE` note.
-Stage 3.5.3 presence owner: `SurfaceInput.presence` in `surfaceResponse.ts` scales a surface's whole resolved response and is the only input that can take it below `gainAtRest`. Use it for composition recession; brightness alone cannot express it. **This module is no longer in the render tree** as of 3.5.4 — the shading model it fed is gone. It is kept on disk as dead code, not as an example.
+Stage 3.5.4 telemetry owner: `SceneHost` samples `src/telemetry/rendererTelemetry.ts` from the matter field's sample counts, distinguishing configured field budget, rendered field samples and active signal samples; `particleCount` is derived from rendered field samples.
+Stage 3.5.3 routing-contract owner: **deleted in 3.5.4.** `src/scene/routing/` is gone in full — `routeContract`, `routeDash`, `routeDashGeometry`, `routeDashMaterial`, `graphRoutes`, `routeFlow`, `routeTelemetry`, `RouteDashes` and their tests. The route-field scheme they served is not in the render tree.
+Stage 3.5.3 field-density owner: **deleted in 3.5.4**, same directory. The invariant it encoded is still worth keeping in mind for any future counted field: count through the same function the packer calls, so telemetry cannot describe a field the renderer was not asked to draw.
+Stage 3.5.3 presence owner: **deleted in 3.5.4.** `SurfaceInput.presence` and `surfaceResponse.ts` are gone with the shading model they fed. The one idea worth carrying forward: composition recession needs a scalar that can take a surface's whole response below its resting gain — brightness alone cannot express it.
 Stage 3.5.4 scene owner: `SceneHost` mounts five views and nothing else — `DeepField`, `RiftStructureView`, `DataMatterView`, `DomainField`, `PostPipeline`. Adding a sixth visual system means adding it there, and the frame is otherwise shading.
 Stage 3.5.4 composition owner: `src/scene/hero/riftStructure.ts` owns the hero's members, tiers and cavity, and `riftStructure.bounds` is `{min, max}` — **not** an array of half-extents. `cameraController.test.ts` asserts the two-sided contract: the throat framed whole (0.2–0.55 of a half-frame) *and* the machine overflowing (>1.4).
 Stage 3.5.4 field owner: `src/scene/field/fieldUniforms.ts` is the single place a semantic interaction becomes a number the GPU reads, and the idle corridor strength (`IDLE_CORRIDOR = 0.4`) lives there, not in `deriveFieldState.ts`. `deriveFieldState.ts` decides only *what* is happening; `fieldUniforms.ts` decides how strongly.
@@ -160,12 +159,12 @@ Do not add palette, parser, Ollama, Agent, SSE, trace, overlay, Stage 11 or Stag
 
 ## Known Issues / Debt
 
-- KnowledgeGraph pointer projection is O(N) per pointer move; this is acceptable for five domain nodes.
+- Domain pointer projection is O(N) per pointer move; this is acceptable for five regions. It is now owned by `src/scene/domains/DomainField.tsx` — the `KnowledgeGraph` module that used to hold it is deleted.
 - The browser logs known library/environment notices: missing `/favicon.ico`, Three.Clock deprecation, WebGPU PCFSoftShadowMap remapping, headless powerPreference/zero-vertex notices and software WebGL2 ReadPixels notices.
 - **The node-material mid-tone divergence is closed, and the reason is architectural rather than numerical.** Both backends now construct the same `WebGPURenderer` (`forceWebGL: true` for the WebGL2 path) in `canvasAdapters.ts`, so there is one shader graph rather than two. Measured on the same frame and quality: idle spread 252.1 against 252.1, focus-GRAPHICS 251.6 against 251.6. What WebGL2 still cannot do is compute and storage buffers, and that is gated on the real backend rather than on the fallback.
 - **Large flat faces are the main remaining visual risk.** A sweep through four or five control points is a plane and takes one value across its whole area. The rim and base terms now take a slow world-space density field, which is why the value hierarchy holds, but the near blade is still the flattest surface in the focus frame.
 - FPS 36–45 at 1920×1080 ULTRA, measured in a **dev** build with HMR active. No production-build measurement exists; Stage 11 owns it.
-- The old visual tree is still on disk and nothing mounts it: `src/scene/core/`, `src/scene/Atmosphere.tsx`, `src/scene/graph/{DomainEnvironment,GraphEdges,KnowledgeGraph}.tsx`, `src/scene/routing/`, `src/scene/materials/{surfaceMaterial,surfaceResponse}.ts`. Deleting it is a separate, explicitly authorised step — an agent should not delete it on its own initiative, and should not treat anything in it as a live example.
+- **The old visual tree has been deleted** (39 files, authorised by the user in two named batches): `src/scene/core/` in full, `src/scene/Atmosphere.tsx` + `atmosphere.test.ts` + `atmosphereDescriptor.ts`, `src/scene/graph/` in full, `src/scene/materials/{surfaceMaterial,surfaceResponse}.ts` + tests, and `src/scene/routing/` in full. The `graph/` and `routing/` directories no longer exist. Nothing was on the render path — an idle ULTRA capture after the deletion matches the pre-deletion frame (`spread 253.0` vs `252.8`). The architecture boundaries the brief protects (`RendererRuntime`, `SceneHost`, `CameraController`, the `ComputeCore` *contract*) are untouched; only the view layer went. See `docs/STAGE354_REBUILD_REVIEW_BRIEF.md` §13.
 - Stage 3.5.1 evidence gaps are now historical: that stage never produced screenshots and its WebGL2/reduced-motion browser runs were never performed. Stage 3.5.2 re-ran all of them, so treat the `stage352-*` artifacts as the current evidence and the `stage35-*` files as historical V2 evidence only.
 - No sustained FPS, GPU utilization, VRAM or thermal claim has been made.
 - The development-only quality dispatch event exists solely for browser verification; it is not a production command API or UI.
@@ -194,8 +193,8 @@ Two real defects were found by running this matrix and fixed; neither was visibl
 
 Before reviewing Stage 3.5.4:
 1. Read `docs/STAGE354_REBUILD_REVIEW_BRIEF.md` first — it is written to be read instead of re-deriving the measured facts — then this file and the Stage 3.5.4 section in `docs/PROJECT_STATUS.md`.
-2. Confirm the current HEAD and worktree against `origin/master`. Note that this stage's work is uncommitted at the time the brief was written, so the diff to review is the working tree against `5711cbf`.
-3. Review only the live visual tree listed in the file map; the Stage 3.5.2/3.5.3 files under it are dead code and reviewing them reviews nothing.
+2. Confirm the current HEAD and worktree against `origin/master`. The stage is committed; the tree is clean. Review the diff `5711cbf..HEAD`, which now also carries the deletion of the old tree.
+3. Review only the live visual tree listed in the file map. The Stage 3.5.2/3.5.3 files that used to sit under it have been deleted, so there is nothing left to confuse with live behaviour.
 4. Regenerate the frames with `scripts/stage352-capture.mjs` and open them. Do not review the visual layer from a description of it — this is the one part of the stage a document cannot carry.
 5. Treat the flat-face risk as open. It is named in the brief's §9 and it is the thing a critic will point at.
 6. Keep Stage 6 and later work out of this review.
@@ -259,12 +258,13 @@ src/scene/materials/structureGeometry.ts
 src/scene/materials/machinePalette.ts
 src/graph/layout.ts
 
-Dead code — on disk, mounted by nothing, do not review as live behaviour and do
-not delete without explicit authorisation (Stage 3.5.2/3.5.3):
+Deleted in Stage 3.5.4 — this tree is gone, not parked. It is listed here only so
+a reviewer does not go looking for it, and so no path in it is mistaken for live
+behaviour:
 src/scene/core/*  ·  src/scene/Atmosphere.tsx  ·  src/scene/atmosphereDescriptor.ts
-src/scene/graph/{DomainEnvironment,GraphEdges,KnowledgeGraph}.tsx
-src/scene/graph/{domainEnvironments,domainCircuits}.ts
-src/scene/routing/*  ·  src/scene/materials/{surfaceMaterial,surfaceResponse}.ts
+src/scene/graph/*  (the directory no longer exists)
+src/scene/routing/*  (the directory no longer exists)
+src/scene/materials/{surfaceMaterial,surfaceResponse}.ts
 
 Reduced motion / UI:
 src/renderer/reducedMotion.ts

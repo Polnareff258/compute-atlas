@@ -14,7 +14,7 @@
 - Server-only Ollama access through HTTP + SSE Agent Gateway.
 - Agent whitelist tools and schema validation; no arbitrary code, shell, filesystem or DOM access.
 - Boot state is serializable and isolated from Three.js objects; renderer initialization remains behind the existing runtime boundary.
-- The scene's visual resources and interaction math are owned by the views under `src/scene/` that `SceneHost` mounts; none of them import Command or Agent modules. As of Stage 3.5.4 the old `ComputeCore` is no longer in the render tree, and `src/scene/core/` is dead code awaiting an authorised deletion.
+- The scene's visual resources and interaction math are owned by the views under `src/scene/` that `SceneHost` mounts; none of them import Command or Agent modules. As of Stage 3.5.4 the old `ComputeCore` is gone — `src/scene/core/`, `src/scene/graph/`, `src/scene/routing/`, `Atmosphere` and the old surface materials have been deleted, not parked.
 
 ## Current progress
 
@@ -457,10 +457,12 @@ longer exists in the render tree.
   build with HMR active. A production-build measurement belongs to Stage 11.
 - RESEARCH is very dark at idle — the intended dormant-silhouette treatment, at
   the edge of readable on a dim display.
-- The old visual tree is still on disk (`src/scene/core/`, `src/scene/Atmosphere.tsx`,
-  `src/scene/graph/{DomainEnvironment,GraphEdges,KnowledgeGraph}`, `src/scene/routing/`,
-  `src/scene/materials/{surfaceMaterial,surfaceResponse}`). Nothing mounts it, and
-  deleting it is a separate, explicitly authorised step.
+- ~~The old visual tree is still on disk~~ **Resolved.** The tree
+  (`src/scene/core/`, `src/scene/Atmosphere.tsx` + descriptor,
+  `src/scene/graph/*`, `src/scene/routing/*`,
+  `src/scene/materials/{surfaceMaterial,surfaceResponse}`) was deleted under
+  explicit user authorisation — 39 files, all with zero importers. Nothing it
+  contained was on the render path.
 
 ### Stage 3.5.4 addendum — the flat face
 
@@ -483,6 +485,29 @@ segmented cut had none and the SAFE capture showed the massif as floating shards
 — the one thing the brief explicitly forbids.
 
 Full method and constants: `docs/STAGE354_REBUILD_REVIEW_BRIEF.md` §12.
+
+### Stage 3.5.4 addendum — the old tree is deleted
+
+The superseded schemes are no longer on disk. 39 files removed with no importers:
+`src/scene/core/` in full (11), `src/scene/Atmosphere.tsx` + `atmosphere.test.ts` +
+`atmosphereDescriptor.ts`, `src/scene/graph/` in full (7), `surfaceMaterial` and
+`surfaceResponse` + tests, and `src/scene/routing/` in full (14). The `graph/` and
+`routing/` directories no longer exist.
+
+`routeContract` / `routeFlow` / `routeTelemetry` were not on the deletion list but
+could not survive it — they existed only to consume `graphRoutes`, `routeDash` and
+`coreStructure`, and deleting those left them uncompilable with no importers.
+
+The architecture boundaries the brief protects are untouched: `RendererRuntime`,
+`SceneHost`, `CameraController`, and `ComputeCore`'s contract. Only the Core *view*
+layer went. `energyMaterial` / `structureGeometry` / `surfaceGeometry` /
+`machinePalette` are the surviving material system.
+
+`test` fell from 35 files / 312 tests to 20 / 110 — the 15 deleted test files
+account for exactly the difference. `typecheck`, `lint` and `build` are clean, and
+an idle ULTRA capture after the deletion matches the pre-deletion frame
+(`spread 253.0` vs `252.8`, `error 0, fatal 0`), so nothing deleted was on the
+render path. Details: `docs/STAGE354_REBUILD_REVIEW_BRIEF.md` §13.
 
 ### Stage 3.5.4 handoff
 
