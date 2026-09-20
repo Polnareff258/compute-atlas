@@ -1,191 +1,239 @@
-# Stage 3.5.6 — handoff: the ink-density river field
+# Stage 3.5.6 — current-state technical handoff
 
-Written for a reader who has not seen the work. It states what changed, what is
-evidenced, what is broken, and the one question that is currently blocking.
+Replaces the previous version of this file, which referenced a superseded commit, described the
+deleted Voronoi corridor/basin construction as live, and carried blocking issues that have since
+been fixed. Everything below is written against the code as it stands.
 
-## 1. The brief this is answering
+    HEAD      035f360  "fix: the simulation passes write state through outputNode, not colorNode"
+    branch    master, in sync with origin/master, clean tree
+    evidence  artifacts/baseline-035f360/  (50 files, prefix baseline-035f360-*)
 
-Turn the site from a procedural-terrain / Three.js demo into a realtime creative
-technology showcase whose first impression is *one abstract data river, formed by
-erosion, deposition, diffusion and computation density, which the visitor can
-disturb by dragging and travel along by scrolling into a large computing
-environment.* The one reference quality named first is river curvature; the
-forbidden list includes closed river banks, glass ribbons, concentric circles,
-uniform particle fields, and uppercase wide-tracked technical labels.
+This is a **preparation** document. No visual work was done in the commit that produced it.
 
-Hard constraints that must not be broken: `RendererRuntime` owns backend and
-quality, `SceneHost` is the semantic integration boundary, `CameraController`
-owns the camera, the Command Bus and graph semantics stay intact, the descriptor
-stays deterministic and free of Three.js, telemetry stays truthful, and no frame
-may be driven by React state.
+## 1. Verified state of the checks
 
-## 2. Repository state
-
-    repository : Polnareff258/compute-atlas
-    branch     : master
-    commit     : 3ad10df  "feat: drive the composition from an advected ink-density river field"
-    baseline   : 220fb43  (the review baseline; unchanged when this work began)
-    tree       : clean, in sync with origin/master
-
-    npm run typecheck   passes
-    npm run lint        passes, 0 errors 0 warnings
-    npm test            26 files / 197 tests pass
-    browser console     0 errors, 0 fatals on every capture batch
-
-## 3. What was rebuilt
-
-Everything in `src/scene/ink/` is new and is the composition:
-
-| file | what it owns |
+| check | result |
 |---|---|
-| `inkDensity.ts` | the CPU bake of the river's density field: body, scour, settle, along, plus a fluvial texture carrying the tangent and speed |
-| `inkField.ts` | GPU advection of that field, with the pointer as a pressure imprint |
-| `inkMaterial.ts` | the hero shading model, written as a 70/20/10 hierarchy |
-| `inkSurface.ts` | the graded corridor the ground is built from |
-| `inkBasin.ts` | the convergence basin, partitioned against the corridors |
-| `inkDomains.ts` | the five regions, as local terms in the field |
-| `riverCourse.ts` | the curvature the descriptor's authoring lines do not carry |
+| `npm run typecheck` | passes |
+| `npm run lint` | passes, 0 errors 0 warnings |
+| `npm test` | **1 failed, 196 passed of 197** |
+| browser console | error 0, fatal 0 on every capture batch |
 
-Supporting: `src/scene/scroll/scrollChoreography.ts` (progress to act, layer
-weights, type opacity, camera authority), `src/scene/domains/domainLabels.ts` and
-`src/ui/DomainLabels.tsx` (the five regions projected to screen and carried in the
-DOM), `src/scene/camera/heroShot.ts` (the resting framing and the scroll stations),
-and rewrites of `RiverView`, `TerrainView` and `BasinView`.
+The single failure is `src/scene/watershed/terrainGeometry.test.ts` → *"builds a mesh at ULTRA
+detail within a sane budget"*. It **passes in isolation** (2.9 s) and fails only when the suite
+runs in parallel, where competing workers push it past vitest's default 5 s per-test timeout. The
+global timeout was deliberately **not** raised and the module was **not** deleted. That module is
+not on the render path — only its own test imports it — but confirming that and removing it are a
+separate decision for a later commit.
 
-`CameraController` gained a scroll track that it *blends over* the shot it is
-already playing. The scroll supplies a pose; it never writes to a camera.
+## 2. Rendering path map (read from the current source)
 
-## 4. Defects found by measurement, and fixed
+### What `SceneHost` mounts
 
-Each of these was found by running the thing rather than by reading it.
+- `<fogExp2>` — scene fog, density and tint from the descriptor.
+- `<TerrainView>` — **the veil**: one translucent sheet of `buildInkVeil`, 96 world units above the
+  ground, sampling the same density field. Drawn after the ground. Absent at MEDIUM and SAFE
+  (`VEIL_PRESENCE` is 0), not mounted with zero gain.
+- `<RiverView>` — **the hero surface**: one continuous grid of `buildInkSurface` over the whole
+  world extent. `SURFACE_RESOLUTION` 768 along the long axis at detail 1, scaled by
+  `settings.terrainDetail`, floored at 192 in `inkSurface`.
 
-1. **Coincident surfaces.** Every corridor is displaced by the same density field
-   sampled by world position, so any two overlapping corridors are *exactly*
-   coincident surfaces and z-fight. A vision pass described the result as
-   "shattered, jagged, disconnected fragments — a graphical glitch", 2/10. Fixed
-   by a Voronoi ownership partition in `inkSurface`, and the same rule applied
-   from the other side in `inkBasin`.
-2. **A saturated shading term.** The normal response dotted a raw density gradient
-   divided by a 0.0035 UV offset into the key direction. Its magnitude is in the
-   hundreds, so it exceeded the clamp on essentially every fragment and the frame
-   was uniformly lit. Fixed by normalising the gradient to a unit direction.
-3. **Reduced motion that did not reduce motion.** Three clocks (the ink field, the
-   flow phase, the camera drift) kept running under the preference, so the capture
-   harness's readiness probe could never stabilise and the reduced-motion frame
-   could not be produced at all. Now all three hold.
-4. **The scroll camera returned to the opening pose at the end of the story.**
-   `cameraAuthority` was written to fall to zero exactly at progress 1, and
-   releasing authority means the controller blends back toward the shot it is
-   playing — which is the opening framing. Measured through the projected DOM
-   labels: 981,389 at progress 0 against 984,389 at progress 1.
-5. **An off-by-one that made the computed reveal framing unreachable** — the
-   condition selecting the final station used `===` where the loop had already
-   settled on the last index, so it never fired.
+There is **no basin mesh and no corridor mesh**. `BasinView.tsx`, `inkBasin.ts` and
+`buildInkCorridor` were deleted; the basin and the five regions are values of the density field,
+not geometry.
 
-## 5. What is verified, with numbers
+`DomainLabels` is mounted by `RendererHost`, not `SceneHost` — the label layer lives in the host's
+DOM tree because R3F's canvas is created imperatively by the host and a DOM overlay cannot be
+rendered from inside it. `RendererHost` renders, in order: the canvas, the vignette,
+`<DomainLabels>`, `<SystemMasthead>`, `<RendererStatus>`, `<BootExperience>`.
 
-Baseline against current, 1920x1080 ULTRA WebGPU, same seed:
+### Textures: static authored data vs GPU simulation state
 
-| metric | baseline 220fb43 | now |
+**Static** (`new THREE.DataTexture`, uploaded once per descriptor, `FloatType`, linear, clamped):
+
+- `baseTextureSource` — from `inkDensity().data`: R body, G scour, B settle, **A along**.
+- `fluvialTextureSource` — from `inkDensity().fluvial`: R tangent X, G tangent Z, **B speed**,
+  A seed noise.
+
+**Simulation** (`new THREE.RenderTarget`, half-float, no depth, ping-ponged by copy rather than by
+swapping): `read` and `write`, sized by `INK_QUALITY[tier].simulationResolution` (512/384/256/192).
+
+### Where each channel is produced and consumed
+
+| channel | produced | consumed |
 |---|---|---|
-| luminance p50 | 45.8 | 16.6 |
-| luminance p90 | 67.7 | 138.5 |
-| luminance p99.9 | 124.5 | 171.3 |
-| spread (p99.9 - p1) | 103.2 | 161.4 |
-| near-grey share | 0.04% | 3.75% |
-| worst single colour share | 6.5% | 46.8% (near-black) |
+| `body` | bake: river profile + pigment veil + region body | material pigment ramp, `pigmentGlow`, granules |
+| `scour` | bake: outside-of-bend cut + regions | material `scourTerm`, vertex displacement down |
+| `settle` | bake: inside-of-bend bar + descriptor deposits + basin gather + regions | `settleTerm` (base colour **and** emission), displacement up |
+| `pressure` | **simulation only** — brush injection `brush · dt · PRESSURE_INJECT_RATE` | vertex lift (capped), `pressureTerm` in `sharpness` |
+| `along` | bake: arc-length position of the winning river | bedding phase |
+| `tangentX/Z`, `speed` | bake: the winning river's tangent and rate profile | advection velocity; `speed` also drives `primaryCore` |
 
-Other measured results:
+`speed` is `flowRate · (0.35 + 0.65 · body_at_bake_time)` — computed **before** regions, basin and
+veil are mixed in, and static. That is what makes it usable as a river selector; `primaryCore` is
+`smoothstep(0.84, 0.95, speed)`.
 
-- **Drag**: 4.30% of pixels change (89,172 px), against a 0.3% visibility floor.
-  The difference mask is a narrow elongated streak with a taper, not a circle.
-- **Scroll**: document 3024 px against a 1080 viewport, i.e. a 1.8-viewport range.
-  All five keyframes land with 0.00% drift.
-- **Reverse scroll**: every reverse frame matches its forward counterpart
-  (33.8/33.8, 58.2/58.3, 48.3/48.4, 50.1/50.1, 34.1/34.1); at 50% only 3.75% of
-  pixels differ, mean absolute difference 1.99 of 255, concentrated in the water.
-- **Surface quality**: speckle 0.040% against the baseline's 0.039% and isolated
-  extrema 0.002% against 0.001% — i.e. the current frame has the same isolated
-  noise as a frame known to be clean, which is the evidence that the z-fighting is
-  gone. WebGL2 measures 0.041%, confirming both backends run one shader graph.
-- **Quality tiers differ structurally**: ULTRA against SAFE 9.15% of pixels,
-  against MEDIUM 3.67%. For scale, the reverse-scroll comparison above is 3.75%.
+### Where each interaction enters
 
-Evidence tooling is in `scripts/`: `stage356-capture.mjs` (the CDP harness, with
-scroll, reverse and drag evidence), `frame-stats.mjs`, `frame-ascii.mjs`,
-`frame-quality.mjs`, `frame-diff.mjs`, and the in-repo diagnostic
-`src/scene/ink/inkDensity.probe.test.ts` which prints the baked field.
+| input | path |
+|---|---|
+| hover / focus | `graphInteraction` reducer → `activeDomainId` → `uniforms.setRegion(index, palette)` |
+| scroll | `readScrollProgress()` per frame → `deriveScrollChoreography` → `uniforms.setScrollLayers(...)` **and** `cameraController.setScrollTrack(pose, authority)` |
+| drag | pointer listeners → `updateBrush()` → `ink.setBrush(...)` → brush uniforms → the sim's injection terms |
+| quality | Command Bus `SET_QUALITY` → `RendererRuntime` → `SceneHost` rebuilds the ink field at the new tier and the views rebuild their geometry |
+| debug view | `?debug=N` read once → `uniforms.setDebugMode(N)` |
 
-## 6. The blocking problem
+The camera is written **only** by `CameraController`: `SceneHost` sets its scroll track and shot
+sequence, then applies `getResolvedPose()` to the R3F camera each frame. Animated state is written
+through uniforms, refs and GPU buffers; React carries only low-frequency semantic state.
 
-**At the end of the scroll story, none of the five regions is within the frame.**
+### Ownership
 
-The last act is called "world reveal" and is supposed to show the river opening
-into the basin with the five regions around it. Measured through the projected DOM
-labels at progress 1: **0 of 5 visible.**
+`RendererRuntime` owns backend, quality and lifecycle; `RendererHost` owns the canvas, the R3F
+root, the container ResizeObserver and the DOM overlays; `SceneHost` owns the semantic integration
+and the frame loop; `CameraController` owns the camera. Telemetry is sampled in `SceneHost` every
+0.25 s and reports configured budget, rendered samples and active signal separately — the budget is
+never reported as a rendered count.
 
-What was measured about the world:
+### Disposal
 
-    world span  : x 960  z 760   centroid 40,-480
-      region ai             centre -440, -520   radius 220  delta
-      region graphics       centre  520, -310   radius 240  terraces
-      region game-analysis  centre -440, -100   radius 200  ravine
-      region systems        centre  480, -640   radius 250  strata
-      region research       centre  -40, -860   radius 280  expanse
-    required eye for 16:9 with 35% margin: 1152
+- `inkField.dispose()` — seed/advect/copy materials, both render targets, both data textures, the
+  quad geometry. Called from a `useEffect` cleanup in `SceneHost`.
+- `inkMaterial` / `veilMaterial` — each returns a `dispose()` that disposes its material; the views
+  dispose geometry and material together in a `useEffect` cleanup keyed on the same dependencies
+  they were built with.
+- `flowField` — disposed on the effect that builds it.
 
-The station that was in use sat at an eye of about 213 — roughly five times too
-low to contain them. That has now been replaced by a computed `revealStation()`
-which derives the eye from the descriptor's own basin and region centres and
-radii, and the off-by-one that stopped it being selected has been fixed. **It
-still does not work**: at progress 1 the visible-region count is still 0, and the
-sampled label's transform is frozen at its progress-0.5 value, which means the
-projection is judging every region not visible.
+## 3. What each diagnostic mode shows
 
-Hand calculation says an eye of 1152 should cover them: the regions sit within
--440..+520 and -560..+200 of the look target, while the frame half-extents at that
-height are about 885 across and 533 deep. The measurement disagrees, so there is a
-further defect that has not been located.
+`?debug=N`. Raw-channel views are shown as their own value in grey, never auto-ranged — a view that
+normalised itself would make an empty channel look identical to a saturated one.
 
-**The next diagnostic, and it should be done before any further framing change:**
-at progress 1, print the projection's own intermediates — the camera position and
-look target actually in use, and for each region the projected x, y and z, the
-`behind` flag, and the `onFrame` flag. That distinguishes the two candidate causes:
-the camera not reaching the computed station, versus the visibility test
-rejecting regions that are in frame.
+    0  final                        7  surface without emission
+    1  body                         8  settle emission only
+    2  scour                        9  depth fade
+    3  settle                      10  emission without settle
+    4  pressure                    11  pigment emission
+    5  base colour                 12  sharpness emission
+    6  emission (all)              13  primary core
 
-Everything after that is framing work, and doing it before that measurement is
-known to be blind — the previous round was spent on a framing change that the
-measurement then showed had no effect.
+`emission` is the sum of three named nodes — `pigmentEmission`, `sharpnessEmission`,
+`settleEmission` — and every emission view **references** those nodes rather than restating them. An
+earlier version re-typed one of them with a different gain and silently measured a different
+formula.
 
-## 7. What is not done, stated plainly
+## 4. Repairs made in the three commits before this one
 
-- The reveal does not frame the five regions (above).
-- The scroll's hand-off to free interaction is owed. Releasing the scroll's
-  authority currently means returning to the opening pose, which is why the
-  falloff was removed. A correct hand-off needs the controller to adopt the arrival
-  pose as its own resting pose and then give up authority, so that hover and focus
-  continue from where the story ended.
-- `shots.ts`'s focus choreography still travels the descriptor's straight
-  authoring spines, so a focus move runs beside the visible river rather than along
-  it. Known and recorded, confined to the secondary shots.
-- The upper third of the held frame is still empty: the far field fades before any
-  content arrives there.
-- Gradient energy is 0.74 against the baseline's 0.874, so the frame is still
-  softer than the composition it replaced.
-- Domain hover and focus do not make a region locally clear. The regions are terms
-  in the field and are labelled, but they do not yet respond individually.
-- No resource soak, and MEDIUM/SAFE were captured once each.
+**The surface is continuous.** Each river previously got its own graded corridor mesh with the
+quads belonging to another river deleted, on the theory that the survivors formed a partition. They
+did not: the corridors were independently generated grids, so a quad one gave up was never replaced
+by another and the world had a hole along every midline between two rivers. A coverage rule
+expressed through topology cannot be robust when the topology is generated per feature. There is
+now one grid.
 
-## 8. A constraint on how this was verified
+**The camera has an explicit frustum.** `CAMERA_NEAR` / `CAMERA_FAR` were absent, so the default far
+of 1000 applied to a world 2000 units across and a scroll station standing at an eye height near
+1150. The whole final act of the story was clipped, and everything beyond a kilometre was silently
+missing from every other frame.
 
-The vision backends available to the agent were rate-limited for essentially the
-whole session. Almost every visual judgement in section 5 therefore comes from
-pixel measurement rather than from looking: the four `frame-*.mjs` tools were
-written to make questions like "is the geometry shattered" answerable numerically,
-and the DOM label projection turned out to be a better diagnostic than the pixel
-statistics for the scroll — it caught the camera returning to the opening pose,
-which the pixel metrics had hidden behind a simultaneous change in shading.
+**A region height was being used as a density.** `DomainTerrain.amplitude` is a world-space height
+built as `BASE_AMPLITUDE · k` (values 10 to 92). It was multiplied into `scour` and `settle`, which
+are 0..1 fractions, so every region saturated on contact — three channels pinned at p90 = 1.000 over
+roughly half the world.
 
-The practical consequence for whoever picks this up: **prefer a measurement over a
-reading, and where a claim cannot be measured, say it cannot.**
+**The brush injection is a rate.** It was a raw per-frame addition, so the response was frame-rate
+dependent and each channel settled at `a / (k·dt)` — a factor of sixty too high at 60 Hz. Injections
+are now `rate · dt`, every channel has a ceiling above the authored maximum, and the geometric
+response to pressure is capped.
+
+**The thalweg reads `primaryCore`,** not the composite `body`. The old form was `smoothstep(0.90,
+0.99, body)`, and by then `body` contains the rivers, the veil and five regions — so it was never a
+centreline. `THALWEG_GAIN` is deleted and the assembled `sharpness` is clamped to 0..1 before the
+power.
+
+**The simulation passes write through `outputNode`, not `colorNode`.** `colorNode` is a `vec3`
+output and `NodeMaterial` assigns alpha one unconditionally for an opaque material
+(`NodeMaterial.js:899`), so the `vec4` the seed, advection and copy passes returned had its fourth
+component discarded. The material reads that channel as `pressure`, so pressure was saturated
+**from the first frame** — which pinned `sharpness` at its ceiling and made a narrow highlight the
+illumination of 84% of the picture. `outputNode` replaces the result after the built-in
+diffuse/opacity handling (`NodeMaterial.js:547`), which is the seam a data pass wants; `transparent`
+was rejected because a blending pass would mix with its target instead of replacing it, and
+`NoBlending` is now stated explicitly.
+
+## 5. Browser evidence at this commit
+
+All frames at `035f360`, `boot=skip` applied, prefix `baseline-035f360-*` in
+`artifacts/baseline-035f360/`.
+
+**Luminance and coverage.** Fixed thresholds pass through the same display pipeline for every
+frame, so these numbers are comparable **across these captures** and are diagnostics only — they
+are not a substitute for looking at the picture, and are not transform-invariant.
+
+| frame | p50 | p90 | p99 | <32 | >64 | >128 |
+|---|---|---|---|---|---|---|
+| WebGPU ULTRA 1920×1080 idle | 28.0 | 71.0 | 184.5 | 59.2% | 12.4% | 3.37% |
+| ↳ 480×270 thumbnail | 28.0 | 70.8 | 184.3 | 59.3% | 12.28% | 3.34% |
+| WebGPU ULTRA 2560×1440 idle | 27.9 | 71.0 | 180.8 | 59.6% | 12.22% | 3.33% |
+| WebGL2 ULTRA 1920×1080 idle | 28.1 | 71.8 | 184.4 | 59.0% | 12.6% | 3.38% |
+| reduced motion 1920×1080 idle | 27.2 | 100.3 | 175.4 | 61.9% | 19.59% | 5.38% |
+| debug 4 (pressure) | 24.1 | 37.1 | 41.4 | 76.9% | 0.19% | 0.07% |
+| debug 12 (sharpness emission) | 24.6 | 39.4 | 170.8 | 73.2% | 4.19% | 3.02% |
+| debug 13 (primary core) | 24.6 | 39.4 | 195.9 | 73.1% | 4.48% | 3.59% |
+
+WebGPU and WebGL2 agree to within 0.6 on p50 and 0.01 percentage points on >128, which is the
+expected result of both backends constructing the same `WebGPURenderer` and therefore one shader
+graph.
+
+**Scroll.** Document 3024 px against a 1080 viewport — a 1.8-viewport range. All five keyframes
+(0/25/50/75/100) landed with **0.00% drift**, at both 1920×1080 and 2560×1440.
+
+**Drag.** WebGPU 3.561% of pixels changed (73,834 px, mean delta 13.01/255). WebGL2 3.664%
+(75,975 px, mean delta 13.34/255). Both well above the harness's 0.3% visibility floor.
+
+**Debug views confirm the pressure repair.** Mode 4 lights 0.19% of the frame above luma 64 at
+idle, against 90.83% before the `outputNode` fix. Mode 12 now measures 4.19% against mode 13's
+4.48% — the relationship that must hold once pressure stops masking the corrected thalweg.
+
+**Console.** error 0 and fatal 0 on every batch. The warnings are the known environment set:
+favicon 404, `THREE.Clock` deprecation, `powerPreference` ignored on Windows, HMR notice.
+
+## 6. Verified and unverified
+
+**Verified by running it:** the checks in §1; both backends' idle and drag; the scroll range and all
+five keyframes; the debug views; the reduced-motion idle frame; both backends agreeing numerically.
+
+**Not verified — and not to be claimed as passing:**
+
+- **Under reduced motion the drag produces exactly zero pixel change.** The harness reports
+  `the drag moved 0.000% of pixels (0 px)`, below its 0.3% floor, and refuses to write the frames.
+  This is a direct consequence of the reduced-motion repair: `SceneHost` passes `delta = 0` to
+  `ink.step`, which holds everything including the brush injection, so the drag writes nothing.
+  Direct manipulation should still work under the preference and currently does not.
+- **No sustained-drag evidence.** A ~5 s hold and release frames at 0/1/3/5 s are not captured; the
+  harness has no hold-duration option and adding one was out of scope for a preparation commit.
+- **No frame-rate consistency evidence.** 30/60/120 FPS were not tested; the browser tooling here
+  cannot control frame rate reliably, so this is untested rather than passing.
+- **Reduced-motion ambient stop is measured only indirectly.** Two samples were captured but the
+  difference between them is not reported here as a stop, because the two runs capture at
+  comparable scene clocks — that makes them a determinism check, not a motion probe.
+- MEDIUM and SAFE were not captured in this baseline.
+
+## 7. Current visual state, stated factually
+
+No art direction is proposed here; these are observations for the next model.
+
+- The primary route renders as a **thick, near-white continuous highlight**.
+- The **rectangular boundary of the world surface is still visible** — the grid covers the extent
+  and its edge is where the geometry ends.
+- **Domain local structure is poorly distinguishable** — the five regions exist as terms in the
+  density field and carry DOM labels, but do not read as five distinct environments.
+- **Surface hierarchy and depth are unfinished**; the frame has a dark base and a bright core but
+  little between them.
+- **Soft coverage is not implemented.** The surface is opaque, and the material's stated reason for
+  that (sorting corridors, bed and basin against each other) is obsolete — those meshes no longer
+  exist.
+- The **final luminance hierarchy has not been rebuilt** since the emission repair.
+
+This is **not a finished or shippable visual state**, and the previous handoff's framing of the work
+as complete should not be carried forward.
