@@ -325,6 +325,20 @@ on screen, because an interior finish is dark enough to read as the void it is c
 from. It takes the body's own finish instead, so a joint reads as a narrowed
 section rather than a break.
 
+**Cost.** A thirty-second idle run at 1920×1080 ULTRA after the change, against
+§5's sixty-second run before it:
+
+```
+drawCalls 49 · triangles 483,628 (from 483,200) · geometries 22 · textures 26
+fps 32–43 · frame time 23–31 ms · renderedFieldSamples 120,000 / 120,000
+activeSignalSamples 47,779–48,000
+```
+
+The massif segmentation, the spine and the ribbing cost **428 triangles** in a
+frame that draws 483,628, and the draw-call count is unchanged at 49 because the
+new members bake into the surface classes that already existed. `geometries` and
+`textures` remain flat across the run.
+
 **What is still true.** The large faces are large, and the joints are the only
 thing that breaks their outline. The veins on them still trace closed loops
 rather than branching — §6 item 7's octave change reduced this and did not
