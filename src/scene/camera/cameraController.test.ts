@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { GRAPH_MANIFEST } from '../../graph/graphManifest';
 import { deriveGraphLayout } from '../../graph/layout';
 import type { GraphNodeId } from '../../graph/types';
-import { deriveRiftStructure } from '../hero/riftStructure';
 import {
   BASE_CAMERA_DISTANCE,
   CAMERA_FOV_DEGREES,
@@ -233,86 +232,6 @@ describe('deriveCameraFraming', () => {
     // way sideways, and the subject did not turn.
     expect(focused.positionX).toBeLessThan(idle.positionX - 1);
     expect(focused.positionZ).not.toBe(idle.positionZ);
-  });
-
-  it('frames the rift throat whole and lets the machine run off the edges', () => {
-    // Both numbers are read rather than guessed: the rift's own extents come
-    // from the structure the scene actually builds, and the frame's from the
-    // rig. This is the composition contract the idle distance is derived
-    // against — the reason `BASE_CAMERA_DISTANCE` moves whenever the hero is
-    // rebuilt — so a test holding yesterday's constants would go on passing
-    // while describing a frame the page no longer draws.
-    //
-    // It reads the *rift*, which is the only thing the hero's bounds describe.
-    // The far field is authored and measured separately, because a backdrop that
-    // is counted as part of the subject is not a backdrop: a previous revision
-    // of the rift carried four plates up to two hundred and forty units across
-    // and `measureBounds` dutifully included them, so this assertion would have
-    // gone on passing while the rift it was measuring was an invisible detail
-    // inside an enormous frame of backdrop.
-    //
-    // The contract is two-sided, and the previous revision's was not. It asked
-    // for the hero's *whole* mass at 55–65% of the frame, which is a rule for a
-    // composition whose subject is a complete object sitting in the middle of
-    // the page. That is the composition the brief for this stage abolishes: a
-    // giant asymmetric structure entering from one corner, layers extending past
-    // the viewport, and no findable edge to any of it. A band that caps the hero
-    // at two thirds of the frame cannot describe that picture — it can only
-    // forbid it — so the rule is restated in terms of the two things the new
-    // picture actually has to be true of at once:
-    //
-    //   1. the *throat* is framed whole, with air around it, because the rift is
-    //      the subject and the one image the composition exists for is a lit
-    //      channel running through a dark body; and
-    //   2. the *machine* overflows the frame, because a structure you can see the
-    //      end of is not a large structure — it is a model of one.
-    //
-    // Measured on both axes and asserted on the larger, since the axis that binds
-    // is the one the mass has to hold to, and measuring only one of them is how
-    // the revision before this one went wrong: the width read 0.56, comfortably
-    // inside its band, while the height was three quarters of the way down the
-    // page.
-    const hero = deriveRiftStructure({ detail: 1 });
-    const halfWidth = BASE_CAMERA_DISTANCE * HALF_FOV_TAN * ASPECT;
-    const halfHeight = BASE_CAMERA_DISTANCE * HALF_FOV_TAN;
-    const across = (extent: number, half: number) => extent / half;
-
-    // The rift reports its extent as a min/max box rather than as half-extents,
-    // because that is what the geometry knows — the spine is authored off-centre
-    // and three half-sizes would have to pretend the hero sits on its own origin,
-    // which it does not. The machine's reach is therefore the largest absolute
-    // corner, not `max - min`: the box is not symmetric about zero, and half of a
-    // full width would be measured against a *half* frame, doubling the fraction.
-    const reach = Math.max(
-      across(Math.max(Math.abs(hero.bounds.min[0]), Math.abs(hero.bounds.max[0])), halfWidth),
-      across(Math.max(Math.abs(hero.bounds.min[1]), Math.abs(hero.bounds.max[1])), halfHeight),
-    );
-    // The cavity's extents *are* half-extents and *are* about the cavity's own
-    // centre, which is not the origin, so its distance from the frame's centre is
-    // the part of the margin that has to be spent on the offset.
-    const [cavityX, cavityY] = hero.cavity.centre;
-    const throat = Math.max(
-      across(Math.abs(cavityX) + hero.cavity.halfExtents[0], halfWidth),
-      across(Math.abs(cavityY) + hero.cavity.halfExtents[1], halfHeight),
-    );
-
-    // The throat is the subject: inside the frame, but not so small that the
-    // composition becomes a wide shot of a small object in a large field.
-    expect(throat).toBeGreaterThan(0.2);
-    expect(throat).toBeLessThan(0.55);
-    // The machine has no findable edge: it leaves the frame on at least the axis
-    // this measures, and by enough that the eye reads continuation rather than a
-    // slightly-cropped object. Below about 1.4 the ends of the structure start
-    // resolving inside the corners.
-    expect(reach).toBeGreaterThan(1.4);
-
-    // And the reframe distance the bound domains ask for stays inside the rig's
-    // own range, so the thirds are never broken by the clamp.
-    for (const nodeId of DOMAIN_IDS) {
-      const framing = framingForDomain(nodeId);
-      expect(framing.positionZ).toBeGreaterThan(BASE_CAMERA_DISTANCE * 0.6);
-      expect(framing.positionZ).toBeLessThan(BASE_CAMERA_DISTANCE * 2);
-    }
   });
 
   it('keeps the dolly inside a usable range at every aspect and distance', () => {

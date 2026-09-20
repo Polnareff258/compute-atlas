@@ -27,33 +27,21 @@ import {
 } from './camera/cameraController';
 import { createFieldUniforms } from './field/fieldUniforms';
 import { deriveFieldState } from './field/deriveFieldState';
-import { deriveRiftStructure } from './hero/riftStructure';
-import { RiftStructureView } from './hero/RiftStructureView';
-import { deriveMatterCount, type MatterRegion } from './matter/dataMatter';
-import { DataMatterView } from './matter/DataMatterView';
-import { DomainField } from './domains/DomainField';
-import { deriveDomainPhenomena } from './domains/domainPhenomena';
-import { DeepField } from './backdrop/DeepField';
-import { PostPipeline } from './post/PostPipeline';
+import {
+  createWatershedDescriptor,
+  DOMAIN_IDS,
+  WATERSHED_PALETTE,
+  type DomainId,
+} from './watershed/watershedDescriptor';
 
 /**
  * R3F 9 resolves intrinsic elements from this catalogue rather than from the
- * THREE namespace at large, so anything the scene mounts as a JSX element has
- * to be registered before the first render. This list is the whole of the
- * scene's element vocabulary, and it is deliberately short: the composition is
- * four draw calls of authored geometry plus one instanced field, and the rest of
- * the frame is shading.
+ * THREE namespace at large, so anything the scene mounts as a JSX element has to
+ * be registered before the first render. It is very short at the moment because
+ * the scene is being rebuilt: the landscape's own views are not here yet, and
+ * what remains is the background and the fog.
  */
 extend({
-  Group: THREE.Group,
-  InstancedMesh: THREE.InstancedMesh,
-  Mesh: THREE.Mesh,
-  Points: THREE.Points,
-  BoxGeometry: THREE.BoxGeometry,
-  PlaneGeometry: THREE.PlaneGeometry,
-  SphereGeometry: THREE.SphereGeometry,
-  BufferGeometry: THREE.BufferGeometry,
-  BufferAttribute: THREE.BufferAttribute,
   Color: THREE.Color,
   FogExp2: THREE.FogExp2,
 });
@@ -71,26 +59,37 @@ export type SceneHostProps = {
 const TELEMETRY_INTERVAL = 0.25;
 
 /**
+ * The seed the world is built from.
+ *
+ * Fixed, not random. The descriptor is a pure function of seed and detail — that
+ * is the whole point of it — so a fixed seed makes the page the same landscape on
+ * every load, which is what lets a capture be compared against yesterday's. Per-seed
+ * variation is real and tested; it is simply not something the visitor gets to
+ * roll.
+ */
+const WORLD_SEED = 2026;
+
+/**
  * How fast the interaction strengths ease toward their targets.
  *
  * Escape has to be a decompression rather than a cut, so this rate is a real
  * design parameter and not a smoothing constant: too fast and escape snaps, too
- * slow and the site feels unresponsive to a pointer. The field's *shape* follows
- * this, so it is the shape that decompresses.
+ * slow and the site feels unresponsive to a pointer. The landscape's *shape*
+ * follows this, so it is the shape that decompresses.
  */
 const FIELD_APPROACH_RATE = 3.1;
 const REDUCED_MOTION_RATE = 24;
 
 /**
- * How much larger the field's volume is than the throat it lives in.
+ * How fast the flow's own clock runs, in cycles per second.
  *
- * See the note at `riftRegion`: the field describes the machine's air as well as
- * its metal, and the brief's "large-scale flowing sheets" are a claim about a
- * volume several times the throat's. At 2.4 the rift's populated ellipsoid is
- * about thirty-one by fourteen by twelve units — the size of the composition's
- * middle distance, which is where a sheet of matter can be seen to be a sheet.
+ * Very slow, and separate from the operation phase: a river that stopped when the
+ * interaction did would read as a frozen photograph of a river, and the brief's
+ * idle requirement is that the landscape *breathes* even when nothing is being
+ * asked of it. Under reduced motion this is the one thing that keeps moving, at
+ * a rate chosen to be legible as motion and not as animation.
  */
-const RIFT_FIELD_SPREAD = 2.4;
+const FLOW_RATE = 0.018;
 
 export function SceneHost({
   quality,
@@ -104,69 +103,28 @@ export function SceneHost({
   const graphLayout = useMemo(() => deriveGraphLayout(GRAPH_MANIFEST), []);
   const graphProminence = useMemo(() => deriveGraphProminence(GRAPH_MANIFEST), []);
 
-  const rift = useMemo(
-    () => deriveRiftStructure({ detail: settings.coreStructureDetail }),
-    [settings.coreStructureDetail],
-  );
-
-  const phenomena = useMemo(
-    () => deriveDomainPhenomena(GRAPH_MANIFEST, graphLayout, settings.domainDetail),
-    [graphLayout, settings.domainDetail],
-  );
-
-  // The rift is region 0; the five domains are 1..5. The matter system is handed
-  // plain points and half-extents, so it never learns what a domain is.
-  //
-  // The half-extents are the cavity's own, scaled up, and the scale is not a
-  // fudge. The cavity is the *throat* — thirteen by six by five — and it is the
-  // smallest of the three volumes the brief gives the field: the units circulate
-  // deep in the Core, but they also form the sheets that extend past the rift and
-  // arrive as streams from far out. Confining a hundred thousand units to the
-  // throat's own box is what produced the third capture's solid ball at the
-  // centre of the frame. The field's volume has to be the volume the field is
-  // *about*, which is larger than the metal it passes through.
-  const riftRegion: MatterRegion = useMemo(
-    () => ({
-      centre: rift.cavity.centre,
-      extent: [
-        rift.cavity.halfExtents[0] * RIFT_FIELD_SPREAD,
-        rift.cavity.halfExtents[1] * RIFT_FIELD_SPREAD,
-        rift.cavity.halfExtents[2] * RIFT_FIELD_SPREAD,
-      ],
-      kind: 0,
-    }),
-    [rift],
-  );
-  const matterRegions: readonly MatterRegion[] = useMemo(
-    () =>
-      phenomena.map((entry) => ({
-        centre: entry.centre,
-        extent: entry.extent,
-        kind: entry.kind,
-      })),
-    [phenomena],
+  /**
+   * The whole world, as data.
+   *
+   * Every consumer below reads from this one object — the uniforms, the field
+   * state, and in time the terrain mesh, the flow, the labels and the camera's
+   * own clearance. Rebuilding it is the only thing that can change the landscape,
+   * which is why detail is threaded through here rather than into each system.
+   */
+  const descriptor = useMemo(
+    () => createWatershedDescriptor(WORLD_SEED, settings.terrainDetail),
+    [settings.terrainDetail],
   );
 
   const uniforms = useMemo(() => createFieldUniforms(), []);
-  // The count the view will actually allocate. Telemetry reads the same number
-  // from the same function, so the reported samples are the drawn samples rather
-  // than a separately maintained guess.
-  const matterCount = useMemo(
-    () => deriveMatterCount(settings.particleBudget, settings.coreStructureDetail),
-    [settings.particleBudget, settings.coreStructureDetail],
-  );
-  const uniformQuality = useMemo(
-    () => settings.coreStructureDetail * 0.5 + settings.domainDetail * 0.5,
-    [settings.coreStructureDetail, settings.domainDetail],
-  );
 
   useEffect(() => {
-    uniforms.setQuality(uniformQuality);
-  }, [uniforms, uniformQuality]);
+    uniforms.setQuality(settings.terrainDetail);
+  }, [uniforms, settings.terrainDetail]);
 
   useEffect(() => {
-    uniforms.setRift(rift.riftAxis, rift.riftCentre);
-  }, [uniforms, rift]);
+    uniforms.setBasin(descriptor.basin.centre, descriptor.basinFloor);
+  }, [uniforms, descriptor]);
 
   const cameraController = useMemo(
     () => createCameraController({ reducedMotion }),
@@ -207,6 +165,30 @@ export function SceneHost({
     return () => onCommandBusReady?.(null);
   }, [commandBus, onCommandBusReady]);
 
+  /**
+   * Which region the interaction is about, as the descriptor's own id.
+   *
+   * `hoveredNodeId` and `focusedNodeId` are `GraphNodeId`s and may name the core,
+   * which is not a region: the watershed has five regions and no centre. Filtering
+   * here rather than in every consumer keeps "a graph node" and "a region" from
+   * being used as though they were the same set.
+   */
+  const activeDomainId: DomainId | null = useMemo(() => {
+    const candidate = graphInteraction.focusedNodeId ?? graphInteraction.hoveredNodeId;
+    if (candidate === null) return null;
+    return DOMAIN_IDS.find((id) => id === candidate) ?? null;
+  }, [graphInteraction.focusedNodeId, graphInteraction.hoveredNodeId]);
+
+  useEffect(() => {
+    if (activeDomainId === null) {
+      uniforms.setRegion(-1, null);
+      return;
+    }
+    const index = DOMAIN_IDS.indexOf(activeDomainId);
+    const domain = descriptor.domains.find((candidate) => candidate.id === activeDomainId);
+    uniforms.setRegion(index, domain?.palette ?? null);
+  }, [uniforms, descriptor, activeDomainId]);
+
   useEffect(() => {
     const focusedNodeId = graphInteraction.focusedNodeId;
     const position =
@@ -242,18 +224,17 @@ export function SceneHost({
     () =>
       deriveFieldState({
         manifest: GRAPH_MANIFEST,
-        layout: graphLayout,
         interaction: graphInteraction,
         prominence: graphProminence,
-        rift,
+        descriptor,
       }),
-    [graphInteraction, graphLayout, graphProminence, rift],
+    [graphInteraction, graphProminence, descriptor],
   );
 
   // Eased interaction strengths. They are the only thing in the scene that
   // changes on a frame without a semantic change, so they live in a ref and are
   // never React state.
-  const easedRef = useRef({ hover: 0, focus: 0, activity: 0.24, phase: 0 });
+  const easedRef = useRef({ hover: 0, focus: 0, activity: 0.24, phase: 0, flow: 0 });
   const telemetryClockRef = useRef({ elapsed: 0, last: 0 });
   const { gl } = useThree();
 
@@ -271,13 +252,16 @@ export function SceneHost({
     eased.focus += (wantFocus - eased.focus) * step;
     eased.activity += (target.activityStrength - eased.activity) * step;
 
-    // The phase advances with the operation rather than with wall time, so a
-    // still frame still says where the work is. Frozen under reduced motion,
-    // which is the point of the reduced-motion path: the frame stops moving but
-    // keeps its state.
+    // The operation's phase advances with the operation rather than with wall
+    // time, so a still frame still says where the work is. Frozen under reduced
+    // motion, which is the point of the reduced-motion path.
     if (!reducedMotion) {
       eased.phase = (eased.phase + safeDelta * 0.06) % 1;
     }
+    // The flow's clock is the one thing that never stops. Everything else can
+    // hold still and the landscape is still a landscape; water that holds still
+    // is a photograph.
+    eased.flow = (eased.flow + safeDelta * FLOW_RATE) % 1;
 
     uniforms.update(
       {
@@ -287,13 +271,13 @@ export function SceneHost({
       },
       eased,
       reducedMotion ? 0 : state.clock.elapsedTime,
+      state.clock.elapsedTime,
     );
 
     // Framing is a translate-and-dolly rig: the camera moves and pulls back and
-    // never turns toward the subject, so the rift is seen from one angle
-    // throughout and only its place in the frame changes. That is what keeps the
-    // hero the compositional centre of gravity under focus instead of becoming
-    // a picture of one bay.
+    // never turns toward the subject. The shot system that replaces it — seven
+    // authored framings with their own poses, focal distances and hero regions —
+    // is what this rig is standing in for.
     cameraController.setVisualState(
       eased.focus > 0.5 ? 'focusing' : eased.hover > 0.35 ? 'hover_response' : 'idle',
     );
@@ -325,8 +309,12 @@ export function SceneHost({
         backend,
         quality,
         configuredFieldBudget: settings.particleBudget,
-        renderedFieldSamples: matterCount,
-        activeSignalSamples: Math.round(matterCount * eased.activity),
+        // Zero, and truthfully so: the landscape's geometry and its units do not
+        // exist yet. The two figures are separate arguments precisely so that a
+        // plan and a fact cannot be reported as the same number, and reporting
+        // the budget here would be the plan wearing the fact's name.
+        renderedFieldSamples: 0,
+        activeSignalSamples: 0,
         deltaSeconds: safeDelta,
         sampledAt: performance.now(),
       }),
@@ -335,43 +323,17 @@ export function SceneHost({
 
   return (
     <>
-      <color attach="background" args={['#03050a']} />
+      <color attach="background" args={[WATERSHED_PALETTE.ink]} />
       {/*
-        Exponential fog, at half the density it carried while the hero owned its
-        own backdrop.
-        The fog and the energy material's depth fade are two independent depth
-        cues, and while they were both tuned against a far field that filled the
-        frame they agreed. They do not agree about the far field's own structure:
-        at 0.012 a member a hundred units out is seventy-six percent of the way to
-        the fog colour, and the fog colour is within two values of the background,
-        so the far shelves arrived at exactly the value they were cut out of and
-        the composition had no far end at all. The material's depth floor is the
-        cue the far field is authored against; the fog is here to give the middle
-        distance some air, and at 0.006 that is all it does.
+        The fog is the landscape's air, and it is the descriptor's own figure
+        rather than a constant here: the density varies per seed, and a scene
+        whose air was written down separately from its world is a scene where the
+        two can disagree. It is not a fade to the background colour — the terrain
+        material treats distance as a multiplier on its whole term stack, so a
+        feature far out settles into the dark as a silhouette rather than washing
+        out to grey.
       */}
-      <fogExp2 attach="fog" args={['#050a12', 0.006]} />
-      <DeepField uniforms={uniforms} rift={rift} detail={settings.coreStructureDetail} />
-      <RiftStructureView structure={rift} uniforms={uniforms} />
-      <DataMatterView
-        uniforms={uniforms}
-        rift={riftRegion}
-        regions={matterRegions}
-        count={settings.particleBudget}
-        density={settings.coreStructureDetail}
-      />
-      <DomainField
-        uniforms={uniforms}
-        phenomena={phenomena}
-        interaction={graphInteraction}
-        onAction={handleGraphAction}
-        prominence={graphProminence}
-        reducedMotion={reducedMotion}
-      />
-      <PostPipeline
-        uniforms={uniforms}
-        enabled={settings.allowBloom}
-        depthOfField={quality === 'ultra'}
-      />
+      <fogExp2 attach="fog" args={[descriptor.fog.tint, descriptor.fog.density]} />
     </>
   );
 }

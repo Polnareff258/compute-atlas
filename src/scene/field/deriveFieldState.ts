@@ -1,9 +1,7 @@
 import type { GraphInteractionState } from '../../graph/interaction';
-import type { GraphLayout } from '../../graph/types';
-import { NAMED_DOMAIN_PROMINENCE } from '../../graph/layout';
 import type { GraphManifest } from '../../graph/types';
-import type { RiftStructure } from '../hero/riftStructure';
-import { selectRiftPortForDirection } from '../hero/riftStructure';
+import { NAMED_DOMAIN_PROMINENCE } from '../../graph/layout';
+import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
 import { createRestingAgentActivity, type AgentActivitySignal } from './agentActivity';
 
 type Vector = readonly [number, number, number];
@@ -11,35 +9,23 @@ type Vector = readonly [number, number, number];
 /**
  * Idle's own activity level.
  *
- * A foundry at rest is still a foundry. Zero would make the idle frame a
- * screenshot of an unpowered machine, and the brief's idle requirements —
- * breathing density layers, flowing sheets, streams entering from far — are all
- * motion. What idleness buys is *directionlessness*, not stillness.
+ * A watershed at rest is still a watershed. Zero would make the idle frame a
+ * screenshot of a dry valley, and the brief's idle requirements — data flowing
+ * slowly along the surface, regions eroding and depositing, the convergence zone
+ * compressing and releasing — are all motion. What idleness buys is
+ * *directionlessness*, not stillness.
  *
- * Raised from 0.24 after the second capture. Every gain in the matter shader is
- * a function of this number, and at 0.24 the field's own displacement term
- * (`live`, in `dataMatterMaterial`) resolved to about a third of a world unit —
- * so a hundred and twenty thousand units were being drawn at very nearly their
- * home positions, in a volume the size of the cavity. The result did not read as
- * a volume of matter moving through a machine; it read as soft blotches sitting
- * on the machine's surfaces, which is a texture and not a phenomenon. The
- * number below is the one that puts the field's displacement in the same order
- * as its own extent.
+ * The previous scene learned this the expensive way: every gain in its matter
+ * shader was a function of this number, and at 0.24 the field's displacement
+ * resolved to about a third of a world unit, so a hundred and twenty thousand
+ * units were drawn at very nearly their home positions. It read as soft blotches
+ * sitting on surfaces, which is a texture and not a phenomenon. The number below
+ * is the one that puts the field's displacement in the same order as its own
+ * extent.
  */
 const IDLE_ACTIVITY = 0.4;
 const HOVER_ACTIVITY = 0.58;
 const FOCUS_ACTIVITY = 0.92;
-
-/**
- * How far along the rift axis the idle inflow is authored to come from.
- *
- * Only the geometry of the idle corridor is decided here. How *hard* idle pulls
- * matter in is not: that is the corridor's strength, and it is resolved in
- * `fieldUniforms.update` from `IDLE_CORRIDOR` plus the interaction terms,
- * because the same number also has to answer for hover and focus and splitting
- * it across two modules is how the two ends drift apart.
- */
-const IDLE_INFLOW_DISTANCE = 46;
 
 /**
  * The five regional loads.
@@ -47,12 +33,11 @@ const IDLE_INFLOW_DISTANCE = 46;
  * At rest a region still carries its own weight: the composition is ranked, and
  * the ranking is a property of the layout rather than of the interaction, so the
  * idle frame is the same frame every time. A pointed-at region takes over; the
- * others recede but do not go dark, because a machine where everything except
- * one bay has stopped is a machine that is not running.
+ * others recede but do not go dark, because a landscape where everything except
+ * one region has stopped is not a landscape that is running.
  */
 export function deriveRegionalLoads(
   manifest: GraphManifest,
-  layout: GraphLayout,
   interaction: GraphInteractionState,
   prominence: Readonly<Record<string, number>>,
 ): number[] {
@@ -77,7 +62,6 @@ export function deriveRegionalLoads(
     }
   }
 
-  void layout;
   return loads;
 }
 
@@ -90,50 +74,59 @@ export function deriveRegionalLoads(
  * of drawing these same numbers, which is why the scene can hold together as one
  * event rather than as several effects that happen to be on screen at once.
  *
- * The rift is consulted here rather than in the view because *which* port the
- * signal leaves from is semantic: it depends on where the signal is going, and
- * the hero must not be able to make that decision without being told what a
- * domain is.
+ * **The corridor is the flow, and that is the change from the previous scene.**
+ * The rift's corridor was a fixed axis through the machine, so idle had to
+ * *author* an inflow direction (`riftAxis × -IDLE_INFLOW_DISTANCE`) and both ends
+ * were fictions chosen to look plausible. A watershed already has real water in
+ * it: the primary river's own course *is* the corridor's shape, and the brief's
+ * "primary flow leads the eye" is a statement about the composition rather than a
+ * separate lighting decision. So idle's corridor runs down the primary river from
+ * its source to the basin, and an active region's corridor runs up its own feeder
+ * from that feeder's source to the region. Nothing here is authored; every point
+ * is read from the descriptor.
+ *
+ * The descriptor is consulted here rather than in the view because *which* water
+ * carries the signal is semantic: it depends on which region the signal is going
+ * to, and the terrain must not be able to make that decision without being told
+ * what a domain is.
  */
 export function deriveFieldState(input: {
   readonly manifest: GraphManifest;
-  readonly layout: GraphLayout;
   readonly interaction: GraphInteractionState;
   readonly prominence: Readonly<Record<string, number>>;
-  readonly rift: RiftStructure;
+  readonly descriptor: WatershedDescriptor;
 }): AgentActivitySignal {
-  const { manifest, layout, interaction, prominence, rift } = input;
+  const { manifest, interaction, prominence, descriptor } = input;
   const resting = createRestingAgentActivity();
-  const domainActivity = deriveRegionalLoads(
-    manifest,
-    layout,
-    interaction,
-    prominence,
-  );
+  const domainActivity = deriveRegionalLoads(manifest, interaction, prominence);
+
+  /** A point on the spine, lifted clear of the ground it is carved into. */
+  const onCourse = (point: readonly [number, number]): Vector => [point[0], 0, point[1]];
+
+  const basinTarget: Vector = [
+    descriptor.basin.centre[0],
+    descriptor.basinFloor,
+    descriptor.basin.centre[1],
+  ];
 
   const activeId = interaction.focusedNodeId ?? interaction.hoveredNodeId;
 
   if (activeId === null) {
-    // Idle: matter enters along the spine from far out and reconfigures at the
-    // throat. The origin is authored at a fixed distance so the corridor is the
-    // same length every time — a corridor whose length varied with nothing would
-    // make the field's compression term drift for no reason.
-    const along: Vector = [
-      rift.riftAxis[0] * -IDLE_INFLOW_DISTANCE,
-      rift.riftAxis[1] * -IDLE_INFLOW_DISTANCE,
-      rift.riftAxis[2] * -IDLE_INFLOW_DISTANCE,
-    ];
-    const origin: Vector = [
-      rift.riftCentre[0] + along[0],
-      rift.riftCentre[1] + along[1],
-      rift.riftCentre[2] + along[2],
-    ];
+    // Idle: the primary river runs the length of the frame and the basin is what
+    // it runs into. Falling back to the basin's own centre when there is no
+    // primary river keeps the corridor's *span* non-zero in every seed, because a
+    // zero-length corridor is a division by zero in the shader — see the guard in
+    // `fieldUniforms.update`.
+    const primary = descriptor.rivers.find((river) => river.id === 'primary');
+    const source = primary?.spine[0];
+    const origin: Vector = source ? onCourse(source) : [basinTarget[0], basinTarget[1], basinTarget[2] + 260];
+
     return {
       ...resting,
       activityStrength: IDLE_ACTIVITY,
       activityPhase: 0,
       signalOrigin: origin,
-      signalTarget: rift.riftCentre,
+      signalTarget: basinTarget,
       routeCongestion: 0,
       domainActivity,
       operationProgress: 0,
@@ -142,20 +135,22 @@ export function deriveFieldState(input: {
   }
 
   const focused = interaction.focusedNodeId !== null;
-  const target = layout[activeId];
-  const direction: Vector = [
-    target[0] - rift.riftCentre[0],
-    target[1] - rift.riftCentre[1],
-    target[2] - rift.riftCentre[2],
-  ];
-  const port = selectRiftPortForDirection(rift, direction);
+  const domain = descriptor.domains.find((candidate) => candidate.id === activeId);
+  const feeder = descriptor.rivers.find((river) => river.domainId === activeId);
+  const target: Vector = domain
+    ? [domain.centre[0], domain.labelAnchor[1], domain.centre[1]]
+    : basinTarget;
+  // The feeder's source. Every domain-feeding river lands *exactly* on its
+  // domain's anchor — asserted in the descriptor's tests — so the corridor's
+  // target end is the region itself and not an approximation of it.
+  const origin: Vector = feeder?.spine[0] ? onCourse(feeder.spine[0]) : target;
 
   return {
     ...resting,
     activityStrength: focused ? FOCUS_ACTIVITY : HOVER_ACTIVITY,
     activityPhase: 0,
-    semanticTarget: activeId,
-    signalOrigin: port.position,
+    semanticTarget: domain ? domain.id : null,
+    signalOrigin: origin,
     signalTarget: target,
     routeCongestion: focused ? 0.18 : 0.08,
     domainActivity,

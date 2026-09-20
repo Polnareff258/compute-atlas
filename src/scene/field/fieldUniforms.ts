@@ -1,28 +1,39 @@
 import { Color, Vector3 } from 'three';
 import { uniform } from 'three/tsl';
 
-import { ENERGY_PALETTE, MACHINE_PALETTE } from '../materials/machinePalette';
+import { WATERSHED_PALETTE, type DomainPalette } from '../watershed/watershedDescriptor';
 import type { AgentActivitySignal } from './agentActivity';
 import { resolveResultHue } from './agentActivity';
 
 /**
  * The one block of GPU state the whole scene writes and the whole scene reads.
  *
- * Every material in the scene — the rift's structural shading, the matter field,
- * the membranes, the routing bundles, the backdrop — samples from this object.
- * That is the entire reason the scene can hold together as one event: there is
- * exactly one place where "what is happening" becomes numbers, and everything
- * downstream is a different way of drawing the same numbers.
+ * Every material in the scene — the terrain, the membranes, the rivers, the
+ * crystals, the fog — samples from this object. That is the entire reason the
+ * scene can hold together as one event: there is exactly one place where "what
+ * is happening" becomes numbers, and everything downstream is a different way of
+ * drawing the same numbers.
  *
  * It is a *mutable singleton*, written in place once per frame. It is not React
- * state and must never become React state: the values change at frame rate and
- * a re-render per frame would be the end of the scene's budget. Nothing here
+ * state and must never become React state: the values change at frame rate and a
+ * re-render per frame would be the end of the scene's budget. Nothing here
  * allocates after construction.
  *
- * The uniform set is deliberately small. Each entry is read by every material,
- * so the cost of adding one is paid across the whole scene, and a large uniform
- * block is a uniform block nobody can reason about. Eleven scalars, three
- * vectors and five colours is what the visual language actually needs:
+ * The set is deliberately small. Each entry is read by every material, so the
+ * cost of adding one is paid across the whole scene, and a large uniform block
+ * is a uniform block nobody can reason about.
+ *
+ * **What changed from the rift's version, and why.** The rift's block carried
+ * `uRiftAxis` and `uRiftCentre`: the hero was a *line* through the world, and
+ * everything was measured from it. The watershed's hero is the Convergence
+ * Basin, which is a *place* — a centre, a radius, a depth and a floor — so the
+ * structural uniforms became those four. Three more were added. `uActiveDomain`
+ * and the domain's own three colours are what let a region answer for itself
+ * without a per-region material; `uHighlight` is the budget from constraint C5,
+ * the single value that decides which region is allowed to be bright, because
+ * "at most one primary highlight region per frame" is a rule that has to live
+ * somewhere and a uniform is the only place the whole scene can agree on it.
+ * `uFlowPhase` is separate from `uPhase` on purpose — see below.
  *
  * - **Activity** — the master gain. Everything that moves moves more when it is
  *   high, and this is the only value a superposed "how busy is it" reads from.
@@ -31,9 +42,10 @@ import { resolveResultHue } from './agentActivity';
  *   reconfiguration of the whole route.
  * - **Congestion / progress** — the two ends of an operation, and the reason the
  *   scene can express contention and completion without a second system.
- * - **Signal origin / target / strength** — the corridor. A vector pair rather
- *   than a node id, because the field system must not know what a domain is.
- * - **Five regional loads** — local activity, in manifest order, so a region
+ * - **Signal origin / target / strength** — the corridor: the flow currently
+ *   carrying the visitor's attention. A vector pair rather than a node id,
+ *   because the field system must not know what a domain is.
+ * - **Five regional loads** — local activity, in `DOMAIN_IDS` order, so a region
  *   that is working generates local structure and one that is not does not.
  * - **Elapsed and quality** — time, and the density scalar the shaders use to
  *   trade detail for budget without changing the art direction.
@@ -41,36 +53,61 @@ import { resolveResultHue } from './agentActivity';
 export type FieldUniforms = ReturnType<typeof createFieldUniforms>;
 
 /**
- * The corridor strength the machine carries when nothing is being asked of it.
+ * The corridor strength the landscape carries when nothing is being asked of it.
  *
  * Small, and not zero. Idle's corridor is the spine of the composition: it is
- * what draws the rift as a lit channel through the hero and what gives the
- * entering matter something to be heading toward. Setting it to zero is not
- * "idle is quiet", it is "the hero has no axis" — see the note in `update`.
+ * what draws the primary flow as a lit channel through the mid-ground and what
+ * gives the migrating units something to be heading toward. Setting it to zero
+ * is not "idle is quiet", it is "the frame has no axis" — see the note in
+ * `update`, which records what that looked like the first time it was tried.
  */
 const IDLE_CORRIDOR = 0.4;
 
+/**
+ * Anomaly colours, taken from the two regions that own them.
+ *
+ * `interrupted` and `failed` are the only states permitted to spend amber or
+ * magenta anywhere in the frame, and they may only spend the hue of the region
+ * that owns it — GAME ANALYSIS keeps amber because its whole behaviour is
+ * parallel unresolved futures, GRAPHICS keeps magenta because it is the region
+ * where dispersion is made visible. Borrowing either for a generic "warning"
+ * would spend the scarcity that makes them readable.
+ */
 const RESULT_HUES = {
-  none: ENERGY_PALETTE.cyan,
-  amber: ENERGY_PALETTE.amber,
-  magenta: ENERGY_PALETTE.magenta,
+  none: WATERSHED_PALETTE.cyan,
+  amber: '#ffab3d',
+  magenta: '#ff4fd8',
 } as const;
 
 export function createFieldUniforms() {
   const uSignalOrigin = uniform(new Vector3(0, 0, 0));
   const uSignalTarget = uniform(new Vector3(0, 0, 0));
   const uStructuralLight = uniform(new Vector3(0, 0, 1));
-  /** The rift's spine. Structural, not semantic: the matter field circulates
-   *  around it and the travelling bands run along it. */
-  const uRiftAxis = uniform(new Vector3(0, 0, 1));
-  const uRiftCentre = uniform(new Vector3(0, 0, 0));
 
-  const uFlow = uniform(new Color(ENERGY_PALETTE.cyan));
-  const uDeep = uniform(new Color(ENERGY_PALETTE.ultraviolet));
-  const uPeak = uniform(new Color(ENERGY_PALETTE.hot));
-  const uRim = uniform(new Color(ENERGY_PALETTE.rim));
-  const uMass = uniform(new Color(MACHINE_PALETTE.shellHigh));
-  const uAnomaly = uniform(new Color(ENERGY_PALETTE.cyan));
+  /**
+   * The basin, as the structural centre of the world.
+   *
+   * Set once, from the descriptor. Four values rather than a mesh or a matrix,
+   * because three separate systems need them and none of them should be
+   * re-deriving the basin: the terrain sinks toward it, the fog gathers in it,
+   * and the flow decelerates into it.
+   */
+  const uBasinCentre = uniform(new Vector3(0, 0, 0));
+  const uBasinFloor = uniform(0);
+
+  const uFlow = uniform(new Color(WATERSHED_PALETTE.cyan));
+  const uSpectral = uniform(new Color(WATERSHED_PALETTE.spectral));
+  const uDeep = uniform(new Color(WATERSHED_PALETTE.violet));
+  const uRim = uniform(new Color(WATERSHED_PALETTE.cobalt));
+  const uMass = uniform(new Color(WATERSHED_PALETTE.midnight));
+  const uHaze = uniform(new Color(WATERSHED_PALETTE.petroleum));
+  const uPeak = uniform(new Color(WATERSHED_PALETTE.compression));
+  const uAnomaly = uniform(new Color(WATERSHED_PALETTE.cyan));
+
+  /** The active region's own three colours, or the global trio when none is. */
+  const uRegionGround = uniform(new Color(WATERSHED_PALETTE.violet));
+  const uRegionAmbient = uniform(new Color(WATERSHED_PALETTE.petroleum));
+  const uRegionAccent = uniform(new Color(WATERSHED_PALETTE.cyan));
 
   const uniforms = {
     uTime: uniform(0),
@@ -83,13 +120,25 @@ export function createFieldUniforms() {
     uProgress: uniform(0),
     uPhase: uniform(0),
 
+    /**
+     * The flow's own clock, kept separate from `uTime`.
+     *
+     * `uPhase` is the *operation's* position and freezes under reduced motion.
+     * The flow has to keep moving when everything else has stopped, because a
+     * still river reads as a frozen photograph of a river rather than as a
+     * landscape at rest — and the reduced-motion requirement is that the frame
+     * stops changing, not that the world stops being a world. So this one
+     * advances always, at a rate low enough to be a drift.
+     */
+    uFlowPhase: uniform(0),
+
     uSignalOrigin,
     uSignalTarget,
     uSignalStrength: uniform(0),
     /** Direction the key light comes from, in world space, for the rim term. */
     uStructuralLight,
-    uRiftAxis,
-    uRiftCentre,
+    uBasinCentre,
+    uBasinFloor,
 
     uLoadA: uniform(0),
     uLoadB: uniform(0),
@@ -97,12 +146,23 @@ export function createFieldUniforms() {
     uLoadD: uniform(0),
     uLoadE: uniform(0),
 
+    /** Which region the interaction is about, or -1. Never used to index. */
+    uActiveDomain: uniform(-1),
+    /** Constraint C5's budget: 0..1, and only one region may hold it. */
+    uHighlight: uniform(0),
+
     uFlow,
+    uSpectral,
     uDeep,
-    uPeak,
     uRim,
     uMass,
+    uHaze,
+    uPeak,
     uAnomaly,
+
+    uRegionGround,
+    uRegionAmbient,
+    uRegionAccent,
   };
 
   const loadTargets = [
@@ -131,8 +191,10 @@ export function createFieldUniforms() {
       readonly focus: number;
     },
     elapsed: number,
+    flowElapsed: number = elapsed,
   ): void {
     uniforms.uTime.value = elapsed;
+    uniforms.uFlowPhase.value = flowElapsed;
     uniforms.uActivity.value = clamp01(signal.activityStrength);
     uniforms.uHover.value = clamp01(interaction.hover);
     uniforms.uFocus.value = clamp01(interaction.focus);
@@ -158,15 +220,14 @@ export function createFieldUniforms() {
     // make the shader's direction term a division by zero. Normalising to one
     // unit of length keeps the falloff continuous through the degenerate case.
     //
-    // The floor is the part that matters. This used to resolve to zero whenever
-    // nothing was pointed at, on the reasoning that idle is the absence of a
-    // request — and that is true of a *request* and false of the machine. A
-    // foundry at rest still has metal moving through it: the brief's idle frame
-    // requires streams entering from far away and reconfiguring inside the Core,
-    // and a corridor strength of zero deletes the one term that draws them. The
-    // result was an idle frame whose hero carried no light along its own axis at
-    // all, which is why the first capture of this composition had a black rift
-    // and nothing happening in it.
+    // The floor is the part that matters. This resolved to zero whenever nothing
+    // was pointed at, on the reasoning that idle is the absence of a request —
+    // and that is true of a *request* and false of a watershed. A basin at rest
+    // still has water moving through it: the brief's idle frame requires the
+    // primary flow leading the eye, and a corridor strength of zero deletes the
+    // one term that draws it. The result was an idle frame whose hero carried no
+    // light along its own axis at all, which is why the first capture of the
+    // previous composition had a black centre and nothing happening in it.
     uniforms.uSignalStrength.value =
       span > 1e-3
         ? clamp01(IDLE_CORRIDOR + interaction.focus * 0.55 + interaction.hover * 0.42)
@@ -177,6 +238,11 @@ export function createFieldUniforms() {
       loadTargets[index]!.value = clamp01(value);
     }
 
+    // The highlight follows the *load*, not the pointer: the region allowed to
+    // be bright is the region with work in it, so a hover that lights a region
+    // and a region that is busy cannot disagree about which one is the subject.
+    const peak = Math.max(...loadTargets.map((target) => target.value));
+    uniforms.uHighlight.value = clamp01(peak);
     uAnomaly.value.set(RESULT_HUES[resolveResultHue(signal.operationResult)]);
   }
 
@@ -185,15 +251,39 @@ export function createFieldUniforms() {
   }
 
   /**
-   * Tells the field where the rift runs.
+   * Tells the field where the basin is, and where its floor sits.
    *
-   * Structural rather than semantic, and set once: the matter field circulates
-   * around this axis and the travelling bands run along it, so both the matter
-   * and the structural shading need it and neither should be re-deriving it.
+   * Structural rather than semantic, and set once per descriptor: the terrain
+   * sinks toward this point, the fog gathers in it and the flow decelerates into
+   * it, so all three need it and none of them should be re-deriving it from the
+   * descriptor independently.
    */
-  function setRift(axis: readonly [number, number, number], centre: readonly [number, number, number]): void {
-    uRiftAxis.value.set(axis[0], axis[1], axis[2]).normalize();
-    uRiftCentre.value.set(centre[0], centre[1], centre[2]);
+  function setBasin(centre: readonly [number, number], floor: number): void {
+    uBasinCentre.value.set(centre[0], floor, centre[1]);
+    uBasinFloor.value = floor;
+  }
+
+  /**
+   * Tells the field which region is answering, so its material can be its own.
+   *
+   * Passing `null` restores the global trio — the world's own colour, which is
+   * what a region recedes to. Note that this writes three colours and one index
+   * and does *not* decide how bright the region is: that is `uHighlight`, and
+   * keeping the two apart is what stops "which region" and "how much of the
+   * frame's light this region gets" from becoming the same question.
+   */
+  function setRegion(index: number, palette: DomainPalette | null): void {
+    if (palette === null) {
+      uniforms.uActiveDomain.value = -1;
+      uRegionGround.value.set(WATERSHED_PALETTE.violet);
+      uRegionAmbient.value.set(WATERSHED_PALETTE.petroleum);
+      uRegionAccent.value.set(WATERSHED_PALETTE.cyan);
+      return;
+    }
+    uniforms.uActiveDomain.value = index;
+    uRegionGround.value.set(palette.ground);
+    uRegionAmbient.value.set(palette.ambient);
+    uRegionAccent.value.set(palette.accent);
   }
 
   function dispose(): void {
@@ -202,7 +292,7 @@ export function createFieldUniforms() {
     // call sites and every other scene handle read the same way.
   }
 
-  return { uniforms, update, setQuality, setRift, dispose };
+  return { uniforms, update, setQuality, setBasin, setRegion, dispose };
 }
 
 function clamp01(value: number): number {
