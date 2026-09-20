@@ -198,23 +198,120 @@ function smoothstep(edge0: number, edge1: number, value: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/** Distance from `point` to the polyline, plus how far along it the closest approach is. */
+/**
+ * Per-spine data that does not depend on the query, computed once and kept.
+ *
+ * Keyed on the spine array itself rather than on the channel, which is not an
+ * implementation detail: a river and the channel it carves are deliberately the
+ * *same course*, so they share one spine object and now they share one cache
+ * entry. `watershedDescriptor`'s tests assert that sharing, so this is reading a
+ * relationship that is already guaranteed.
+ *
+ * A `WeakMap` rather than a field on the shape, because the shapes come in from
+ * callers who build them by hand — every test does — and a shape without the
+ * field would have to have it computed somewhere anyway. The map lets the type
+ * stay exactly what it says it is and still memoise.
+ */
+type SpineMetrics = {
+  readonly lengths: readonly number[];
+  readonly total: number;
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minZ: number;
+  readonly maxZ: number;
+};
+
+const SPINE_METRICS = new WeakMap<readonly Vector2[], SpineMetrics>();
+
+function spineMetrics(spine: readonly Vector2[]): SpineMetrics {
+  const cached = SPINE_METRICS.get(spine);
+  if (cached !== undefined) return cached;
+
+  const lengths: number[] = [];
+  let total = 0;
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index < spine.length - 1; index += 1) {
+    const [ax, az] = spine[index]!;
+    const [bx, bz] = spine[index + 1]!;
+    const dx = bx - ax;
+    const dz = bz - az;
+    const length = Math.sqrt(dx * dx + dz * dz);
+    lengths.push(length);
+    total += length;
+    if (ax < minX) minX = ax;
+    if (ax > maxX) maxX = ax;
+    if (az < minZ) minZ = az;
+    if (az > maxZ) maxZ = az;
+  }
+  // The last point is an endpoint of the final segment and not covered by the
+  // loop above, which reads only the segment's start.
+  const last = spine[spine.length - 1];
+  if (last) {
+    if (last[0] < minX) minX = last[0];
+    if (last[0] > maxX) maxX = last[0];
+    if (last[1] < minZ) minZ = last[1];
+    if (last[1] > maxZ) maxZ = last[1];
+  }
+
+  const metrics: SpineMetrics = { lengths, total, minX, maxX, minZ, maxZ };
+  SPINE_METRICS.set(spine, metrics);
+  return metrics;
+}
+
+/** Where a `distanceToSpine` result is written when the caller does not want an allocation. */
+const SCRATCH_DISTANCE = { distance: 0, along: 0 };
+
+/**
+ * Distance from `point` to the polyline, plus how far along it the closest approach is.
+ *
+ * Measured, because the first version of this was the single most expensive
+ * function in the stage and nothing said so. `terrainHeight` costs 24.35 µs per
+ * call, 22.7 of them inside the channel terms, and building the ULTRA mesh calls
+ * it 968,000 times — a 21.6-second block before the first paint. Three things
+ * were wrong, all of them in this loop:
+ *
+ *  - The cumulative-length pass ran *per query* for data that depends only on the
+ *    spine. It is now in `spineMetrics`, computed once.
+ *  - `Math.hypot` ran about fourteen times per call. `hypot` guards against
+ *    overflow and underflow by scaling, which costs a great deal, and it is
+ *    guarding world coordinates bounded by a few thousand units. `sqrt(x*x+z*z)`
+ *    is the same answer without the guard, and several times faster.
+ *  - It allocated an object per call, across a million calls.
+ *
+ * The public shape is unchanged — callers still get `{distance, along}` — because
+ * the alternative is every call site knowing which of two variants it is holding.
+ */
 function distanceToSpine(
   x: number,
   z: number,
   spine: readonly Vector2[],
 ): { distance: number; along: number } {
+  return distanceToSpineInto(x, z, spine, { distance: 0, along: 0 });
+}
+
+/** The same, writing into `out` so the hot path allocates nothing. */
+function distanceToSpineInto(
+  x: number,
+  z: number,
+  spine: readonly Vector2[],
+  out: { distance: number; along: number },
+): { distance: number; along: number } {
+  const { lengths, total } = spineMetrics(spine);
+
+  if (total === 0) {
+    const first = spine[0]!;
+    out.distance = Math.sqrt((x - first[0]) ** 2 + (z - first[1]) ** 2);
+    out.along = 0;
+    return out;
+  }
+
   let best = Number.POSITIVE_INFINITY;
   let bestAlong = 0;
   let travelled = 0;
-  let total = 0;
-
-  for (let index = 0; index < spine.length - 1; index += 1) {
-    const [ax, az] = spine[index]!;
-    const [bx, bz] = spine[index + 1]!;
-    total += Math.hypot(bx - ax, bz - az);
-  }
-  if (total === 0) return { distance: Math.hypot(x - spine[0]![0], z - spine[0]![1]), along: 0 };
 
   for (let index = 0; index < spine.length - 1; index += 1) {
     const [ax, az] = spine[index]!;
@@ -226,18 +323,20 @@ function distanceToSpine(
       lengthSquared === 0
         ? 0
         : Math.min(Math.max(((x - ax) * dx + (z - az) * dz) / lengthSquared, 0), 1);
-    const px = ax + dx * t;
-    const pz = az + dz * t;
-    const distance = Math.hypot(x - px, z - pz);
+    const px = dx * t;
+    const pz = dz * t;
+    const distance = Math.sqrt((x - ax - px) ** 2 + (z - az - pz) ** 2);
 
     if (distance < best) {
       best = distance;
-      bestAlong = (travelled + Math.hypot(px - ax, pz - az)) / total;
+      bestAlong = (travelled + Math.sqrt(px * px + pz * pz)) / total;
     }
-    travelled += Math.hypot(dx, dz);
+    travelled += lengths[index]!;
   }
 
-  return { distance: best, along: bestAlong };
+  out.distance = best;
+  out.along = bestAlong;
+  return out;
 }
 
 /**
@@ -284,7 +383,27 @@ function basinTerm(x: number, z: number, basin: BasinShape): number {
 }
 
 function channelTerm(x: number, z: number, channel: ChannelShape): number {
-  const { distance, along } = distanceToSpine(x, z, channel.spine);
+  // Reject by bounding box before doing any real work.
+  //
+  // A channel contributes nothing at a distance of `width` or more — the trough
+  // profile is zero there — and the distance to a polyline is never less than the
+  // distance to the box that contains it. So a point outside the box grown by
+  // `width` is a point this channel cannot touch, and the answer is exact rather
+  // than an approximation. The world carries nineteen channels and a query is
+  // near one or two of them; this is what turns nineteen `distanceToSpine` calls
+  // per sample into two.
+  const metrics = spineMetrics(channel.spine);
+  const width = Math.max(channel.width, 0);
+  if (
+    x < metrics.minX - width ||
+    x > metrics.maxX + width ||
+    z < metrics.minZ - width ||
+    z > metrics.maxZ + width
+  ) {
+    return 0;
+  }
+
+  const { distance, along } = distanceToSpineInto(x, z, channel.spine, SCRATCH_DISTANCE);
   const taper =
     smoothstep(0, channel.fullFrom, along) * smoothstep(1, channel.fullTo, along);
   if (taper <= 0) return 0;
