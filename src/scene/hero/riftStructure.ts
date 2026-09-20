@@ -183,6 +183,7 @@ function shell(options: {
   readonly tier: StructureTier;
   readonly surface: SurfaceClass;
   readonly chamfer?: number;
+  readonly folds?: number;
   readonly reference?: Vector;
 }): StructurePart {
   return {
@@ -194,6 +195,7 @@ function shell(options: {
     halfWidth: options.halfWidth,
     halfHeight: options.halfHeight,
     chamfer: options.chamfer ?? 0.22,
+    folds: options.folds ?? 0,
     reference: options.reference ?? [0, 1, 0],
   };
 }
@@ -227,6 +229,127 @@ function beam(
   return { shape: 'span', tier, surface, start, end, width, depth };
 }
 
+/**
+ * Across the foreground tier's sweep, in world space.
+ *
+ * The tier's own path runs from `[-31, -27.5, 24]` to `[-11, -9.4, 14.8]`, so
+ * this is the direction perpendicular to that path and to the world up — the
+ * direction the plates are spread along. It is written out rather than derived
+ * because it is a composition decision: the plates fan across the frame's
+ * bottom-left corner, and which way that is has to be readable here.
+ */
+const PLATE_SIDE: Vector = [-0.6731, 0.7395, 0];
+
+/** How far the outermost plate rolls about the sweep axis, in radians. */
+const PLATE_ROLL_RADIANS = 0.5;
+
+/**
+ * One long sweep, cut into separate members with gaps between them.
+ *
+ * This is the answer to the one thing in the hero that outlived every shading
+ * fix, and it took a capture with the matter field switched off to see it
+ * clearly. The pale unbroken wedge across the bottom-left of the frame is not a
+ * lighting problem at all: it is the near massif's own sweep, and its silhouette
+ * is two nearly straight parallel lines running the length of the corner. A
+ * surface seen at a grazing angle has a constant view angle across it, so no rim
+ * can vary along it; a body whose outline is two straight lines has a constant
+ * outline, so no silhouette can either. Ribbing the section changed the edge
+ * texture and nothing else, and the measurements agree — the ribs are in the
+ * geometry and the face still renders flat.
+ *
+ * So the sweep is no longer one member. It is cut at its own control points and
+ * each piece is pulled back from its neighbour, which puts three real gaps into
+ * the outline, and each piece is nudged off its neighbour's axis so the pieces
+ * read as a body assembled from segments rather than a body that was sliced. The
+ * brief asks for 非封闭结构切片 — non-closed structure slices — and this is that
+ * literal reading: the massif is slices.
+ *
+ * The pull-back is proportional to the local span rather than a constant, so a
+ * long piece loses the same *fraction* as a short one and the gaps stay in
+ * proportion to the composition at every scale the quality ladder runs at.
+ */
+const SEGMENT_GAP = 0.05;
+const SEGMENT_DRIFT = 0.2;
+
+/**
+ * How much of the massif's own section the backbone keeps.
+ *
+ * The first cut of the segmented massif had no backbone, and the SAFE capture
+ * is what showed it was needed: at a detail of 0.4 the fins are the only thing
+ * left and the body reads as a chain of shards floating in the dark, which is
+ * the one thing the brief names and forbids — 随机漂浮的岩石. A body made of
+ * segments is still one body; it has a spine, and the segments are what is
+ * mounted on it.
+ *
+ * The spine is thin enough to sit inside the gap and read as the dark between
+ * two lit faces rather than as a third face, and it is set back far enough that
+ * the corridor's own light does not reach it.
+ */
+const SEGMENT_SPINE = 0.42;
+
+function segmentedShell(options: {
+  readonly points: readonly Vector[];
+  readonly halfWidth: readonly number[];
+  readonly halfHeight: readonly number[];
+  readonly tier: StructureTier;
+  readonly surface: SurfaceClass;
+  readonly folds?: number;
+  readonly reference?: Vector;
+}): StructurePart[] {
+  const parts: StructurePart[] = [];
+  const last = options.points.length - 1;
+
+  // The continuous spine, on the same path and inside the segments. It takes the
+  // body's own finish rather than a darker one: an interior finish is dark
+  // enough to read as the void it is cut out of, so a spine in `recess` closes
+  // the body in the geometry and leaves it open on screen — the SAFE capture
+  // showed exactly that, the joints still reading as gaps with a black spine
+  // sitting invisibly in them.
+  parts.push(
+    shell({
+      points: options.points,
+      halfWidth: options.halfWidth.map((value) => value * SEGMENT_SPINE),
+      halfHeight: options.halfHeight.map((value) => value * SEGMENT_SPINE),
+      tier: options.tier,
+      surface: options.surface,
+      ...(options.folds === undefined ? {} : { folds: options.folds }),
+      ...(options.reference === undefined ? {} : { reference: options.reference }),
+    }),
+  );
+
+  for (let index = 0; index < last; index += 1) {
+    const from = options.points[index]!;
+    const to = options.points[index + 1]!;
+    const side = hashSigned(index + 71, index + 3) * SEGMENT_DRIFT;
+    const lift = hashSigned(index + 91, index + 5) * SEGMENT_DRIFT;
+
+    const cut = (point: Vector, other: Vector, towards: number): Vector => {
+      const dx = other[0] - point[0];
+      const dy = other[1] - point[1];
+      const dz = other[2] - point[2];
+      return [
+        point[0] + dx * SEGMENT_GAP * towards + side,
+        point[1] + dy * SEGMENT_GAP * towards + lift,
+        point[2] + dz * SEGMENT_GAP * towards,
+      ];
+    };
+
+    parts.push(
+      shell({
+        points: [cut(from, to, 1), cut(to, from, 1)],
+        halfWidth: [options.halfWidth[index]!, options.halfWidth[index + 1]!],
+        halfHeight: [options.halfHeight[index]!, options.halfHeight[index + 1]!],
+        tier: options.tier,
+        surface: options.surface,
+        ...(options.folds === undefined ? {} : { folds: options.folds }),
+        ...(options.reference === undefined ? {} : { reference: options.reference }),
+      }),
+    );
+  }
+
+  return parts;
+}
+
 /** Both massifs, as open sweeps. Authored by hand: a composition is not noise. */
 function buildMassifs(detail: number, seed: number): StructurePart[] {
   const parts: StructurePart[] = [];
@@ -241,7 +364,7 @@ function buildMassifs(detail: number, seed: number): StructurePart[] {
   // so the body is already large when it comes into shot, and its last point
   // overshoots the throat rather than stopping at it.
   parts.push(
-    shell({
+    ...segmentedShell({
       points: [
         [-36.0, -30.0, 19.5],
         [-25.5, -20.5, 15.0],
@@ -253,6 +376,7 @@ function buildMassifs(detail: number, seed: number): StructurePart[] {
       halfHeight: [3.8, 3.0, 2.1, 1.2, 0.46],
       tier: 'primary',
       surface: 'shell',
+      folds: 4,
     }),
   );
 
@@ -261,7 +385,7 @@ function buildMassifs(detail: number, seed: number): StructurePart[] {
     // sweeps that do not share a plane read as a folded body; two that do read
     // as one thick plate.
     parts.push(
-      shell({
+      ...segmentedShell({
         points: [
           [-32.5, -25.0, 14.2],
           [-22.5, -16.6, 10.2],
@@ -273,6 +397,7 @@ function buildMassifs(detail: number, seed: number): StructurePart[] {
         halfHeight: [2.4, 1.9, 1.3, 0.7, 0.28],
         tier: 'secondary',
         surface: 'shell',
+        folds: 3,
         reference: [0.3, 1, -0.2],
       }),
       // The cut face where the massif was split: a steep plate across the sweep.
@@ -283,50 +408,75 @@ function buildMassifs(detail: number, seed: number): StructurePart[] {
   }
 
   if (detail >= FINE_DETAIL) {
-    // The foreground tier: three blades near the lens at the bottom-left corner
-    // rather than one. It occludes, it is nearly silhouette, and it is what gives
-    // the frame a near edge rather than a floor. The nearest of the three is
+    // The foreground tier: a fan of narrow plates near the lens at the
+    // bottom-left corner. It occludes, it is nearly silhouette, and it is what
+    // gives the frame a near edge rather than a floor. The nearest plate is
     // authored *behind* the idle camera plane — its first point is at z = 24
     // against a camera at z = 20 — which is the only place in the hero that
     // happens.
     //
-    // It used to be a single blade, and a single sweep of three points with a
-    // near-constant profile is a plane: it took one value from end to end and
-    // covered forty percent of the frame's diagonal, which is the pale unbroken
-    // wedge in the bottom-left of every capture taken since the composition was
-    // steepened. No material can give a plane structure — the variation it needs
-    // has to exist in the geometry first. So the tier is a *stack*: the same
-    // sweep three times, stepped apart in depth and shrunk as it comes forward,
-    // so the near body has a lit edge, a shadowed edge and a sliver of another
-    // one behind it. The step is along the lens direction rather than across the
-    // screen, which is what makes the layers separate at the silhouette instead
-    // of merely sitting side by side.
+    // This tier has now been rebuilt twice, and the two failures are the same
+    // failure. It began as a single wide blade: three points and a near-constant
+    // profile is a plane, it covered forty percent of the frame's diagonal, and
+    // it took one value from end to end, which is the pale unbroken wedge in the
+    // bottom-left of every capture. Then it was a *stack* of three blades stepped
+    // apart in depth on the argument that a near body wants a lit edge, a
+    // shadowed edge and a sliver of another behind it. That was right about
+    // silhouette and wrong about area: three parallel sweeps of the same width,
+    // piled along the view axis, still present the viewer with one continuous
+    // face, because the near one hides the others and the others only reappear at
+    // the rim. The captures show it — the ribbing added to those blades is
+    // plainly there in the massif's silhouette and plainly absent from the blade's
+    // face.
     //
-    // The step is deliberately not a constant offset. A stack whose layers are
-    // evenly spaced reads as corrugation, and corrugation is a texture; the
-    // spacing widens toward the front so the near gap is the wide one.
-    const layerStep: Vector = [0.9, -0.62, -1.45];
-    for (let layer = 0; layer < 3; layer += 1) {
-      const forward = layer / 2;
-      const shrink = 1 - forward * 0.34;
-      const drift: Vector = [
-        layerStep[0] * forward,
-        layerStep[1] * forward,
-        layerStep[2] * forward,
+    // So the plates are no longer parallel, and no longer overlapping. They are
+    // laid side by side *across* the sweep with gaps between them, and each is
+    // rolled about the sweep axis by its own angle. A viewer looking at the tier
+    // now sees five faces at five orientations, each one occluding the one behind
+    // it at a different depth, and the void through the gaps — which is a
+    // structure rather than a surface, and is the only thing that has ever
+    // stopped this corner from reading as a polygon.
+    //
+    // The roll is applied through the profile's own reference vector, which is
+    // projected perpendicular to the path at every vertex — so a plate rolls
+    // about its own length rather than about a world axis, and a tier that curves
+    // through space keeps its slats parallel to itself.
+    const plateCount = 5;
+    const spread = 1.55;
+    for (let index = 0; index < plateCount; index += 1) {
+      const along = index / (plateCount - 1) - 0.5;
+      const lateral: Vector = [
+        PLATE_SIDE[0] * along * spread * 2,
+        PLATE_SIDE[1] * along * spread * 2,
+        PLATE_SIDE[2] * along * spread * 2,
       ];
-      const lift = hashSigned(seed, layer + 500) * 0.5;
+      const roll = along * PLATE_ROLL_RADIANS * 2;
+      const reference: Vector = [
+        Math.sin(roll) * PLATE_SIDE[0],
+        Math.sin(roll) * PLATE_SIDE[1],
+        Math.cos(roll),
+      ];
+      // The plates thin as they fan outward, so the tier has a heavy centre and
+      // light outer slats rather than five identical bars.
+      const taper = 1 - Math.abs(along) * 0.34;
+      const lift = hashSigned(seed, index + 500) * 0.35;
       parts.push(
         shell({
           points: [
-            [-31.0 + drift[0], -27.5 + drift[1] + lift, 24.0 + drift[2]],
-            [-21.0 + drift[0], -18.0 + drift[1] + lift, 19.5 + drift[2]],
-            [-11.0 + drift[0], -9.4 + drift[1] + lift, 14.8 + drift[2]],
+            [
+              -31.0 + lateral[0],
+              -27.5 + lateral[1] + lift,
+              24.0 + lateral[2],
+            ],
+            [-21.0 + lateral[0], -18.0 + lateral[1] + lift, 19.5 + lateral[2]],
+            [-11.0 + lateral[0], -9.4 + lateral[1] + lift, 14.8 + lateral[2]],
           ],
-          halfWidth: [5.6 * shrink, 4.4 * shrink, 3.2 * shrink],
-          halfHeight: [0.4 * shrink, 0.32 * shrink, 0.24 * shrink],
+          halfWidth: [1.95 * taper, 1.55 * taper, 1.15 * taper],
+          halfHeight: [0.34 * taper, 0.27 * taper, 0.2 * taper],
           tier: 'secondary',
           surface: 'shell',
-          reference: [0, 0, 1],
+          folds: 3,
+          reference,
         }),
       );
     }
@@ -384,6 +534,7 @@ function buildMassifs(detail: number, seed: number): StructurePart[] {
       halfHeight: [1.4, 1.1, 0.76, 0.4],
       tier: 'secondary',
       surface: 'shell',
+      folds: 3,
     }),
   );
 

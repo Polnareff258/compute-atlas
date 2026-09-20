@@ -11,6 +11,10 @@ more. It also supersedes `docs/STAGE353_REVIEW_BRIEF.md` for regeneration.
 Baseline: `5711cbf`. This stage is `9a452d9` — 27 files, +5579 / −400, pushed to
 `origin/master`. Review the diff `5711cbf..9a452d9`.
 
+> **Addendum.** The sections below describe `9a452d9`. A further pass over the
+> large-flat-face problem followed it and is recorded in §12, which supersedes
+> §9's first bullet and §6's items 6 and 7.
+
 ---
 
 ## 1. What the brief asked for, and what was built
@@ -258,3 +262,72 @@ The frames. `.gitignore` excludes `artifacts/`, so the PNGs are not in the tree 
 which is deliberate, and means a reviewer must re-run the harness (§7) rather
 than trust a description of a picture. The captures live in the OS temp directory
 for this machine only.
+
+## 12. Addendum: the flat face, found by measurement
+
+§9's first bullet named the large flat faces as this stage's weakest element and
+said the fix would need structure, not shading. This is that pass. It is worth
+reading as a method, because the method is the result: four of the five things
+tried did not work, and each failure narrowed the search.
+
+**What was tried, in order, and what it measured.**
+
+1. **Ribbed cross-sections** (`structureGeometry.ribbedProfile`, `folds` on a
+   path part). A wide sweep's face is one facet, so the section is broken into
+   segments that step either side of the base line, eased to zero at the corners
+   so the side walls stay vertical. This is real and it is kept — the massifs'
+   edges are visibly faceted — but it did not fix the wedge, and a probe of the
+   built geometry says why: the ribbed normals are in the buffer, 15–20° off the
+   base face, and the face still rendered flat.
+2. **Fanned section caps.** Ribbing makes a section non-convex, and the end-cap
+   fan was from vertex 0, which is only correct for a convex outline. Caps now
+   fan from the outline's own centre when the section is ribbed. This is a
+   correctness fix, not a visual one, and it cost a test failure in the old
+   tree's suite — `coreStructureGeometry.test.ts` pins `count % 4 === 0`, a
+   quad-per-facet contract. The fan is therefore applied *only* to ribbed
+   sections, so every convex part in the scene keeps the old vertex count.
+3. **A per-facet bake** (`CLASS_FACET_TINT`). Orientation luminance is the dot
+   product with the key direction, so a face pointing at the key takes very
+   nearly one value however its normal tilts — which is the massif's case. This
+   adds a small deterministic per-facet offset, hashed from where the facet is,
+   view-independent so both backends bake the same number. Measured on the shell
+   class: **37 distinct bake values before, 319 after.** Kept.
+4. **A second octave of the surface-density field** (`SURFACE_DENSITY_FINE_*`).
+   The broad term's features are 25 world units across and the massif is 30, so
+   the member sampled it once. The two-scale field is what finally put visible
+   mottling on the massif. Kept.
+5. **The density on the corridor term.** The wedge survived all four of the
+   above, and the reason is that it is *cyan*: the only cyan term in the material
+   is `corridorTerm`, and it was the one term that never took the density field.
+   Applying it is also what the brief asks for in words — 高密度语义流束, a
+   bundle rather than a wash. Kept.
+
+**What actually fixed it, and how it was found.** Five shading changes and the
+wedge was still there, so the field was switched off entirely for one capture
+(`SceneHost`, one line, reverted immediately). The wedge remained, now plainly a
+member with a bright rim on its upper edge — so it was never a lighting problem.
+It is the near massif's own sweep, and its silhouette is two nearly straight
+parallel lines running the length of the corner. Ribbing changed the edge texture
+and nothing else, and no lighting term can vary across a body whose outline does
+not.
+
+**The fix.** `segmentedShell` in `riftStructure.ts`: each massif is cut at its own
+control points into separate members, pulled back from each other by
+`SEGMENT_GAP = 0.05` and nudged off-axis by `SEGMENT_DRIFT = 0.2`, over a
+continuous spine at `SEGMENT_SPINE = 0.42` of the section. The gaps put three
+real joints into the outline and the spine keeps it one body.
+
+The spine is there because the first cut had none and the SAFE capture caught it:
+at a detail of 0.4 the fins are all that is left and the massif read as a chain
+of shards floating in the dark — 随机漂浮的岩石, the one thing the brief names and
+forbids. A spine in the `recess` finish closed it in the geometry and left it open
+on screen, because an interior finish is dark enough to read as the void it is cut
+from. It takes the body's own finish instead, so a joint reads as a narrowed
+section rather than a break.
+
+**What is still true.** The large faces are large, and the joints are the only
+thing that breaks their outline. The veins on them still trace closed loops
+rather than branching — §6 item 7's octave change reduced this and did not
+remove it. And this pass is the clearest evidence for the brief's own process
+requirement: none of it was visible in the code, and all of it was visible in a
+capture.

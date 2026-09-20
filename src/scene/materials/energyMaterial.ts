@@ -185,6 +185,27 @@ const SURFACE_DENSITY_SCALE = 0.04;
 const SURFACE_DENSITY_DEPTH = 0.75;
 const SURFACE_DENSITY_FLOOR = 0.58;
 
+/**
+ * A second octave of the same field, at member scale rather than at body scale.
+ *
+ * The broad term alone does not do the job it was added for, and a measurement
+ * says why: at a scale of 0.04 the field's features are twenty-five world units
+ * across, and the near massif's inner sweep — the largest face in the frame, and
+ * the one the whole term exists to break up — is about thirty. So the member
+ * samples the field roughly once and takes, again, one value across its whole
+ * area. Widening the broad term's own amplitude would not help; it would only
+ * make the whole machine darker at one end than the other.
+ *
+ * What a surface needs is variation at the scale of the *thing you are looking
+ * at*, so this is the same noise sampled an order of magnitude finer, at a
+ * third of the amplitude. The two together read as one field with structure at
+ * both scales, which is what a real surface has: a body-wide falloff and a
+ * panel-by-panel difference on top of it.
+ */
+const SURFACE_DENSITY_FINE_SCALE = 0.19;
+const SURFACE_DENSITY_FINE_DEPTH = 0.24;
+const SURFACE_DENSITY_FINE_FLOOR = 0.76;
+
 export function createEnergySurfaceMaterial(
   config: EnergySurfaceConfig,
 ): EnergySurfaceMaterial {
@@ -317,8 +338,18 @@ export function createEnergySurfaceMaterial(
       .add(vec3(u.uTime.mul(0.012), u.uTime.mul(-0.008), 0)),
     3,
   );
+  const fineDensity = mx_fractal_noise_float(
+    positionWorld
+      .mul(SURFACE_DENSITY_FINE_SCALE)
+      .add(vec3(u.uTime.mul(-0.021), u.uTime.mul(0.015), u.uTime.mul(0.009))),
+    2,
+  );
   const surfaceDensity = saturate(
     density.mul(SURFACE_DENSITY_DEPTH).add(SURFACE_DENSITY_FLOOR),
+  ).mul(
+    saturate(
+      fineDensity.mul(SURFACE_DENSITY_FINE_DEPTH).add(SURFACE_DENSITY_FINE_FLOOR),
+    ),
   );
   const lit = baked
     .mul(saturate(u.uActivity.mul(0.24).add(baseGain).add(corridor.mul(0.3))))
@@ -360,7 +391,22 @@ export function createEnergySurfaceMaterial(
   // main flow: it belongs where the machine's energy is *going*, which is the
   // corridor and nothing else.
   const veinTerm = u.uDeep.mul(vein).mul(veinGain).mul(u.uActivity.add(0.12));
-  const corridorTerm = u.uFlow.mul(corridor).mul(corridorGain);
+  // The corridor takes the surface density as well, and finding that out was the
+  // end of a long search. The pale unbroken wedge in the bottom-left of the frame
+  // survived ribbed geometry, a per-facet bake and a two-scale density field on
+  // `lit` and the rim, and the reason is that the wedge is not lit by either of
+  // them: it is cyan, and the only cyan term is this one. A corridor is a
+  // two-scale gaussian about the signal segment, so its falloff is smooth by
+  // construction and a large face sitting inside the spill radius takes very
+  // nearly one value across its whole area — the same structural problem as the
+  // rim, on the term that happens to be the brightest.
+  //
+  // Sampling the corridor's own light through the same field is what the brief
+  // asks for anyway, and it asks for it in these words: 高密度语义流束 — a
+  // *bundle*, not a wash. A channel that lights every square metre of the
+  // structure it passes through at the same strength is a lamp; one whose light
+  // breaks across the surface it falls on is a flow with density in it.
+  const corridorTerm = u.uFlow.mul(corridor).mul(corridorGain).mul(surfaceDensity);
   const deepTerm = u.uDeep.mul(grazing).mul(u.uFocus).mul(deepGain);
   const peakTerm = u.uPeak.mul(corridor.mul(corridor)).mul(u.uProgress).mul(0.9);
   const anomalyTerm = u.uAnomaly.mul(corridor).mul(u.uCongestion).mul(0.55);

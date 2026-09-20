@@ -53,6 +53,69 @@ const CLASS_DEPTH_DARKENING: Readonly<Record<SurfaceClass, number>> = {
 };
 
 /**
+ * How much a facet's value is allowed to differ from its neighbour's, per class.
+ *
+ * The bake carried two things before this: orientation luminance and depth
+ * darkening. Both are real, and neither can put structure on a large flat face.
+ * Depth is constant across a face by definition, and orientation luminance is
+ * the *dot product with the key direction* — so a face that points at the key
+ * reads very nearly the same value however its normal tilts, and the near
+ * massif's inner sweep, which is the largest face in the hero and does point at
+ * the key, took one value across its whole area. Ribbing the section did not fix
+ * it and the captures said so: the ribbed normals are in the geometry, 15 to 20
+ * degrees off the base face, and the face still renders flat.
+ *
+ * A machined body is not one surface anyway. It is panels, and panels differ —
+ * in finish, in age, in which pass took the last cut. That is what this term is:
+ * a small deterministic offset per facet, hashed from where the facet *is*, so
+ * it is view-independent and both backends bake the same number. It breaks a
+ * plane into a mosaic without lighting it from anywhere.
+ *
+ * `shell` carries the most because it is the class of every large sweep. `accent`
+ * carries the least because a wafer a few units across is already the brightest
+ * thing in frame and does not need to flicker.
+ */
+const CLASS_FACET_TINT: Readonly<Record<SurfaceClass, number>> = {
+  shell: 0.17,
+  edge: 0.09,
+  recess: 0.13,
+  accent: 0.06,
+  membrane: 0.11,
+};
+
+const FACET_TINT_SCALE = 0.7;
+
+/**
+ * A deterministic value in `[1 - spread, 1 + spread]` for one facet.
+ *
+ * Keyed on a quantised position and the facet's own normal, so the two facets
+ * either side of a crease differ and two members that happen to overlap do not
+ * agree. Quantised rather than exact because an exact key would give every facet
+ * of a fine sweep its own value, and a mosaic with a cell per facet is a texture.
+ */
+function facetTint(
+  position: Vector,
+  normal: Vector,
+  spread: number,
+): number {
+  if (spread <= 0) return 1;
+
+  const qx = Math.round(position[0] * FACET_TINT_SCALE);
+  const qy = Math.round(position[1] * FACET_TINT_SCALE);
+  const qz = Math.round(position[2] * FACET_TINT_SCALE);
+
+  let hash = Math.imul(qx, 374761393) + Math.imul(qy, 668265263) + Math.imul(qz, 1274126177);
+  hash = Math.imul(hash ^ (hash >>> 13), 951274213);
+  hash = hash ^ (hash >>> 16);
+  // The normal is folded in at half weight so a box's six faces separate from
+  // each other without its two coplanar neighbours colliding.
+  hash = hash + Math.round((normal[0] + normal[1] * 2 + normal[2] * 3) * 4013);
+
+  const unit = ((hash >>> 0) % 4096) / 4096;
+  return 1 - spread + unit * spread * 2;
+}
+
+/**
  * One axis-oriented member: a slab, plate, socket or slice.
  *
  * `surface` is a physical distinction as much as an aesthetic one: a membrane
@@ -162,6 +225,19 @@ export type StructurePathPart = {
   readonly halfHeight: number | readonly number[];
   /** Corner cut as a fraction of the smaller half-extent, as on a hull. */
   readonly chamfer: number;
+  /**
+   * Ribs across the profile's width, `0` for a plain section.
+   *
+   * A wide sweep is the one primitive here that can cover a large screen area
+   * with a single face, and a single face has a single orientation — so it takes
+   * one value from the baked luminance and one value from the rim, and the
+   * result is the flat wedge a viewer reads as "a polygon". Ribbing the section
+   * breaks that face into several facets whose normals differ by a few degrees
+   * each, which is enough for the same lighting model to draw structure across
+   * the width. The profile stays star-shaped about its own centre, so the end
+   * caps remain a valid fan.
+   */
+  readonly folds?: number;
   /**
    * Reference direction for the profile's local +y, projected perpendicular to
    * the path at every vertex. Frames are parallel-transported from the first
@@ -342,7 +418,21 @@ type SurfaceWriter = {
   indices: number[];
   appendBox: (matrix: THREE.Matrix4, color: THREE.Color) => void;
   /** A convex facet given directly in world space, with its own flat normal. */
-  appendFacet: (points: readonly Vector[], normal: Vector, color: THREE.Color) => void;
+  /**
+   * A facet given directly in world space, with its own flat normal.
+   *
+   * `pivot` fans the triangles from a point rather than from the first vertex.
+   * A fan from vertex 0 is only correct for a convex outline: on any other it
+   * emits triangles that lie outside the polygon. The centre of a star-shaped
+   * outline is inside it whatever the outline does, so a cap passed with its own
+   * centre stays correct once sections are ribbed.
+   */
+  appendFacet: (
+    points: readonly Vector[],
+    normal: Vector,
+    color: THREE.Color,
+    pivot?: Vector,
+  ) => void;
 };
 
 function createSurfaceWriter(
@@ -389,7 +479,16 @@ function createSurfaceWriter(
 
         const luminance =
           deriveSurfaceLuminance(normal.x, normal.y, normal.z) *
-          depthFactor(depth, surface, position.z);
+          depthFactor(depth, surface, position.z) *
+          facetTint(
+            // A box's matrix translation is its centre, and every vertex of one
+            // face shares a normal — so this is a per-face key rather than a
+            // per-vertex one, and the face stays a panel instead of becoming a
+            // gradient.
+            [matrix.elements[12]!, matrix.elements[13]!, matrix.elements[14]!],
+            [normal.x, normal.y, normal.z],
+            CLASS_FACET_TINT[surface],
+          );
         writer.positions.push(position.x, position.y, position.z);
         writer.normals.push(normal.x, normal.y, normal.z);
         writer.colors.push(
@@ -405,12 +504,15 @@ function createSurfaceWriter(
         }
       }
     },
-    appendFacet: (points, normal, color) => {
+    appendFacet: (points, normal, color, pivot) => {
       if (points.length < 3) return;
       const base = writer.positions.length / 3;
+      const centre = pivot ?? points[0]!;
+      const facetCentrePoint = facetCentre(points);
       const luminance =
         deriveSurfaceLuminance(normal[0], normal[1], normal[2]) *
-        depthFactor(depth, surface, facetCentre(points)[2]);
+        depthFactor(depth, surface, facetCentrePoint[2]) *
+        facetTint(facetCentrePoint, normal, CLASS_FACET_TINT[surface]);
       const red = color.r * luminance;
       const green = color.g * luminance;
       const blue = color.b * luminance;
@@ -421,8 +523,29 @@ function createSurfaceWriter(
         writer.colors.push(red, green, blue);
       }
 
-      for (let index = 1; index < points.length - 1; index += 1) {
-        writer.indices.push(base, base + index, base + index + 1);
+      const fanFrom = pivot === undefined ? null : writer.positions.length / 3;
+      if (fanFrom !== null) {
+        writer.positions.push(centre[0], centre[1], centre[2]);
+        writer.normals.push(normal[0], normal[1], normal[2]);
+        writer.colors.push(red, green, blue);
+      }
+
+      if (fanFrom === null) {
+        // A fan from vertex 0 closes itself — the last vertex already meets it —
+        // so it needs no wrap-around triangle and reads no vertex past the ones
+        // it just wrote.
+        for (let index = 1; index < points.length - 1; index += 1) {
+          writer.indices.push(base, base + index, base + index + 1);
+        }
+        return;
+      }
+
+      for (let index = 0; index < points.length; index += 1) {
+        writer.indices.push(
+          fanFrom,
+          base + index,
+          base + ((index + 1) % points.length),
+        );
       }
     },
   };
@@ -508,15 +631,69 @@ function appendSpan(writer: SurfaceWriter, part: StructureSpanPart): void {
  */
 const MIN_HALF_EXTENT = 0.004;
 
+/**
+ * How steep a rib's facet is allowed to be, as the tangent of its angle.
+ *
+ * The rib depth is derived from this rather than from the section's thickness,
+ * because what has to be legible is the *angle between neighbouring facets* —
+ * that is the quantity the baked orientation luminance turns into value. Tying
+ * depth to the thickness instead would make a thick body's ribs metre-high
+ * ridges and a thin blade's ribs invisible, from the same authored number.
+ *
+ * The cap by half the section's own half-height is what stops a rib from eating
+ * the profile: past that the section would fold through itself and the sweep
+ * would stop being a solid.
+ */
+const FOLD_SLOPE = 0.2;
+const FOLD_DEPTH_CAP = 0.5;
+
+/**
+ * A ribbed section: the flat edges broken into segments that step either side of
+ * the base line, eased to zero at the corners so the side walls stay vertical
+ * and the section stays star-shaped about its centre.
+ *
+ * The envelope is what makes this a machined rib rather than corrugation. A
+ * uniform ripple would run at full depth into the corner and give the section a
+ * sawtooth silhouette at its widest point — exactly where the silhouette is the
+ * only thing being read.
+ */
+function ribbedProfile(
+  halfW: number,
+  halfH: number,
+  folds: number,
+): Vector[] {
+  const depth = Math.min(
+    (halfW / folds) * FOLD_SLOPE,
+    halfH * FOLD_DEPTH_CAP,
+  );
+  const top: Vector[] = [];
+  const bottom: Vector[] = [];
+
+  for (let index = 0; index <= folds; index += 1) {
+    const t = index / folds;
+    const x = -halfW + 2 * halfW * t;
+    const envelope = Math.sin(Math.PI * t);
+    const step = envelope * depth * (index % 2 === 1 ? 1 : -1);
+    top.push([x, halfH + step, 0]);
+    bottom.push([x, -(halfH + step), 0]);
+  }
+
+  return [...top, ...bottom.reverse()];
+}
+
 /** Ring points in section-local x/y, counter-clockwise, for one hull section. */
 function hullProfile(
   facets: number,
   chamfer: number,
   halfWidth: number,
   halfHeight: number,
+  folds = 0,
 ): Vector[] {
   const halfW = Math.max(halfWidth, MIN_HALF_EXTENT);
   const halfH = Math.max(halfHeight, MIN_HALF_EXTENT);
+
+  // A turned prism is already round: ribbing it would fight the facets it has.
+  if (folds >= 2 && facets < 3) return ribbedProfile(halfW, halfH, folds);
 
   if (facets >= 3) {
     const points: Vector[] = [];
@@ -600,6 +777,7 @@ function appendOrientedFacet(
   points: readonly Vector[],
   interior: Vector,
   color: THREE.Color,
+  fanned = false,
 ): void {
   const normal = facetNormal(points, 0, 1, 2);
   if (!normal) return;
@@ -610,12 +788,24 @@ function appendOrientedFacet(
     (interior[1] - centre[1]) * normal[1] +
     (interior[2] - centre[2]) * normal[2];
 
+  // A cap whose outline may be non-convex is fanned from its own centre, which
+  // is inside it however the section is shaped. Only the ribbed sections ask for
+  // this: a convex outline is correct as a fan from its first vertex, and a fan
+  // from vertex 0 costs one fewer vertex per cap for every other part in the
+  // scene, which is a contract the geometry's own tests pin.
+  const pivot = fanned ? centre : undefined;
+
   if (toInterior <= 0) {
-    writer.appendFacet(points, normal, color);
+    writer.appendFacet(points, normal, color, pivot);
     return;
   }
 
-  writer.appendFacet([...points].reverse(), [-normal[0], -normal[1], -normal[2]], color);
+  writer.appendFacet(
+    [...points].reverse(),
+    [-normal[0], -normal[1], -normal[2]],
+    color,
+    pivot,
+  );
 }
 
 /**
@@ -846,6 +1036,11 @@ function appendPath(writer: SurfaceWriter, part: StructurePathPart): void {
 
   const rings: Vector[][] = [];
 
+  // `hullProfile` only ribs a section that is not already a turned prism, and a
+  // swept path never asks for facets — so this is the same condition, named
+  // once because the caps below have to agree with the rings above.
+  const ribbed = (part.folds ?? 0) >= 2;
+
   for (let index = 0; index < count; index += 1) {
     if (index > 0) {
       const previousNormal = ringNormals[index - 1]!;
@@ -862,6 +1057,7 @@ function appendPath(writer: SurfaceWriter, part: StructurePathPart): void {
       part.chamfer,
       extentAt(part.halfWidth, index),
       extentAt(part.halfHeight, index),
+      part.folds ?? 0,
     );
 
     const ring: Vector[] = [];
@@ -922,6 +1118,7 @@ function appendPath(writer: SurfaceWriter, part: StructurePathPart): void {
         firstCentre[2] - ringNormals[0]!.z * span,
       ],
       color,
+      ribbed,
     );
   }
 
@@ -938,6 +1135,7 @@ function appendPath(writer: SurfaceWriter, part: StructurePathPart): void {
         lastCentre[2] + lastNormal.z * span,
       ],
       color,
+      ribbed,
     );
   }
 }

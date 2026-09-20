@@ -462,6 +462,28 @@ longer exists in the render tree.
   `src/scene/materials/{surfaceMaterial,surfaceResponse}`). Nothing mounts it, and
   deleting it is a separate, explicitly authorised step.
 
+### Stage 3.5.4 addendum — the flat face
+
+The first cut of 3.5.4 shipped with large flat faces named as its main visual
+risk. A follow-up pass attacked them, and the record of *how* is the useful part.
+
+Five changes were tried in order and four of them did not fix the problem: ribbed
+path sections, a per-facet bake, a two-scale surface-density field, and the
+density applied to the corridor term. Each is kept on its own merit — the bake
+went from 37 distinct shell values to 319 — and none of them moved the wedge.
+
+The wedge was identified by switching the matter field off for a single capture
+and finding it still there, now plainly a structure member with a rim on its
+upper edge. It is the near massif's own sweep, whose silhouette is two nearly
+straight parallel lines. **A lighting term cannot vary across a body whose
+outline does not.** Fixing it was geometry: `segmentedShell` cuts each massif at
+its own control points into separate members with joints between them, over a
+continuous spine that keeps the body one body. The spine exists because the first
+segmented cut had none and the SAFE capture showed the massif as floating shards
+— the one thing the brief explicitly forbids.
+
+Full method and constants: `docs/STAGE354_REBUILD_REVIEW_BRIEF.md` §12.
+
 ### Stage 3.5.4 handoff
 
 Stage 3.5.4 is implemented and captured on both backends. The next isolated
