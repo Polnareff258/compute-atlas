@@ -26,6 +26,25 @@ export type CameraVisualState =
   | 'focusing'
   | 'agent_activity';
 
+/**
+ * The canvas camera's near and far planes, in world units.
+ *
+ * **These were absent, and their absence was a rendering defect rather than a tuning
+ * choice.** With no value given, the renderer used its default far of 1000 against a world
+ * two thousand units across and a rig whose reveal station stands at an eye of about 1150.
+ * The last act of the scroll story was therefore clipped away entirely, and the resting
+ * shot was silently losing everything beyond a kilometre — which is what the "empty upper
+ * third" of the frame has been. Both were being read as composition problems, and neither
+ * was one.
+ *
+ * `FAR` is derived rather than picked: the worst camera station to the farthest corner of
+ * the world is the world's own diagonal plus the reveal's height, with a margin. `NEAR` is
+ * small because nothing in this composition is ever close to the lens — the nearest
+ * geometry is the ground directly under a camera that is always scores of units above it.
+ */
+export const CAMERA_NEAR = 1;
+export const CAMERA_FAR = 12000;
+
 /** The canvas camera's field of view, in degrees. Owned here so it cannot drift. */
 export const CAMERA_FOV_DEGREES = 48;
 

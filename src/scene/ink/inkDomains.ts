@@ -69,7 +69,11 @@ const REACH_MULTIPLE = 2.1;
  * tint drawn on the ground, whereas one that changes what the water has cut and left is a
  * difference in what is happening there.
  */
-const BODY_SHARE = 0.34;
+// Lowered from 0.34. The regions reach about forty-eight per cent of the world between
+// them, so a body share that read as restrained on one region is a global lift once five
+// of them overlap. A region should be a difference in *what is happening* there, which is
+// what the erosion channels carry; the body share is the part that merely brightens.
+const BODY_SHARE = 0.16;
 
 export function sampleDomainField(
   domains: readonly InkDomain[],

@@ -31,7 +31,6 @@ import { createInkField, INK_QUALITY, type InkField } from './ink/inkField';
 import { meanderCourse } from './ink/riverCourse';
 import { projectDomainLabels, type DomainLabelEntry } from './domains/domainLabels';
 import { deriveScrollChoreography } from './scroll/scrollChoreography';
-import { BasinView } from './views/BasinView';
 import { RiverView } from './views/RiverView';
 import { TerrainView } from './views/TerrainView';
 import {
@@ -109,31 +108,20 @@ const REDUCED_MOTION_RATE = 24;
  * Very slow, and separate from the operation phase: a river that stopped when the
  * interaction did would read as a frozen photograph of a river, and the brief's
  * idle requirement is that the landscape *breathes* even when nothing is being
- * asked of it. Under reduced motion this is the one thing that keeps moving, at
- * a rate chosen to be legible as motion and not as animation.
+ * asked of it. Under reduced motion it holds with everything else, because the
+ * preference means the page stops moving and an exception for the composition's own
+ * subject would not be a reading of that requirement.
  */
 const FLOW_RATE = 0.018;
+
 
 /**
  * How high the veil floats above the ground, in world units.
  *
- * High enough to parallax against the ground over the distances the scroll
- * travels, low enough that it is never read as a ceiling. At ninety-six it is about
- * three channel-widths above the water — which, at the resting eye height, is a
- * couple of degrees of frame: enough that the two sheets separate when the camera
- * moves and not enough that the veil ever occludes the river.
+ * High enough to parallax against the ground over the distances the scroll travels, low
+ * enough that it is never read as a ceiling: about three channel-widths above the water,
+ * which at the resting eye height is a couple of degrees of frame.
  */
-/*
- * How far a river's corridor reaches from its spine, as a multiple of channel width.
- *
- * Hoisted to one constant because two meshes now depend on it agreeing with itself: the
- * corridor uses it to decide what it covers, and the basin uses it to decide what the
- * corridor *already* covers and must not be drawn over. Two copies of this number would
- * be a strip of ground between them that neither mesh draws, or one that both do — and
- * both means two coincident surfaces, which is the z-fighting failure exactly.
- */
-const CORRIDOR_REACH = 22;
-
 const VEIL_HEIGHT = 96;
 
 /**
@@ -975,8 +963,6 @@ export function SceneHost({
         descriptor={descriptor}
         uniforms={uniforms}
         ink={ink}
-        courses={courses}
-        reachMultiple={CORRIDOR_REACH}
         detail={settings.terrainDetail}
       />
       {/*
@@ -986,14 +972,6 @@ export function SceneHost({
         set into and the water that arrives at them — a sheet drawn before the
         river would have the river composited behind the level it is filling.
       */}
-      <BasinView
-        descriptor={descriptor}
-        uniforms={uniforms}
-        ink={ink}
-        courses={courses}
-        reachMultiple={CORRIDOR_REACH}
-        detail={settings.terrainDetail}
-      />
     </>
   );
 }

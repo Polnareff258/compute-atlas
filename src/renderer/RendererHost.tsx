@@ -21,7 +21,9 @@ import {
 import { useReducedMotionPreference } from './reducedMotion';
 import {
   BOOTSTRAP_CAMERA_POSITION,
+  CAMERA_FAR,
   CAMERA_FOV_DEGREES,
+  CAMERA_NEAR,
 } from '../scene/camera/cameraController';
 import { SceneHost } from '../scene/SceneHost';
 import type { QualityProfile } from './types';
@@ -223,6 +225,11 @@ const domainLabelRef = useRef<DomainLabelHandle | null>(null);
           flat: true,
           camera: {
             fov: CAMERA_FOV_DEGREES,
+            // Explicit, because the default far of 1000 is smaller than the distance to most
+            // of this world and smaller than the reveal camera's own height. See
+            // CAMERA_NEAR / CAMERA_FAR for what their absence was doing.
+            near: CAMERA_NEAR,
+            far: CAMERA_FAR,
             // Where the camera stands for the one frame before `SceneHost` snaps
             // the rig to the entry's approach pose. Outside the world on purpose,
             // so that frame is dark sky rather than the inside of a hill — the

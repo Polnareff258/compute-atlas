@@ -100,8 +100,13 @@ const BODY_RELIEF = 9.5;
  * breathes with the simulation, which is what keeps it reading as water rather than
  * as a stroked path.
  */
-const THALWEG_INNER = 0.70;
-const THALWEG_OUTER = 0.94;
+// Raised from 0.70. The crest is the narrative 10 percent and has to be a small part of a
+// channel; at 0.70 it was selecting a quarter of the world, because the field saturates
+// near one across most of every river band rather than peaking at a centreline.
+const THALWEG_INNER = 0.9;
+// Raised with it, and narrowed: a tighter band is what makes the crest read as a line
+// rather than as a bright region.
+const THALWEG_OUTER = 0.99;
 const THALWEG_GAIN = 1.45;
 
 /** The bedding: how many layers along the course, and how fast they travel. */
@@ -149,7 +154,7 @@ const PRESSURE_LIFT = 7.5;
  * dark as a silhouette rather than washing out to grey.
  */
 const DEPTH_FADE_NEAR = 620;
-const DEPTH_FADE_FAR = 3200;
+const DEPTH_FADE_FAR = 4200;
 
 /** The gradient tap used for the normal response, in uv. One simulation texel is finer. */
 const GRADIENT_EPSILON = 0.0035;
@@ -288,7 +293,11 @@ export function createInkMaterial(
   // reason the frame has soft boundaries: over this range of `body` the value moves
   // through the whole of its range, so the eye is given no contour to lock onto
   // until the thalweg below.
-  const pigment = smoothstep(float(0.02), float(0.62), body).mul(scrollPigment);
+  // The ramp widened to the field it reads. It reached full pigment at a body of 0.62,
+  // which is below where most of the world now sits, so the pigment term was saturated over
+  // the majority of the frame and contributed nothing but a wash. Full pigment is now
+  // reached only near the top of the range, which leaves the term somewhere to *do*.
+  const pigment = smoothstep(float(0.06), float(0.92), body).mul(scrollPigment);
   /*
    * The wide layer *widens* with its weight rather than only brightening.
    *
@@ -505,8 +514,12 @@ export function createInkMaterial(
   const distance = positionLocal.sub(cameraPosition).length();
   const depthFade = smoothstep(float(DEPTH_FADE_NEAR), float(DEPTH_FADE_FAR), distance)
     .oneMinus()
-    .mul(0.66)
-    .add(0.34);
+    // Raised from 0.12 for a world that was half clipped, then lowered back once the far
+    // plane was fixed and the far field began actually being drawn. The floor is what
+    // decides whether the distance settles into ink or into grey, and grey at the frame
+    // edges is what removes the negative space the whole composition is built on.
+    .mul(0.86)
+.add(0.14);
 
   material.colorNode = surface.mul(depthFade);
 
@@ -590,7 +603,10 @@ export function createVeilMaterial(
   // frame, which is precisely the uniformly-lit failure the baseline measured at a
   // lit fraction of 1.00 — and it would be reached here from the atmospheric side
   // rather than the emissive one.
-  material.opacityNode = wash.pow(1.7).mul(options.gain).mul(0.42);
+  // Halved. The veil covers the entire world extent, so its gain is a statement about how
+  // bright the *whole frame* is, not about a feature in it. At 0.42 it was doing what the
+  // brief forbids by name: a uniform wash over everything.
+  material.opacityNode = wash.pow(1.7).mul(options.gain).mul(0.2);
   material.positionNode = positionLocal.add(vec3(0, options.height, 0));
 
   return {
