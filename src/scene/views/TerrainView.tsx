@@ -4,7 +4,7 @@ import { useEffect, useMemo } from 'react';
 import { BufferAttribute, BufferGeometry } from 'three';
 
 import { createTerrainMaterial } from '../materials/terrainMaterial';
-import { createFlowField } from '../watershed/flowField';
+import type { FlowField } from '../watershed/flowField';
 import { buildTerrainGeometry } from '../watershed/terrainGeometry';
 import type { FieldUniforms } from '../field/fieldUniforms';
 import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
@@ -13,10 +13,11 @@ import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
  * The landscape's ground, as one mesh.
  *
  * One draw call, one material, one geometry, built once per descriptor and
- * disposed with its owner. The three things it owns are the three things that
- * cost anything — the vertex buffer, the flow texture and the shader — and all
- * three are built in `useMemo` against a dependency list that only changes when
- * the descriptor does, which is to say once.
+ * disposed with its owner. The two things it owns are the two things that cost
+ * anything — the vertex buffer and the shader — and both are built in `useMemo`
+ * against a dependency list that only changes when the descriptor does, which is
+ * to say once. The third expensive thing, the flow texture, is handed in: the
+ * water reads it too, and see `flow` below for why one of it is not enough.
  *
  * **Why this is not a `<canvas>`-managed resource.** The geometry is a
  * `BufferGeometry` and the material a `MeshBasicNodeMaterial`, and both are handed
@@ -40,6 +41,18 @@ import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
 export type TerrainViewProps = {
   readonly descriptor: WatershedDescriptor;
   readonly uniforms: FieldUniforms;
+  /**
+   * The flow field, owned by `SceneHost` rather than by this view.
+   *
+   * It used to be built here, which was right while the ground was the only thing
+   * that read it. The water reads it too now, and the two have to read the *same
+   * texture*: the river's cross-section is a quotient of two of its channels, so a
+   * second field built from the same descriptor would be a second answer to "where
+   * is the channel", and the water would sit half a channel off its own bed. Two
+   * buildings of the same thing is also a doubled upload of a 384×384 RGBA texture
+   * and a second CPU sweep over eight rivers — small, but paid for nothing.
+   */
+  readonly flow: FlowField;
   /** World Z the camera stands at. Grading is densest around it. */
   readonly attentionZ: number;
   /** The key light's direction. Passed in so a shot can move it. */
@@ -49,27 +62,10 @@ export type TerrainViewProps = {
 export function TerrainView({
   descriptor,
   uniforms,
+  flow,
   attentionZ,
   keyLight,
 }: TerrainViewProps) {
-  const flow = useMemo(
-    () =>
-      createFlowField({
-        field: descriptor.field,
-        // The rivers' own bodies, not the channels that carve them: the flow field
-        // is what the *material* erodes by, and a channel exists precisely because
-        // a river does. Passing both would count every river's work twice.
-        rivers: descriptor.rivers.map((river) => ({
-          spine: river.spine,
-          width: river.width,
-          flowRate: river.flowRate,
-        })),
-        deposits: descriptor.deposits,
-        resolution: descriptor.flowResolution,
-      }),
-    [descriptor],
-  );
-
   const geometry = useMemo(() => {
     const built = buildTerrainGeometry({
       field: descriptor.field,
@@ -111,9 +107,8 @@ export function TerrainView({
     () => () => {
       geometry.dispose();
       dispose();
-      flow.dispose();
     },
-    [geometry, dispose, flow],
+    [geometry, dispose],
   );
 
   return <mesh geometry={geometry} material={material} />;

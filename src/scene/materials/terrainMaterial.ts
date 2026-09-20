@@ -6,21 +6,16 @@ import {
   clamp,
   dot,
   float,
-  floor,
   mix,
-  mx_fractal_noise_float,
   positionLocal,
-  sin,
-  smoothstep,
   step,
-  texture,
   varying,
-  vec2,
   vec3,
 } from 'three/tsl';
 
 import type { FieldUniforms } from '../field/fieldUniforms';
 import type { FlowField } from '../watershed/flowField';
+import { sampleGround } from './groundField';
 
 /**
  * The ground's material: the hero effect the brief calls Data Erosion and
@@ -69,41 +64,12 @@ import type { FlowField } from '../watershed/flowField';
  * wash the stage is replacing.
  */
 
-/** How far erosion may cut, in world units, on top of the field's own carve. */
-const EROSION_DEPTH = 3.4;
-/** How far deposition may raise. Smaller than the cut, because silt is thinner. */
-const DEPOSIT_HEIGHT = 2.2;
-/** Amplitude of the basin's compression, in world units. */
-const COMPRESSION_DEPTH = 1.1;
-
-/**
- * The relief's frequency and amplitude.
- *
- * A period of about twelve world units against a mesh whose rows are 2 to 40
- * units apart: the point is that this detail is *below* what the CPU grid can
- * carry, so it has to be finer than the near-field spacing and coarser than a
- * pixel. It is scaled by `uQuality` so a fallback profile spends less of its
- * vertex budget on decoration.
+/*
+ * The displacement's own constants — the cut, the deposit, the strata, the relief
+ * and the basin's reach — live in `groundField`, because the water reads them too
+ * and the two materials have to agree about where the channel is. What is left
+ * here is only what is this material's own business.
  */
-const RELIEF_SCALE = 0.082;
-const RELIEF_AMPLITUDE = 0.85;
-
-/**
- * How much of the relief survives on ground the flow field says nothing is
- * happening to.
- *
- * Not zero, and that is the point: perfectly smooth ground reads as untextured
- * geometry, and the tessellation underneath it becomes the only thing there is to
- * see. It was tried at a quarter and the result was worse than the problem — the
- * near field turned to polished glass, which is a surface finish with *no* grain
- * rather than one with the wrong grain, and the eye reads the glass as clearly as
- * it reads the crinkle. Most of the relief therefore stays everywhere, and the
- * modulation is the small difference between quiet ground and worked ground
- * rather than a near-total suppression of the former: worked ground carries about
- * a third more detail than the ground beside it, which is a difference in
- * *character* a viewer can see without either state being an absence.
- */
-const RELIEF_QUIET = 0.72;
 
 /**
  * What the sheen is made of.
@@ -119,28 +85,6 @@ const SHEEN_POWER = 3.0;
 
 /** How much of the active region's accent may land on its own ground. */
 const REGION_LIFT = 0.5;
-
-/**
- * The basin's strata: how many shells, and how tall one riser is.
- *
- * This is the one thing in the material that is not about the water. A
- * Convergence Basin is not a bowl — a bowl is what a crater is, and a crater is
- * an *absence*. What the brief asks for is a place that has been accumulating for
- * longer than anything around it, and accumulation leaves layers: five shells of
- * ground, each one stepping down toward the centre, each one a surface with its
- * own lit edge. Quantising the basin's radius is what turns a smooth depression
- * into a structure with a *count*, and a countable structure is the first thing
- * the eye can read in the middle distance, where nothing else in the frame has
- * any shape at all.
- *
- * Five, and not more: at `BASIN_REACH` the shells are 38 world units across, so
- * the risers are wide enough to hold a lit face at the vista's distance rather
- * than collapsing into shading noise. A step is 1.5 world units — the risers
- * together add about seven and a half units across the whole basin, which is
- * under a fifth of its depth and so cannot fill it in.
- */
-const STRATA_COUNT = 5;
-const STRATA_STEP = 1.5;
 
 export type TerrainMaterial = {
   readonly material: MeshBasicNodeMaterial;
@@ -162,95 +106,14 @@ export function createTerrainMaterial(
 
   // --- The flow field, in the vertex stage ------------------------------------
   //
-  // `positionLocal` is the mesh's own vertex position, which is world XZ because
-  // the mesh is mounted at the origin with no rotation and unit scale. That is an
-  // assumption, and it is the one thing to check if the erosion ever appears in
-  // the wrong place: a transform on the mesh would leave the flow field sampling
-  // the wrong ground while looking entirely plausible.
-  const { minX, maxX, minZ, maxZ } = flow.extent;
-  const flowUV = vec2(
-    positionLocal.x.sub(minX).div(maxX - minX),
-    positionLocal.z.sub(minZ).div(maxZ - minZ),
-  );
-  const flowSample = texture(flow.texture, flowUV);
-  const erosion = flowSample.x;
-  const along = flowSample.y;
-  const rate = flowSample.z;
-  const deposit = flowSample.w;
+  // Every term below comes from `sampleGround`, which the water reads too: the two
+  // have to agree about where the channel is, and the only way to make two things
+  // agree is to have one of them. See that module for what each term means and for
+  // why the water cannot simply be placed on the height field.
+  const field = sampleGround(uniforms, flow, positionLocal);
+  const { erosion, deposit, relief, riser, ring, inBasin, pulse } = field;
 
-  // --- Displacement -----------------------------------------------------------
-  const cut = erosion.mul(EROSION_DEPTH);
-  const built = deposit.mul(DEPOSIT_HEIGHT);
-
-  // The basin's own reach, from the one uniform every material shares. Taken from
-  // the basin's XZ only: a compression that varied with height would tilt the
-  // bowl, and a bowl that tilts is a different landscape.
-  const toBasin = vec2(u.uBasinCentre.x, u.uBasinCentre.z)
-    .sub(positionLocal.xz)
-    .length()
-    .div(BASIN_REACH);
-  const inBasin = smoothstep(0.15, 1.0, toBasin).oneMinus();
-
-  // The pulse. `uFlowPhase` rather than `uTime` so the basin keeps breathing under
-  // reduced motion while the operation phase stays frozen — see `fieldUniforms`.
-  // Squared so the release is a longer, quieter part of the cycle than the
-  // compression: a symmetric pulse reads as a heartbeat, and a watershed is not
-  // beating.
-  // --- The basin's strata -----------------------------------------------------
-  //
-  // `toBasin` is the radius, so quantising it gives concentric shells. `riser`
-  // rises over the outer part of each shell and the inner part is flat, which is
-  // what makes it a staircase rather than a cone: the flat tread is the surface
-  // the eye reads, and a ramp with no tread has no ledges to catch anything.
-  //
-  // The stair descends *inward* — the tread height is the shell's own index — so
-  // the deepest point is the centre. That is the direction a basin fills from:
-  // everything the world sheds arrives at the middle last, so the oldest and
-  // thickest ground is the outermost shell and the newest is the floor.
-  const ringPhase = toBasin.mul(STRATA_COUNT);
-  const ring = floor(ringPhase);
-  const withinRing = ringPhase.sub(ring);
-  const riser = smoothstep(float(0.58), float(1), withinRing);
-  const strata = ring.add(riser).mul(inBasin).mul(STRATA_STEP);
-
-  const pulse = sin(u.uFlowPhase.mul(TAU * 1.5)).mul(0.5).add(0.5);
-  const compression = pulse
-    .pow(2)
-    .mul(inBasin)
-    .mul(u.uActivity.max(0.35))
-    .mul(COMPRESSION_DEPTH);
-
-  // A slower, wider breath that follows the water rather than the basin: this is
-  // the "data flowing slowly along the surface" the brief asks the idle state to
-  // have, and it is why the flow field carries `rate` at all. Two bands per river
-  // length, moving at the river's own speed.
-  const drift = sin(along.mul(TAU * 2).sub(u.uFlowPhase.mul(TAU * 3)).add(rate.mul(4)));
-  const breathe = drift.mul(erosion).mul(0.55);
-
-  // How much relief this ground carries, which is a statement about the water
-  // rather than about the ground: unworked terrain is smooth, and the detail is
-  // where something is cutting or settling. Without this the same noise is laid
-  // over the whole world at the same amplitude, and the near field — which is the
-  // largest area in the frame and the one the eye has most time to read — becomes
-  // an even crinkle with no structure in it, which is the "noise" the brief names
-  // as the failure mode of the previous composition. The flow field already knows
-  // where the work is; this asks it. Applied to the relief alone and never to the
-  // mesh's own shape, so the silhouette the shots are framed against is unchanged.
-  const worked = smoothstep(float(0.04), float(0.55), erosion.max(deposit));
-  const reliefGain = mix(float(RELIEF_QUIET), float(1), worked);
-
-  const relief = mx_fractal_noise_float(positionLocal.mul(RELIEF_SCALE), 3, 2.0, 0.5)
-    .mul(RELIEF_AMPLITUDE)
-    .mul(u.uQuality)
-    .mul(reliefGain);
-
-  const displacement = relief
-    .sub(cut)
-    .add(built)
-    .sub(compression)
-    .add(breathe)
-    .add(strata);
-  material.positionNode = positionLocal.add(vec3(0, displacement, 0));
+  material.positionNode = positionLocal.add(vec3(0, field.displacement, 0));
 
   // --- What the fragment stage is told ----------------------------------------
   const baseColour = varying(attribute('color', 'vec3'));
@@ -341,10 +204,6 @@ export function createTerrainMaterial(
     },
   };
 }
-
-/** The basin's reach in world units, matching `terrainGeometry`'s tint reach. */
-const BASIN_REACH = 190;
-const TAU = Math.PI * 2;
 
 /*
  * `max`, `length` and `normalize` are *not* imported: each appears here as a node

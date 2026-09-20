@@ -24,6 +24,8 @@ import { createCameraController, sequenceKey } from './camera/cameraController';
 import { createFieldUniforms } from './field/fieldUniforms';
 import { createSkyBackground, installSkyBackground } from './materials/skyBackground';
 import { deriveFieldState } from './field/deriveFieldState';
+import { createFlowField } from './watershed/flowField';
+import { RiverView } from './views/RiverView';
 import { TerrainView } from './views/TerrainView';
 import {
   createWatershedDescriptor,
@@ -178,6 +180,41 @@ export function SceneHost({
   useEffect(() => {
     uniforms.setBasin(descriptor.basin.centre, descriptor.basinFloor);
   }, [uniforms, descriptor]);
+
+  /**
+   * The flow field, built once and shared by the ground and the water.
+   *
+   * It lives here rather than in either view because it stopped being one view's
+   * business the moment there were two: the ground erodes by it and the water
+   * stands in the trough it cut, and both derive that from the same four channels.
+   * A copy per view would be two answers to "where is the channel" — and since the
+   * water's own cross-section is a *quotient* of two of those channels, the two
+   * copies disagreeing by a texel would be the water sitting off its own bed by a
+   * texel's worth of world.
+   *
+   * The texture is a 384×384 RGBA upload and the build is a CPU sweep over eight
+   * rivers; small, but there is no reason to do it twice and every reason not to
+   * do it twice differently.
+   */
+  const flow = useMemo(
+    () =>
+      createFlowField({
+        field: descriptor.field,
+        // The rivers' own bodies, not the channels that carve them: the flow field
+        // is what the *material* erodes by, and a channel exists precisely because
+        // a river does. Passing both would count every river's work twice.
+        rivers: descriptor.rivers.map((river) => ({
+          spine: river.spine,
+          width: river.width,
+          flowRate: river.flowRate,
+        })),
+        deposits: descriptor.deposits,
+        resolution: descriptor.flowResolution,
+      }),
+    [descriptor],
+  );
+
+  useEffect(() => () => flow.dispose(), [flow]);
 
   const cameraController = useMemo(
     () => createCameraController({ reducedMotion }),
@@ -465,9 +502,18 @@ export function SceneHost({
       <TerrainView
         descriptor={descriptor}
         uniforms={uniforms}
+        flow={flow}
         attentionZ={attentionZ}
         keyLight={keyLight}
       />
+      {/*
+        The water, laid into the trough the ground above has just cut. Mounted
+        second because it *depends* on the first: its vertices start on the same
+        height field and receive the same displacement, so mounting it before the
+        terrain would build a surface against a ground that does not exist yet —
+        which is what the previous composition did, and why its rivers floated.
+      */}
+      <RiverView descriptor={descriptor} uniforms={uniforms} flow={flow} />
     </>
   );
 }
