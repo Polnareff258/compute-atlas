@@ -144,7 +144,8 @@ Composition constraints, enforced in the descriptor rather than hoped for:
 - **C3** No river spine may pass within `nearClearance` of the camera corridor
   volume, so the near field cannot occlude the basin.
 - **C4** Terrain amplitude is multiplied by a mask that falls to zero inside
-  every camera-safe corridor. No large plane ever faces the lens.
+  every camera-safe corridor. No large plane ever faces the lens. *(Implemented
+  the other way round — see the correction at the end of §5.)*
 - **C5** Highlights are budgeted: exactly one region may exceed the emissive
   threshold at a time; the descriptor assigns which, from interaction state.
 - **C6** Detail is not uniformly distributed: the descriptor's density field has
@@ -213,6 +214,31 @@ silhouette cannot take a step, so carves and deposits are summed instead, which
 is also what the geology does: a confluence cuts deeper, overlapping deposits
 stack. The spec is wrong here and the code is right; recorded rather than
 quietly edited, per this document's opening line.
+
+**A second correction.** C4 above says terrain amplitude is masked to zero
+inside every camera-safe corridor. The code does not mask the terrain: the
+corridor's own floor is *measured from* the terrain, as
+`highestGroundOverCapsule(axis, radius) + clearance + samplingMargin`, so the
+camera floats above the highest ground the volume sweeps rather than the ground
+being flattened where the camera is.
+
+The two are opposite means to the same end, and the difference is not cosmetic.
+Masking is a promise about the terrain that has to be re-checked every time the
+field changes, and a mask wide enough to guarantee clearance is a flat patch —
+which is precisely the "large plane facing the lens" the constraint exists to
+forbid, and it would be visible as a plateau once the material starts displacing
+vertices. Measuring is a promise about the *camera*, which is the thing that
+actually has to move, and it is checkable in one comparison: `shots.test.ts`
+asserts every shot's camera position clears the ground under it by at least the
+`safeForeground` that shot promises. A corridor that named no height could not be
+checked against either — which is why the descriptor measures it at build time
+rather than writing it down.
+
+What the mask was for — that no large plane ever faces the lens — is therefore
+held by the *framing*, not by the field. The near field is designed around the one
+place the camera stands: every river source is beyond `minZ` and every river
+concludes at the basin, so nothing the descriptor can generate comes near the
+corridor at all. Recorded, not quietly edited.
 
 ## 6. Materials
 

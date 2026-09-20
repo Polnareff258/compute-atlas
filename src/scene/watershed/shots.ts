@@ -106,8 +106,16 @@ export const CENTRAL_BAND: Rect = Object.freeze({ left: 0.225, top: 0.225, right
  */
 export const TARGET_ASPECTS = Object.freeze({ '2560x1440': 16 / 9, '1920x1080': 16 / 9, '480x270': 16 / 9 });
 
-/** The key light. Above and behind the camera's left shoulder, so the basin is front-lit. */
-const KEY_LIGHT: Vector3 = [-0.38, 0.66, 0.65];
+/**
+ * The key light. Above and behind the camera's left shoulder, so the basin is
+ * front-lit.
+ *
+ * Exported because it is not only a shot's property: the terrain's baked vertex
+ * colour carries the same light as an orientation term, and half-lambert against
+ * a *different* direction would put a second sun in the frame. The bake and the
+ * shots read this one value so they cannot disagree.
+ */
+export const KEY_LIGHT: Vector3 = [-0.38, 0.66, 0.65];
 
 /** FOV, in degrees. Matches `CAMERA_FOV_DEGREES`; owned here so a shot may differ. */
 const SHOT_FOV = 48;

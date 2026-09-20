@@ -27,23 +27,27 @@ import {
 } from './camera/cameraController';
 import { createFieldUniforms } from './field/fieldUniforms';
 import { deriveFieldState } from './field/deriveFieldState';
+import { TerrainView } from './views/TerrainView';
 import {
   createWatershedDescriptor,
   DOMAIN_IDS,
   WATERSHED_PALETTE,
   type DomainId,
 } from './watershed/watershedDescriptor';
+import { KEY_LIGHT } from './watershed/shots';
 
 /**
  * R3F 9 resolves intrinsic elements from this catalogue rather than from the
  * THREE namespace at large, so anything the scene mounts as a JSX element has to
- * be registered before the first render. It is very short at the moment because
- * the scene is being rebuilt: the landscape's own views are not here yet, and
- * what remains is the background and the fog.
+ * be registered before the first render. The catalogue starts empty in this
+ * version — nothing is registered implicitly — so a scene with no `extend` is a
+ * scene whose first `<mesh>` throws `R3F: Mesh is not part of the THREE
+ * namespace!` rather than rendering nothing.
  */
 extend({
   Color: THREE.Color,
   FogExp2: THREE.FogExp2,
+  Mesh: THREE.Mesh,
 });
 
 export type SceneHostProps = {
@@ -117,6 +121,37 @@ export function SceneHost({
   );
 
   const uniforms = useMemo(() => createFieldUniforms(), []);
+
+  /**
+   * Where the camera stands, in Z, so the terrain's grid can be graded around it.
+   *
+   * Read from the descriptor's own corridor rather than written down a second
+   * time. The corridor is a short segment centred on the camera's XZ and carrying
+   * its true world height — the descriptor built it by measuring the ground — so
+   * its midpoint Z is the camera's Z by construction. A copy of the number here
+   * would be a second answer to a question the descriptor already answers, and the
+   * cost of the two disagreeing is a grid that spends its density on ground
+   * nobody looks at.
+   */
+  const attentionZ = useMemo(() => {
+    const corridor = descriptor.cameraCorridors[0];
+    if (corridor === undefined) return 0;
+    return (corridor.from[2] + corridor.to[2]) / 2;
+  }, [descriptor]);
+
+  /**
+   * The key light, as one constant for the whole scene.
+   *
+   * `shots.ts`'s own `KEY_LIGHT` and the terrain's baked orientation term are the
+   * same light, and they have to be: the baked colour is the only lighting this
+   * scene has, so a shot whose `lightDirection` disagreed with the bake would be a
+   * shot lit from two directions at once. A `Vector3` readonly tuple, which is
+   * what `TerrainGeometryOptions` asks for.
+   */
+  const keyLight = useMemo<readonly [number, number, number]>(
+    () => [KEY_LIGHT[0], KEY_LIGHT[1], KEY_LIGHT[2]],
+    [],
+  );
 
   useEffect(() => {
     uniforms.setQuality(settings.terrainDetail);
@@ -334,6 +369,18 @@ export function SceneHost({
         out to grey.
       */}
       <fogExp2 attach="fog" args={[descriptor.fog.tint, descriptor.fog.density]} />
+      {/*
+        The ground. Everything else the landscape grows — the basin's strata, the
+        rivers, the deposits, the membranes — is measured from this surface, so it
+        is mounted first and its own dependencies are only the descriptor, the
+        shared uniforms and the two framing numbers the descriptor does not carry.
+      */}
+      <TerrainView
+        descriptor={descriptor}
+        uniforms={uniforms}
+        attentionZ={attentionZ}
+        keyLight={keyLight}
+      />
     </>
   );
 }

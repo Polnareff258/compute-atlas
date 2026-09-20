@@ -173,7 +173,10 @@ export type WatershedDescriptor = {
   readonly fog: { readonly density: number; readonly tint: string; readonly drift: Vector2 };
   readonly cameraCorridors: readonly CameraCorridor[];
   readonly interestPoints: readonly InterestPoint[];
+  /** Terrain mesh segments per axis. */
   readonly terrainResolution: number;
+  /** Flow-field texels per axis. Independent of `terrainResolution` — see its site. */
+  readonly flowResolution: number;
 };
 
 // --- The fixed composition ---------------------------------------------------
@@ -933,7 +936,25 @@ export function createWatershedDescriptor(seedInput: number, detailInput: number
     fog: {
       // Denser than 3.5.4's `0.006`, because depth is now carried by the terrain
       // and the layers rather than by a bright object in the middle of frame.
-      density: 0.0034 + hashUnit(seed, 1000) * 0.0006,
+      //
+      // The magnitude is measured, not inherited, and it was wrong by a factor of
+      // five until a frame said so. `FogExp2`'s factor is
+      // `1 - exp(-density² · depth²)`, so density is *reciprocal* distance: at the
+      // previous 0.00367 the world was 12.6% fogged a hundred units in front of the
+      // camera, 70% fogged at 300, and **fully opaque from 600 units outward** —
+      // and this world is 1820 units deep with its subject 800 away. Every frame
+      // came out a flat cyan-grey field with a fogged silhouette in it, which is
+      // exactly the look this stage exists to replace.
+      //
+      // Re-derived from where the fog has to *be*. Three depths matter and they
+      // agree: 300 units (the near field, where the ground has to read as ground)
+      // at 5%, 800 (the basin, the subject) at 25%, and 1600 (the far edge, which
+      // has to settle into the background) at 65%. Solving `1 - exp(-d²·z²)` for
+      // each gives 7.55e-4, 6.71e-4 and 6.40e-4, so the density is the middle of
+      // those. The per-seed variation is scaled with it rather than left absolute,
+      // because an additive term that was a sixth of the value is a third of it
+      // now, and the seed's job is variation, not a different picture.
+      density: 0.00068 + hashUnit(seed, 1000) * 0.00012,
       tint: WATERSHED_PALETTE.petroleum,
       drift: [hashSigned(seed, 1001) * 0.4, -1] as Vector2,
     },
@@ -942,5 +963,22 @@ export function createWatershedDescriptor(seedInput: number, detailInput: number
     // The mesh hint: how many segments per axis at this detail. ULTRA gets a
     // grid fine enough to hold the delta's runnels; SAFE keeps the silhouette.
     terrainResolution: Math.round(180 + detail * 260),
+    /**
+     * Texels per axis of the flow field.
+     *
+     * Deliberately *not* `terrainResolution`, and lower. The two answer different
+     * questions — the mesh has to hold a runnel, the flow texture only has to hold
+     * a river's width — and a river is several times wider than the terrain
+     * features around it. Tying them would make the flow field cost as much as the
+     * mesh for detail no channel can use, and would make SAFE's rivers vanish with
+     * SAFE's vertices, which §10 forbids: the silhouette, the basin, a river and
+     * the domain transformation all have to survive.
+     *
+     * At 384 texels over 2000 units a texel is 5.2 units and a river of width 20
+     * spans about eight of them, which bilinear sampling turns into a soft core —
+     * the softness is wanted, since the erosion mask is multiplied by procedural
+     * detail in the material rather than being the detail itself.
+     */
+    flowResolution: Math.round(160 + detail * 224),
   };
 }
