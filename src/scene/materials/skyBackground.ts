@@ -121,7 +121,7 @@ export type SkyBackground = {
  * and so the one property it writes is visible in the type rather than buried in a
  * cast.
  */
-type BackgroundHost = { background: unknown };
+type BackgroundHost = { background: unknown; backgroundNode?: unknown };
 
 /**
  * Put the air on a scene, and hand back the undo.
@@ -136,12 +136,30 @@ type BackgroundHost = { background: unknown };
  * background is touched.
  */
 export function installSkyBackground(scene: BackgroundHost, sky: SkyBackground): () => void {
-  const previous = scene.background;
-  scene.background = sky.node;
+  /*
+   * `backgroundNode`, not `background`.
+   *
+   * Both paths draw the node — the background pass reads
+   * `nodes.getBackgroundNode(scene) || scene.background` and takes the `isNode`
+   * branch either way. They differ in what the *other* consumer does with it.
+   * `NodeManager.updateBackground` inspects `scene.background` to decide whether it
+   * needs to build a node representation for it, and its only recognised cases are
+   * a cube texture, a texture and a colour; anything else falls through to
+   * `error('WebGPUNodes: Unsupported background configuration.')`. So a node on
+   * `scene.background` is drawn correctly and logged as a failure on every frame —
+   * which is what happened here, and what put a console error and a Next.js dev
+   * overlay badge into every capture of the scene.
+   *
+   * On `backgroundNode` the same node is drawn by the same pass and the manager
+   * takes its `else` branch, which clears stale cache and logs nothing. The sky is
+   * unchanged; the error and the badge are gone.
+   */
+  const previous = scene.backgroundNode;
+  scene.backgroundNode = sky.node;
   return () => {
     // Only restored if nothing else has claimed the background in the meantime, so
     // a later owner is not clobbered by this one's teardown.
-    if (scene.background === sky.node) scene.background = previous;
+    if (scene.backgroundNode === sky.node) scene.backgroundNode = previous;
     sky.dispose();
   };
 }

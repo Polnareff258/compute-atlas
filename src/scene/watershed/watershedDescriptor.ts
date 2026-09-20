@@ -1143,9 +1143,28 @@ export function createWatershedDescriptor(seedInput: number, detailInput: number
     },
     cameraCorridors,
     interestPoints,
-    // The mesh hint: how many segments per axis at this detail. ULTRA gets a
-    // grid fine enough to hold the delta's runnels; SAFE keeps the silhouette.
-    terrainResolution: Math.round(180 + detail * 260),
+    /*
+     * The mesh hint: how many segments per axis at this detail. ULTRA gets a grid
+     * fine enough to hold the delta's runnels; SAFE keeps the silhouette.
+     *
+     * **Raised from a coefficient of 260, which is 440 segments — 4.5 world units
+     * a quad over the 2000-unit span.** Measured against the captured frame that
+     * is about eight pixels per quad at the basin's own distance, and the
+     * consequence was not softness but *sawtooth*: the channel walls are the
+     * steepest thing in the world and at grazing incidence a four-and-a-half-unit
+     * step lays jagged dark wedges across the rivers running through them. It read
+     * as the water being torn, which is the one thing a river in this composition
+     * cannot look like.
+     *
+     * At 900 the quad is 2.2 units and the teeth are under the sampling rate of a
+     * 1080-line frame everywhere the camera can stand. That is 738,000 vertices
+     * and 1.47 million triangles for the whole landscape — one draw call, fixed
+     * for the session, and nothing beside a desktop target's budget. The brief is
+     * explicit that ULTRA is for a high-end desktop and that parity with weaker
+     * backends is not a design constraint; this is the profile where that is
+     * spent, and `SAFE` still gets its 180.
+     */
+    terrainResolution: Math.round(180 + detail * 720),
     /**
      * Texels per axis of the flow field.
      *

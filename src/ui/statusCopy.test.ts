@@ -29,7 +29,7 @@ describe('getRendererStatusCopy', () => {
           rendererName: 'Three.js WebGPURenderer',
         }),
       ),
-    ).toEqual({ label: 'WEBGPU · ULTRA', detail: '', tone: 'ready' });
+    ).toEqual({ label: 'WebGPU — Ultra', detail: '', tone: 'ready' });
   });
 
   it('names the active tier rather than a fixed one', () => {
@@ -37,7 +37,7 @@ describe('getRendererStatusCopy', () => {
       getRendererStatusCopy(
         createState({ status: 'ready', backend: 'webgpu', quality: 'safe' }),
       ).label,
-    ).toBe('WEBGPU · SAFE');
+    ).toBe('WebGPU — Safe');
   });
 
   it('describes a ready WebGL2 renderer when it is the available backend', () => {
@@ -45,7 +45,7 @@ describe('getRendererStatusCopy', () => {
       getRendererStatusCopy(
         createState({ status: 'ready', backend: 'webgl2' }),
       ),
-    ).toEqual({ label: 'WEBGL2 · ULTRA', detail: '', tone: 'ready' });
+    ).toEqual({ label: 'WebGL2 — Ultra', detail: '', tone: 'ready' });
   });
 
   it('makes a WebGL2 fallback explicit', () => {
@@ -57,7 +57,7 @@ describe('getRendererStatusCopy', () => {
       }),
     );
 
-    expect(copy.label).toBe('WEBGL2 FALLBACK · ULTRA');
+    expect(copy.label).toBe('WebGL2 fallback — Ultra');
     expect(copy.tone).toBe('fallback');
   });
 
@@ -70,7 +70,7 @@ describe('getRendererStatusCopy', () => {
         }),
       ),
     ).toEqual({
-      label: 'GRAPHICS UNAVAILABLE',
+      label: 'Graphics unavailable',
       detail: 'WebGPU and WebGL2 are unavailable',
       tone: 'degraded',
     });
@@ -79,7 +79,7 @@ describe('getRendererStatusCopy', () => {
   it('keeps a pending state legible to the readiness probe', () => {
     // The capture harness waits for the status to stop reading as initializing,
     // so the word itself is a contract rather than a wording choice.
-    expect(getRendererStatusCopy(createState()).label).toMatch(/INITIALIZING/);
+    expect(getRendererStatusCopy(createState()).label).toMatch(/^Starting/);
     expect(getRendererStatusCopy(createState({ status: 'stopped' })).detail).toBe(
       'Renderer stopped',
     );

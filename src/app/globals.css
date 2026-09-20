@@ -84,26 +84,19 @@ input {
   margin: 0;
 }
 
+/* Sentence case, no tracking, one size step. See `SystemMasthead`. */
 .system-masthead__title {
   color: var(--system-ink);
-  font-size: 0.84rem;
-  letter-spacing: 0.06em;
-}
-
-.system-masthead__subline,
-.system-masthead__meta {
-  color: var(--system-muted);
-  font-size: 0.66rem;
-  letter-spacing: 0.04em;
+  font-size: 1.4rem;
+  font-weight: 500;
+  letter-spacing: normal;
 }
 
 .system-masthead__subline {
-  margin-top: 0.46rem !important;
-}
-
-.system-masthead__meta {
-  display: flex;
-  gap: 1.3rem;
+  margin-top: 0.5rem !important;
+  color: var(--system-muted);
+  font-size: 0.95rem;
+  letter-spacing: normal;
 }
 
 /* A caption for the composition, not a panel beside it. */
@@ -120,14 +113,14 @@ input {
 
 .renderer-status__label {
   color: var(--system-ready);
-  font-size: 0.72rem;
-  letter-spacing: 0.07em;
+  font-size: 0.88rem;
+  letter-spacing: normal;
 }
 
 .renderer-status__detail {
   color: var(--system-muted);
-  font-size: 0.68rem;
-  letter-spacing: 0.02em;
+  font-size: 0.88rem;
+  letter-spacing: normal;
 }
 
 .renderer-status--fallback .renderer-status__label {
@@ -143,10 +136,6 @@ input {
     left: 1.25rem;
     right: 1.25rem;
     top: 1.25rem;
-  }
-
-  .system-masthead__meta {
-    display: none;
   }
 
   .renderer-status {

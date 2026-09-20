@@ -3,7 +3,7 @@ import type { RendererRuntimeState } from '../renderer/runtime';
 export type RendererStatusTone = 'ready' | 'fallback' | 'degraded' | 'pending';
 
 export type RendererStatusCopy = {
-  /** Backend and active quality tier, e.g. `WEBGPU · ULTRA`. */
+  /** Backend and active quality tier, e.g. `WebGPU — Ultra`. */
   readonly label: string;
   /** Only ever non-empty when something is wrong. */
   readonly detail: string;
@@ -21,32 +21,32 @@ export type RendererStatusCopy = {
 export function getRendererStatusCopy(
   state: RendererRuntimeState,
 ): RendererStatusCopy {
-  const quality = state.quality.toUpperCase();
+  const quality = state.quality.charAt(0).toUpperCase() + state.quality.slice(1);
 
   if (state.status === 'ready' && state.backend === 'webgpu') {
-    return { label: `WEBGPU · ${quality}`, detail: '', tone: 'ready' };
+    return { label: `WebGPU — ${quality}`, detail: '', tone: 'ready' };
   }
 
   if (state.status === 'ready' && state.backend === 'webgl2') {
-    return { label: `WEBGL2 · ${quality}`, detail: '', tone: 'ready' };
+    return { label: `WebGL2 — ${quality}`, detail: '', tone: 'ready' };
   }
 
   // A fallback is still a working scene, but it is not the one that was asked
   // for, so the state stays visible rather than being folded into `ready`.
   if (state.status === 'fallback' && state.backend === 'webgl2') {
-    return { label: `WEBGL2 FALLBACK · ${quality}`, detail: '', tone: 'fallback' };
+    return { label: `WebGL2 fallback — ${quality}`, detail: '', tone: 'fallback' };
   }
 
   if (state.status === 'degraded') {
     return {
-      label: 'GRAPHICS UNAVAILABLE',
+      label: 'Graphics unavailable',
       detail: state.error ?? 'Renderer unavailable',
       tone: 'degraded',
     };
   }
 
   return {
-    label: `INITIALIZING · ${quality}`,
+    label: `Starting — ${quality}`,
     detail: state.status === 'stopped' ? 'Renderer stopped' : '',
     tone: 'pending',
   };

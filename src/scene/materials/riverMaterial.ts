@@ -83,32 +83,64 @@ const WATER_LIFT = 1.15;
  * ground — two coincident surfaces, which z-fight. It does not matter that the
  * alpha is zero there: a fragment at zero alpha still writes depth unless
  * `depthWrite` is off, and the sparkle is a per-pixel decision that no amount of
- * transparency prevents. A film of a quarter of a unit across a landscape that is
- * hundreds of units tall is nothing, and it takes the whole coincidence problem
- * away.
+ * transparency prevents. A film across a landscape that is hundreds of units tall
+ * is nothing, and it takes the whole coincidence problem away.
+ *
+ * **Raised from a quarter of a unit, because a quarter was not enough.** The bed
+ * carries a sixth of the ground's relief (`BED_RELIEF` in `groundField`) and this
+ * surface is deliberately built *without* the relief at all, so the two disagree
+ * by however much relief survives on the bed. At a quarter of a unit that was
+ * inside the noise: the captured rivers had the terrain's own surface cutting
+ * dark sawtooth notches along their length, which is the depth test deciding
+ * per-pixel and per-frame which of two surfaces a hair apart is in front. Nine
+ * tenths is still far under `EROSION_DEPTH`, so the water stays inside its own
+ * channel and does not become the flood `WATER_LIFT` is written to avoid.
  *
  * It is deliberately *not* the defence against the terrain mesh bridging over the
  * channel — see `polygonOffset` below for that, and for why a slope-scaled depth
  * bias is the right tool where a world-space lift is not.
  */
-const WATER_FILM = 0.25;
+const WATER_FILM = 0.9;
 
-/** The river's opacity at the centre of its core, before the phases modulate it. */
-const WATER_ALPHA = 0.9;
+/**
+ * The river's opacity at the centre of its core, before the phases modulate it.
+ *
+ * **Lowered from 0.9, which made the water opaque paint.** Two things followed
+ * from that and both were visible in the captures. The water read as a chalky
+ * solid lying on the ground rather than as a translucent film the bed shows
+ * through — the brief's "translucent data layers" and "glowing information
+ * rivers" want the film, not the solid. And because an opaque surface wins every
+ * depth test outright, the place where the water's surface meets the channel's
+ * wall was a hard binary edge: the wall is a triangle mesh and the water is a
+ * ribbon, neither is the other's grid, so their intersection is a staircase with
+ * a step per triangle. At 0.58 the wall's own darkness carries through the water
+ * at that boundary, which converts the step into a gradient.
+ */
+const WATER_ALPHA = 0.58;
 
 /**
  * How bright the water is between the phases' crossings, and how much the
  * crossings add on top.
  *
  * A river is a lit thing along its whole length and a *brighter* thing where its
- * threads and bands cross; these two numbers are that sentence. The floor is well
- * above half because the water has to beat the ground it lies in at its dimmest —
- * a river that is only visible at its crossings is a dashed line — and the
- * structure is a little under one so the crossings are a clear step rather than a
- * blown highlight, which is the failure this stage exists to replace.
+ * threads and bands cross; these two numbers are that sentence.
+ *
+ * **Lowered from 0.72 and 0.85, which together put the water above white.** Those
+ * values made the emission range 0.5 to 1.8, so most of every river's length was
+ * at or past the top of the range and the captured water read as an extruded
+ * white tube lying on the ground — which is the ribbon-on-the-landscape failure
+ * this composition exists to replace, arrived at from the brightness side rather
+ * than the geometry side. The pair below peaks at about 1.05, so only the phase
+ * crossings spend the frame's white and the rest of the river is a lit line rather
+ * than a saturated one.
+ *
+ * The floor is not lowered far enough to make a river visible *only* at its
+ * crossings; a dashed line is the other failure. It has to beat the ground it lies
+ * in at its dimmest, and the ground at the channel's own bed is the darkest thing
+ * in the frame.
  */
-const BRIGHTNESS_FLOOR = 0.72;
-const BRIGHTNESS_STRUCTURE = 0.85;
+const BRIGHTNESS_FLOOR = 0.36;
+const BRIGHTNESS_STRUCTURE = 0.52;
 
 /** Which way the internal structure runs, and how fast it travels downstream. */
 const FILAMENT_THREADS = Math.PI * 2 * 2.5;
