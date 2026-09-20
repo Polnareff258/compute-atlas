@@ -196,7 +196,25 @@ idle, against 90.83% before the `outputNode` fix. Mode 12 now measures 4.19% aga
 4.48% — the relationship that must hold once pressure stops masking the corrected thalweg.
 
 **Console.** error 0 and fatal 0 on every batch. The warnings are the known environment set:
-favicon 404, `THREE.Clock` deprecation, `powerPreference` ignored on Windows, HMR notice.
+favicon 404, `THREE.Clock` deprecation, `powerPreference` ignored on Windows, HMR notice, and one
+that a later reading of the dev server's own log added to this list —
+`THREE.WebGPURenderer: PCFSoftShadowMap has been removed. Using PCFShadowMap instead.`, reported
+from the ink field's render calls. It is benign (this composition has no shadow-casting lights) but
+it is emitted repeatedly, it is attributable to a file in this stage, and an earlier version of
+this document listed only four warnings. Recorded because a console accounting that omits a
+repeating warning is not an accounting.
+
+### Running it
+
+Start the dev server before capturing:
+
+    cd D:\Documents\ClaudeCode\WebDesign
+    npm run dev          # http://localhost:3000
+
+It has to be a *fresh* process. A dev server left running across several commits went stale during
+this work and served a module graph that predated a material change, which made a correct fix look
+like it had had no effect at all; the wrong conclusion stood until the server was restarted.
+
 
 ## 6. Verified and unverified
 
