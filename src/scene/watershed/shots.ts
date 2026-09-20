@@ -136,7 +136,7 @@ export const TARGET_ASPECTS = Object.freeze({ '2560x1440': 16 / 9, '1920x1080': 
  * that face away, which is what depth is made of — while keeping a positive Z so
  * the basin's far wall, which is the one surface meant to be seen, stays lit.
  */
-export const KEY_LIGHT: Vector3 = [-0.58, 0.4, 0.71];
+export const KEY_LIGHT: Vector3 = [-0.86, 0.45, 0.24];
 
 /** FOV, in degrees. Matches `CAMERA_FOV_DEGREES`; owned here so a shot may differ. */
 const SHOT_FOV = 48;
@@ -259,26 +259,51 @@ function movedFrom(
 }
 
 /**
- * How far back the idle camera must stand for the basin to sit inside
+ * How far back the idle camera must stand for the basin's *core* to sit inside
  * `CENTRAL_BAND`, derived rather than chosen.
  *
- * The binding constraint is vertical, and it is the basin's *core* — half its
- * radius, the bowl rather than the rim — that has to sit inside the band. The
- * rim is allowed to run past the band and even out of frame; a vista in which
- * the basin's full 380-unit width had to fit inside 55% of the frame would put
- * the camera 3800 units away and every other feature would be a smudge.
+ * The core is a flat disc of `coreRadius` in the horizontal plane, centred on
+ * the basin and lying at the rim's height, and the two frame directions
+ * constrain it very differently. Sideways there is no foreshortening at all: the
+ * disc's full diameter is `2 * coreRadius` across the view, so the band's half
+ * extent in x gives
  *
- * `halfHeight / distance = tan(fov/2)`, and the band's half-extent is
- * `(CENTRAL_BAND.right - 0.5)`, so:
+ *   reach >= coreRadius / (tan(fov/2) * aspect * bandHalf)
  *
- *   distance >= coreRadius / (tan(fov/2) * bandHalf)
+ * Vertically the disc is seen almost edge-on, and that is the correction this
+ * function exists to make. A camera at a vertical drop `drop` watching a disc
+ * whose near and far edges are `±coreRadius` in z sees them separated by
+ * `coreRadius * drop / distance` in world units — the sine of the depression
+ * angle, times the disc's own extent — so the band's half extent in y gives
  *
- * Returned as a *minimum*, so the corridor's own position decides the final
+ *   reach >= sqrt(coreRadius * drop / (tan(fov/2) * bandHalf) - drop^2)
+ *
+ * whose right-hand side is negative once `drop` is large enough that the disc
+ * fits vertically at any range; it is clamped at zero for that reason.
+ *
+ * **The correction is not cosmetic.** The vertical bound used to be written as
+ * `coreRadius / (tan(fov/2) * bandHalf)` with no `drop` in it — the face-on
+ * case, `drop = distance` — which is the strictest the vertical constraint can
+ * ever be and, for a camera looking down at forty-odd degrees, is more than
+ * twice the distance actually needed. It read as a safe over-estimate until the
+ * station moved and the test that holds the camera against it began failing a
+ * pose whose core is demonstrably inside the band: the number was wrong, not the
+ * pose.
+ *
+ * Returned as a *minimum*, so the station's own position decides the final
  * number and this only says whether that position is far enough back.
  */
-export function minimumVistaDistance(coreRadius: number, fov = SHOT_FOV): number {
+export function minimumVistaReach(
+  coreRadius: number,
+  drop: number,
+  fov = SHOT_FOV,
+  aspect = 16 / 9,
+): number {
+  const tanHalf = Math.tan((fov * Math.PI) / 360);
   const bandHalf = CENTRAL_BAND.right - 0.5;
-  return coreRadius / (Math.tan((fov * Math.PI) / 360) * bandHalf);
+  const vertical = (coreRadius * drop) / (tanHalf * bandHalf) - drop * drop;
+  const horizontal = (coreRadius / (tanHalf * aspect * bandHalf)) ** 2;
+  return Math.sqrt(Math.max(vertical, horizontal, 0));
 }
 
 /** The river that carries a domain's flow: the highest-rate tributary that reaches it. */
@@ -364,24 +389,100 @@ function entryShot(descriptor: WatershedDescriptor): ShotFraming {
 }
 
 /**
- * How far above the basin's rim the vista is aimed, as a fraction of the
- * basin's own depth.
+ * Where the near shoulder's silhouette is made to land in the frame.
  *
- * The aim's height is the single number that decides the whole composition,
- * because everything else in the frame is at a fixed angle from it. Measured
- * against the real field at 16:9, aiming *at* the rim puts the world's
- * silhouette at 0.18 of the frame with the near field taking 0.58 to 1.0 — more
- * than forty per cent of the image spent on ground the brief only wants as a
- * foreground layer. Lifting the aim by a third of the depth moves the silhouette
- * down to about a quarter of the frame and pulls the near field back to about a
- * third, with the basin's mouth a little below the centre line where the
- * composition wants it.
+ * **This replaced a floor at 0.82, and the replacement is the whole of the
+ * composition.** The old aim put the basin's floor at this height, which sounds
+ * like putting the subject in the frame and is not: the floor is the one part of
+ * the basin that cannot be seen. Measured on the real field from every station
+ * from 400 to 2400 units out and every eye from 50 to 320 above its own feet,
+ * the ray to the floor is between 28 and 83 per cent buried, and never once
+ * clear. What the frame was actually showing at that band was the near bank's
+ * own surface — the "smooth blue apron with a ridge of mountains behind it" that
+ * `vistaEyeHeight` was written to fix, reappearing one layer further in.
  *
- * It is expressed relative to the rim and the depth rather than as an absolute
- * height so that a change to either carries the aim with it. Both numbers were
- * swept rather than guessed; see the note on the aim target below.
+ * The line a viewer reads instead is the *silhouette*: the highest ground
+ * between the eye and the basin, which is the last thing that occludes the bowl
+ * and therefore the boundary between the near field and the subject. Solving the
+ * aim on it is what makes the frame a landscape rather than a map, because the
+ * silhouette is a real edge in the image at every station, whereas the floor is
+ * a number that projects to a screen position whether or not anything is
+ * visible there.
+ *
+ * At `0.74` the frame divides into the three layers the brief names: the near
+ * shoulder takes the bottom quarter, the basin's visible far half and its
+ * arriving rivers take the middle third above the silhouette, and the far bank
+ * and its fog take what is left.
  */
-const VISTA_AIM_ABOVE_RIM = 0.33;
+const VISTA_CREST_Y = 0.74;
+
+/**
+ * The eye's height above the ground at its own feet.
+ *
+ * A lift, not a solve. The previous code climbed until the ray to the floor
+ * cleared the terrain, which is a question no camera in this world can answer —
+ * and chasing it is what put the eye 350 units up over ground it stood on. What
+ * the eye actually needs is to be above the near shoulder's own surface by
+ * enough that the shoulder reads as a foreground layer rather than as the
+ * picture, and that is a figure about the shoulder, not about the bowl.
+ *
+ * The descriptor's corridor clearance remains a floor under this, so the
+ * promise that the camera does not stand inside a hill is still the
+ * descriptor's to make and this can only ever raise the eye.
+ */
+const VISTA_EYE_LIFT = 150;
+
+/**
+ * The angle below the horizon at which the intervening ground's skyline sits.
+ *
+ * The minimum over the ground crossed, because a point is hidden by any nearer
+ * ground standing *lower* on the screen, which is a larger angle below the
+ * horizon. The ground directly under the camera is excluded for the same reason
+ * it is the wrong answer: it is at nearly ninety degrees and is not a silhouette,
+ * it is the floor of the room.
+ */
+function vistaCrestAngle(descriptor: WatershedDescriptor, standZ: number, eyeY: number): number {
+  let crest = Infinity;
+  for (let z = descriptor.basin.centre[1]; z < standZ - 1; z += 2) {
+    const theta = Math.atan2(eyeY - terrainHeight(descriptor.basin.centre[0], z, descriptor.field), standZ - z);
+    if (theta < crest) crest = theta;
+  }
+  return crest;
+}
+
+/**
+ * The aim, solved so the near silhouette lands at `VISTA_CREST_Y`.
+ *
+ * Closed form rather than a search, because in the vertical plane the eye, the
+ * aim and the silhouette share, the relation is exact: a point at angle `theta`
+ * below the horizon, seen from a camera aimed `thetaAim` below it, projects to
+ * `0.5 + 0.5 * tan(theta - thetaAim) / tan(fov / 2)`. Setting that to
+ * `VISTA_CREST_Y` and inverting gives the aim.
+ *
+ * Deriving it rather than authoring a height is what makes the pose survive a
+ * change to the world: the aim is currently a long way below the silhouette's
+ * own ground, and that is a consequence of where the silhouette stands relative
+ * to the eye, not a second decision.
+ */
+export function vistaAimY(descriptor: WatershedDescriptor, eyeY: number, standZ: number): number {
+  const tanHalf = Math.tan((SHOT_FOV * Math.PI) / 360);
+  const thetaCrest = vistaCrestAngle(descriptor, standZ, eyeY);
+  const thetaAim = thetaCrest - Math.atan(2 * (VISTA_CREST_Y - 0.5) * tanHalf);
+  return eyeY - Math.tan(thetaAim) * (standZ - descriptor.basin.centre[1]);
+}
+
+/**
+ * Where the vista's eye stands, as a height.
+ *
+ * The two inputs are the world's own guarantee and the shot's own requirement,
+ * and the larger wins: the corridor promises the camera is not inside the
+ * terrain, and `VISTA_EYE_LIFT` promises the near shoulder is a layer rather
+ * than the picture. Neither subsumes the other and taking the maximum is the
+ * only pose that satisfies both.
+ */
+export function vistaEyeHeight(descriptor: WatershedDescriptor, standZ: number): number {
+  return terrainHeight(descriptor.basin.centre[0], standZ, descriptor.field) + VISTA_EYE_LIFT;
+}
 
 /**
  * How much air the camera keeps under it while travelling between two poses.
@@ -395,54 +496,67 @@ const VISTA_AIM_ABOVE_RIM = 0.33;
 const MOVE_CLEARANCE = 18;
 
 /**
- * The idle vista, framed from the descriptor's own camera corridor.
+ * The idle vista: the frame the whole stage is judged on.
  *
- * The camera stands at the corridor's far end and looks at the basin. It is
- * allowed to drift and forbidden to orbit: an orbit would change the
- * composition continuously, and the composition is the thing this stage is
- * about. The drift is the controller's business; this is the pose it drifts
- * around, and it is a pose the descriptor guarantees is clear of the world.
+ * **Three layers, and the number that makes them.** The camera stands at the
+ * descriptor's idle station — three-and-a-bit basin radii behind the centre, see
+ * `IDLE_CAMERA_XZ` — at `VISTA_EYE_LIFT` above its own feet, and the aim solves
+ * on the near silhouette. Measured on the real
+ * world at ULTRA, that lands the skyline at 0.18, the far bank at 0.46, the four
+ * membrane sheets at 0.68 through 0.84, the near rim at 0.84 and the near
+ * shoulder across the bottom. Subject in the middle distance, foreground under
+ * it, air over it — the composition the brief asks for by name.
  *
- * The aim is the basin's *rim*, not its floor, and that is a measured
- * correction rather than a preference. The floor was the aim for a long time,
- * and the consequence only showed up once somebody projected the world's own
- * silhouette: aiming at the floor puts the view's axis about 26 degrees below
- * horizontal, and a 48-degree vertical field of view then has only about 24
- * degrees above its centre to spend — so the frame's top edge lands *inside* the
- * far bank and the horizon is cropped away entirely. A sweep over the near
- * bank's rise, its toe and the camera's clearance found no combination that
- * fixed it, because raising the eye widens the angle between the horizon and the
- * basin floor rather than narrowing it. There is no geometry that centres a
- * deep basin *and* keeps a horizon.
+ * **Why it is not framed on the basin's floor, which is the correction this
+ * doc comment used to argue for.** The previous aim put the floor at 0.82 and
+ * the shot was composed around a point that no camera in this world can see: on
+ * the real field, from every station between 400 and 2400 units and every eye
+ * between 50 and 320 above its own ground, the ray to the floor is 28 to 83 per
+ * cent buried and never once clear. The band at 0.82 was therefore the near
+ * bank's own surface, and the frame was a picture of the bank — the failure
+ * `vistaEyeHeight` was written to repair, reappearing one layer further in
+ * because the repair was a *clearance* solve applied to a *composition*
+ * problem. An aim is only meaningful if something is visible where it points.
  *
- * Aiming at the rim instead costs nothing and buys the whole composition: the
- * basin's interior takes the lower half, its far rim sits on the centre line,
- * the far bank and its arriving rivers take the upper third, and above them
- * there is fog. `shots.test.ts` holds the horizon inside the frame as a test
- * rather than as a hope, since this is exactly the kind of framing that a later
- * change to a depth or a clearance would quietly undo.
+ * **The drift.** The camera is allowed to drift and forbidden to orbit: an orbit
+ * changes the composition continuously, and the composition is what this stage
+ * is about. The drift is the controller's business; this is the pose it drifts
+ * around. The corridor's clearance remains a floor under the eye, so the
+ * promise that the camera is not inside a hill is still the descriptor's.
  */
 export function idleVista(descriptor: WatershedDescriptor, aspect: number): ShotFraming {
   const corridor = descriptor.cameraCorridors.find((candidate) => candidate.id === 'idle');
-  const position: Vector3 = corridor
-    ? [corridor.from[0], corridor.from[1], corridor.from[2] - 20]
-    : [0, 40, 460];
+  const standX = corridor ? corridor.from[0] : 0;
+  // The descriptor owns *where* — its near field is designed around that station
+  // and its corridor is the clearance promise made there. This shot owns only how
+  // high the eye stands and where it looks. The twenty is a step in from the
+  // corridor's far corner so the pose sits inside the box rather than on its edge,
+  // where the radius is nominal and a sample either side could be outside it.
+  const standZ = corridor ? corridor.from[2] - 20 : 366;
+
+  // The corridor's height is a floor on the eye, never the eye itself — it
+  // promises clearance and this promises a view, and the view is the larger
+  // number. See `vistaEyeHeight`.
+  const eyeY = Math.max(corridor?.from[1] ?? 0, vistaEyeHeight(descriptor, standZ));
+  const position: Vector3 = [standX, eyeY, standZ];
   const lookTarget: Vector3 = [
     descriptor.basin.centre[0],
-    descriptor.basinFloor +
-      descriptor.basin.depth +
-      descriptor.basin.rimHeight +
-      descriptor.basin.depth * VISTA_AIM_ABOVE_RIM,
+    vistaAimY(descriptor, eyeY, standZ),
     descriptor.basin.centre[1],
   ];
 
   // The band as an authored rectangle rather than a computed one, because the
-  // composition is the point: the basin sits a little below centre so the
-  // rivers entering from far have the upper third of the frame to arrive in.
+  // composition is the point: it is the basin's core — the bowl rather than the
+  // rim — and the floor's landing at `VISTA_FLOOR_Y` puts that core at about
+  // `0.41..0.59` by `0.52..0.72`, comfortably inside the central band the brief
+  // names. The rim's own point lands at `0.60` and the floor itself at `0.82`,
+  // so the whole subject is in the middle of the frame; what is left above it is
+  // the far bank the rivers arrive across, and what is left below is the
+  // shoulder the camera stands on.
   const heroRegion: Rect =
     aspect >= 1.6
-      ? { left: 0.33, top: 0.3, right: 0.67, bottom: 0.72 }
-      : { left: 0.28, top: 0.3, right: 0.72, bottom: 0.72 };
+      ? { left: 0.33, top: 0.42, right: 0.67, bottom: 0.88 }
+      : { left: 0.28, top: 0.42, right: 0.72, bottom: 0.88 };
 
   return framing('idleVista', position, lookTarget, {
     duration: 0,
@@ -575,6 +689,58 @@ function liftHeightFor(
     needed = Math.max(needed, from[1] + (margin + ground - from[1]) / s);
   }
   return needed;
+}
+
+/**
+ * Raise a whole leg until the line between its ends clears the ground.
+ *
+ * A move between two poses that each clear their own ground can still fly through
+ * a hill between them, and neither pose is lying about its own clearance — the
+ * gap is entirely in the space between. That is not hypothetical: it is what
+ * happened when the rivers narrowed. `domainArrival` and `domainInspection` stand
+ * a fixed height above the ground *beneath themselves*, 22 and 46, so narrowing
+ * the channels raised the shoulders the inspection's own bearing crosses and the
+ * straight line between the two poses buried itself seven units deep a fifth of
+ * the way along.
+ *
+ * **Why the lift is applied to both ends rather than to one.** A lift that moves
+ * only the far pose re-aims it — the camera ends up higher over the same ground
+ * looking somewhere else — and the first attempt at exactly that pushed the
+ * basin's own rim off the top of the frame at inspection, which is the one thing
+ * that shot exists to keep. Translating both ends by the same amount leaves every
+ * angle between them untouched: the leg is the same leg, drawn higher, and both
+ * framings keep the composition they were authored with.
+ *
+ * **Why the amount is a maximum rather than a formula.** The shortest lift that
+ * works is the largest shortfall along the line, which is one pass of samples and
+ * no algebra. The line's own height at a sample is the interpolation of the two
+ * ends, and the shortfall is how far `ground + margin` stands above it.
+ */
+function liftLeg(descriptor: WatershedDescriptor, from: ShotFraming, to: ShotFraming, margin: number): number {
+  let shortfall = 0;
+  const samples = 48;
+  for (let index = 0; index <= samples; index += 1) {
+    const s = index / samples;
+    const x = from.position[0] + (to.position[0] - from.position[0]) * s;
+    const z = from.position[2] + (to.position[2] - from.position[2]) * s;
+    const line = from.position[1] + (to.position[1] - from.position[1]) * s;
+    shortfall = Math.max(shortfall, terrainHeight(x, z, descriptor.field) + margin - line);
+  }
+  return shortfall;
+}
+
+/** A framing translated straight up. Both ends move, so nothing about it re-aims. */
+function raised(framingResult: ShotFraming, amount: number): ShotFraming {
+  if (amount <= 0) return framingResult;
+  return {
+    ...framingResult,
+    position: [framingResult.position[0], framingResult.position[1] + amount, framingResult.position[2]],
+    lookTarget: [
+      framingResult.lookTarget[0],
+      framingResult.lookTarget[1] + amount,
+      framingResult.lookTarget[2],
+    ],
+  };
 }
 
 /**
@@ -800,9 +966,27 @@ export function planShots(
   const approach = activeDomain
     ? routeApproach(descriptor, domain, aspect)
     : restingVista(descriptor, aspect, 'routeApproach');
-  const arrival = activeDomain
+
+  /*
+   * The last leg of the focus move, solved as a pair.
+   *
+   * `domainArrival` and `domainInspection` are two poses on the same ring around the
+   * region, and each is authored a fixed height above the ground directly beneath
+   * itself. Neither is a statement about the ground *between* them, and the move
+   * between two such poses can fly through a hill with both ends honest — see
+   * `liftLeg`. Solving it here, on the pair, is the only place both poses exist at
+   * once, and it has to happen before `routeLift`, which is built from the arrival
+   * and would otherwise solve its own leg to a pose that then moved.
+   */
+  const arrivalBase = activeDomain
     ? domainArrival(descriptor, domain, aspect)
     : restingVista(descriptor, aspect, 'domainArrival');
+  const inspectionBase = activeDomain
+    ? domainInspection(descriptor, domain, aspect)
+    : restingVista(descriptor, aspect, 'domainInspection');
+  const inspectionLift = liftLeg(descriptor, arrivalBase, inspectionBase, MOVE_CLEARANCE);
+  const inspection = raised(inspectionBase, inspectionLift);
+  const arrival = raised(arrivalBase, inspectionLift);
 
   return {
     entry: entryShot(descriptor),
@@ -813,9 +997,7 @@ export function planShots(
     // is rather than where a second copy of the choreography thinks it is.
     routeLift: routeLift(descriptor, domain, approach, arrival),
     domainArrival: arrival,
-    domainInspection: activeDomain
-      ? domainInspection(descriptor, domain, aspect)
-      : restingVista(descriptor, aspect, 'domainInspection'),
+    domainInspection: inspection,
     returnVista: returnVista(descriptor, aspect),
   };
 }

@@ -4,7 +4,7 @@ import {
   CENTRAL_BAND,
   entryApproachPose,
   insideRect,
-  minimumVistaDistance,
+  minimumVistaReach,
   planShots,
   projectPoint,
   selectInterestPoints,
@@ -242,12 +242,23 @@ describe('C2 — the basin lands inside the central band', () => {
     expect(framings[2]).toEqual(framings[0]);
   });
 
-  it('derives a vista distance the corridor actually satisfies', () => {
-    // The derivation is separate from the corridor so that moving the camera is
-    // checked against the arithmetic rather than against the previous value.
-    const required = minimumVistaDistance(descriptor.basin.radius * 0.5);
+  it('derives a vista reach the station actually satisfies', () => {
+    // The derivation is separate from the station so that moving the camera is
+    // checked against the arithmetic rather than against the previous value. It
+    // is measured on the *horizontal* reach and the vertical drop to the core's
+    // own plane, because those are the two quantities the derivation is written
+    // in — the straight-line distance to an aim point somewhere below the core
+    // is a third thing that happens to be nearby.
     const framing = planShots(descriptor, SIXTEEN_NINE).idleVista;
-    expect(framing.focalDistance).toBeGreaterThan(required);
+    const coreY = descriptor.basinFloor + descriptor.basin.depth + descriptor.basin.rimHeight;
+    const drop = framing.position[1] - coreY;
+    const reach = Math.hypot(
+      framing.position[0] - descriptor.basin.centre[0],
+      framing.position[2] - descriptor.basin.centre[1],
+    );
+
+    expect(drop).toBeGreaterThan(0);
+    expect(reach).toBeGreaterThan(minimumVistaReach(descriptor.basin.radius * 0.5, drop));
   });
 });
 

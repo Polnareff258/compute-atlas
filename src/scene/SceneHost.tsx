@@ -25,6 +25,7 @@ import { createFieldUniforms } from './field/fieldUniforms';
 import { createSkyBackground, installSkyBackground } from './materials/skyBackground';
 import { deriveFieldState } from './field/deriveFieldState';
 import { createFlowField } from './watershed/flowField';
+import { BasinView } from './views/BasinView';
 import { RiverView } from './views/RiverView';
 import { TerrainView } from './views/TerrainView';
 import {
@@ -514,6 +515,14 @@ export function SceneHost({
         which is what the previous composition did, and why its rivers floated.
       */}
       <RiverView descriptor={descriptor} uniforms={uniforms} flow={flow} />
+      {/*
+        The Convergence Basin's levels, mounted last and deliberately so. They are
+        the only transparent surfaces in the frame that sit *inside* the terrain
+        rather than on it, so they have to be drawn after both the ground they are
+        set into and the water that arrives at them — a sheet drawn before the
+        river would have the river composited behind the level it is filling.
+      */}
+      <BasinView descriptor={descriptor} uniforms={uniforms} />
     </>
   );
 }

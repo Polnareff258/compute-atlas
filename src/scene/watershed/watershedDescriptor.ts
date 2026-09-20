@@ -248,16 +248,71 @@ const BASIN_TILT = 60;
  * in that is a scratch, which is why the far bank read as a smooth wall with no
  * rivers on it.
  *
- * The *widths* are deliberately untouched. The camera's station has not moved,
- * so a river's screen width is exactly what it was, and the thing that broke was
- * the ratio of cut to relief. Scaling the widths too would have been a second,
- * unrelated change borrowing the first one's justification — and the one thing
- * that must not happen here is an unmeasured change.
+ * The *widths* were left untouched here, because the camera's station had not
+ * moved and a river's screen width was therefore exactly what it was; scaling
+ * them too would have been a second, unrelated change borrowing the first one's
+ * justification. That reasoning was right and its premise has since expired — the
+ * station has moved — so the widths are re-tuned separately, in
+ * `RIVER_WIDTH_SCALE` below, by their own measurement.
  */
 const CHANNEL_DEPTH_SCALE = 2.6;
 
 /**
+ * How much narrower the rivers are drawn than they were authored.
+ *
+ * `CHANNEL_DEPTH_SCALE` above re-tuned the *cut* when the base relief changed and
+ * deliberately left the widths alone, on the grounds that a river's screen width
+ * was unchanged and scaling them would have been a second change borrowing the
+ * first one's justification. That reasoning was right and its premise has since
+ * stopped being true: the camera's station moved from `z = 480` to the basin's own
+ * shoulder at `z = 200`, and the eye rose with it, so the near and middle rivers
+ * are now between a third and a half larger on screen than every width in
+ * `RIVER_SEEDS` was chosen against.
+ *
+ * Measured, not guessed. The distance from the eye to the basin went from about
+ * 800 to 627, and the distance to the nearest river mouth from about 300 to 180, so
+ * the rivers nearest the camera grew by roughly 1.7 and those at the basin by
+ * 1.28. The trunk's own ribbon is `EROSION_REACH` times its width either side, so
+ * at 46 it was 239 units across — wider than the basin it flows into, which has a
+ * radius of 190. A river wider than the feature it feeds is not a river; it is the
+ * flat plate the brief's rejected composition was made of.
+ *
+ * 0.62 is the reciprocal of that 1.7, rounded toward keeping the rivers grand. It
+ * puts the trunk at 143 units across and its *visible* water, which is where
+ * `core` passes the material's own threshold, at about 120 — two thirds of the
+ * basin's radius, which is what a trunk arriving at a basin should be.
+ */
+const RIVER_WIDTH_SCALE = 0.62;
+
+/**
  * Where the idle camera stands, in XZ, and how much air it needs under it.
+ *
+ * **The station is measured in the basin's own radii, and that is the correction
+ * this block used to argue against.** It previously stood at `[0, 200]`, on the
+ * basin's shoulder, defended on the grounds that "close and moderately high is a
+ * landscape, far and very high is a map" — which is a correct principle and was
+ * the wrong conclusion, because the shot it produced was neither. Standing close
+ * put the eye only 520 units from a basin 380 across, and seeing over the near
+ * bank from there required the eye to climb to 445: a *close aerial*, which is a
+ * map at short range. The measured idle capture showed exactly that — no sky in
+ * frame, the terrain edge to edge, the basin's own floor behind the near rim.
+ *
+ * What was actually wrong is that the eye was solved as a *clearance* — climb
+ * until the ray to the floor is unobstructed — when the floor cannot be seen from
+ * any pose in this world: over stations from 400 to 2400 units and eyes from 50
+ * to 320 above their own ground, that ray is 28 to 83 per cent buried, always.
+ * The two questions have different answers and only one of them has a solution
+ * here. The aim now solves on the near *silhouette* instead — see
+ * `VISTA_CREST_Y` in `shots.ts` — and once the composition is built on a line
+ * that is genuinely visible, the station is free to be chosen for scale rather
+ * than for clearance.
+ *
+ * Three-and-a-bit radii is where the two failures meet: nearer and the near bank
+ * is coarse and the bowl is a plan view, farther and the eye has to climb so far
+ * that the far half of the world dissolves into fog. Written as a multiple of
+ * `BASIN_RADIUS` rather than as a world coordinate so that the shot stays the
+ * same relationship to its subject if the basin is ever resized; the number it
+ * evaluates to today is 346.
  *
  * The whole near field is designed around this one number: every river source is
  * beyond `-1000` in Z and every river's conclusion is at the basin, so nothing
@@ -267,11 +322,11 @@ const CHANNEL_DEPTH_SCALE = 2.6;
  * The clearance is the camera's height above the ground at its own feet, and it
  * has to be read as a *framing* figure alongside `NEAR_BANK_RISE`: at 22 against
  * a 120-unit bank the camera skims the shoulder, and the near ground then subtends
- * most of the frame with the basin crushed into the sliver above it. Standing 85
- * above the shoulder is what makes the near field a foreground layer instead of
- * the whole image.
+ * most of the frame with the basin crushed into the sliver above it. It is a floor
+ * on the eye and not the eye itself — see `VISTA_EYE_LIFT` in `shots.ts`, which is
+ * the composition's own, larger, requirement.
  */
-const IDLE_CAMERA_XZ: Vector2 = [0, 480];
+const IDLE_CAMERA_XZ: Vector2 = [0, BASIN_CENTRE[1] + BASIN_RADIUS * 3.4];
 const IDLE_CLEARANCE = 85;
 const IDLE_CORRIDOR_RADIUS = 46;
 const IDLE_CORRIDOR_HALF_LENGTH = 40;
@@ -756,11 +811,12 @@ export function createWatershedDescriptor(seedInput: number, detailInput: number
     // trunk, which both looks arbitrary and can bend a short course back on
     // itself. A river meanders within its own floodplain.
     const spine = wanderSpine(definition.spine, seed, 300 + index * 41, Math.min(30, definition.width * 0.7));
+    const width = definition.width * RIVER_WIDTH_SCALE;
     const flowRate = definition.flowRate * (0.9 + hashUnit(seed, 400 + index * 19) * 0.2);
     const river: River = {
       id: definition.id,
       spine,
-      width: definition.width,
+      width,
       flowRate,
       feeds: definition.feeds,
       ...(definition.domainId ? { domainId: definition.domainId } : {}),
@@ -770,7 +826,7 @@ export function createWatershedDescriptor(seedInput: number, detailInput: number
 
     channels.push({
       spine,
-      width: definition.width * 1.35,
+      width: width * 1.35,
       // The carve follows the flow rate, so a river that runs slower is also a
       // river that has cut less — one number, two consequences.
       depth: definition.depth * (0.85 + flowRate * 0.3) * CHANNEL_DEPTH_SCALE,
@@ -918,20 +974,72 @@ export function createWatershedDescriptor(seedInput: number, detailInput: number
 
   // --- Strata: the layered sheets over the basin -----------------------------
 
-  // Levels are measured up from the basin floor rather than placed at absolute
-  // heights, so a seed with a deeper basin still has its sheets inside the bowl.
-  const STRATUM_OFFSETS = [4, 15, 27, 40] as const;
-  const stratumCount = Math.max(1, Math.round(STRATUM_OFFSETS.length * (0.35 + detail * 0.65)));
+  /*
+   * The sheets are *levels the basin has filled to*, and the only thing chosen
+   * here is how high each one stands above the floor.
+   *
+   * Their radii are then measured, not authored, and that distinction is the
+   * whole of this block. The first version of it chose a radius for each sheet by
+   * hand — `BASIN_RADIUS * (0.94 - index * 0.13)`, so the largest sheet was the
+   * lowest and the stack tapered upward — which is the arrangement a *tower* has,
+   * not the one a bowl has. A bowl is not a cylinder: this one is flat to about
+   * forty units and then climbs hard, reaching the rim's own height by the time it
+   * is two hundred out. Measured, its profile runs −182 at the centre, −162 at
+   * sixty, −111 at a hundred and −38 at a hundred and eighty. A flat sheet at
+   * floor+4 reaching a radius of 179 is therefore underground from about fifty
+   * units out, and the authored stack was buried in the bowl's walls at every
+   * level — four discs of which only a small central cap was ever above ground,
+   * which is why the basin read as a bare depression with a small bright floor and
+   * no layers in it at all.
+   *
+   * The contour of a level inside a bowl shrinks as the level drops, and the sheet
+   * is exactly that contour: the set of ground below the sheet's height. So the
+   * height is picked and the radius is found by walking out from the centre until
+   * the ground rises to meet it. Both ends of that are seed-independent in form
+   * and seed-dependent in value, which is what a descriptor is for.
+   */
+  const STRATUM_FILLS = [0.22, 0.44, 0.66, 0.86] as const;
+  const stratumCount = Math.max(1, Math.round(STRATUM_FILLS.length * (0.35 + detail * 0.65)));
 
-  const strata: Stratum[] = STRATUM_OFFSETS.slice(0, stratumCount).map((offset, index) => ({
-    id: `stratum-${index}`,
-    level: basinFloor + offset,
-    // Each sheet is smaller than the one below it, so the stack tapers into the
-    // bowl instead of presenting four edges at once.
-    radius: BASIN_RADIUS * (0.94 - index * 0.13),
-    coverage: 0.34 + hashUnit(seed, 800 + index * 23) * 0.22,
-    flowBias: hashSigned(seed, 850 + index * 29) * 0.9,
-  }));
+  /*
+   * How far inside its own contour a sheet stops, as a fraction of its radius.
+   *
+   * A sheet drawn all the way to the contour ends exactly where the ground meets
+   * it, which puts a hard coplanar edge on a wall that is itself sloped — the
+   * classic depth-fight, and it reads as a stitched seam the whole way round. So
+   * each sheet stops just short, and the gap is the shoreline: a thin band of the
+   * bowl's own ground between one level and the next, which is what makes the
+   * stack read as *deposits at four heights* rather than as four flat plates
+   * dropped into a hole.
+   */
+  const STRATUM_INSET = 0.955;
+
+  /** Where the ground, walking out from the basin's centre, rises to `level`. */
+  function basinContourRadius(level: number): number {
+    const steps = 96;
+    for (let index = 1; index <= steps; index += 1) {
+      const radius = (BASIN_RADIUS * index) / steps;
+      if (terrainHeight(BASIN_CENTRE[0], BASIN_CENTRE[1] + radius, field) >= level) {
+        return radius;
+      }
+    }
+    // The bowl never reaches this height inside its own radius, which can only
+    // happen if a seed's rim is lower than a fill fraction assumes. Reporting the
+    // rim rather than zero keeps the sheet a sheet; a zero-radius stratum would
+    // vanish and take a level of the stack with it.
+    return BASIN_RADIUS;
+  }
+
+  const strata: Stratum[] = STRATUM_FILLS.slice(0, stratumCount).map((fill, index) => {
+    const level = basinFloor + basinDepth * fill;
+    return {
+      id: `stratum-${index}`,
+      level,
+      radius: basinContourRadius(level) * STRATUM_INSET,
+      coverage: 0.34 + hashUnit(seed, 800 + index * 23) * 0.22,
+      flowBias: hashSigned(seed, 850 + index * 29) * 0.9,
+    };
+  });
 
   // --- Camera corridors ------------------------------------------------------
   //
