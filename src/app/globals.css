@@ -20,7 +20,16 @@ body {
 
 body {
   margin: 0;
-  overflow: hidden;
+  /*
+   * The page scrolls, and it did not before.
+   *
+   * The scroll story is an input the composition reads, so the document has to be taller
+   * than the viewport for there to be anything to read. Horizontal overflow stays hidden:
+   * the story is vertical, and a stray wide element producing a horizontal scrollbar would
+   * shift the whole composition sideways mid-scroll.
+   */
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--system-bg);
   color: var(--system-ink);
   font-family: Arial, Helvetica, sans-serif;
@@ -31,10 +40,34 @@ input {
   font: inherit;
 }
 
-.system-stage,
-.renderer-host {
+:root {
+  /*
+   * How much scroll the story has, in viewports.
+   *
+   * The brief asks for an opening of one and a half to two viewports. It is written once
+   * here, and the document is one viewport taller than it, because the last viewport of
+   * scrolling has to arrive somewhere — a document exactly as tall as its scroll range has
+   * no scroll range at all.
+   */
+  --scroll-viewports: 1.8;
+}
+
+.system-stage {
+  /*
+   * The stage is the scroll range. The canvas inside it is fixed, so the picture stays
+   * full-screen while the page moves under it — which is what makes the story a camera
+   * move rather than a page turning.
+   */
   position: relative;
-  min-height: 100vh;
+  min-height: calc((1 + var(--scroll-viewports)) * 100vh);
+  width: 100%;
+  overflow: visible;
+}
+
+.renderer-host {
+  position: fixed;
+  inset: 0;
+  height: 100vh;
   width: 100%;
   overflow: hidden;
   background:
@@ -66,6 +99,21 @@ input {
   position: absolute;
   z-index: 2;
   pointer-events: none;
+  /*
+   * The type's exit, driven by one number the frame loop writes.
+   *
+   * Opacity, a slight upward displacement and a mask, which is what the brief asks for —
+   * and explicitly *not* a glitch or a flicker. The displacement is a couple of tenths of a
+   * rem at a rate of the same value, so the movement is proportional to the fade rather than
+   * timed against it: two animations that merely start together are two animations that can
+   * finish apart.
+   *
+   * `will-change` is set because this property is written at frame rate; without it the
+   * browser has no reason to composite the layer and every change repaints the text.
+   */
+  opacity: var(--scroll-text-opacity, 1);
+  transform: translateY(calc((1 - var(--scroll-text-opacity, 1)) * -0.6rem));
+  will-change: opacity, transform;
 }
 
 .system-masthead {
@@ -592,6 +640,100 @@ input {
 }
 
 .graph-node-label {
+    transition: none;
+  }
+}
+
+/*
+ * The region labels.
+ *
+ * Type here is one step below the masthead and deliberately unemphatic: the brief's own
+ * guidance is that the UI is an order of magnitude quieter than the image, and a label layer
+ * that competed with the picture would be the HUD this composition exists to replace. What
+ * makes a label findable is that it is *there*, not that it is loud.
+ */
+.domain-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  /*
+   * The container never takes an event; the labels do. This is what lets a drag that starts
+   * on top of a region still reach the canvas — see the note above.
+   */
+  pointer-events: none;
+  /*
+   * The labels are positioned by transform from a zero origin, so the container must not
+   * introduce a scroll offset of its own.
+   */
+  overflow: visible;
+}
+
+.graph-node-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /*
+   * Centred on the projected anchor horizontally and *below* it vertically, so the label sits
+   * under the place it names rather than over it. A region's anchor is a point above its
+   * centre; putting the text on top of it would cover the thing being labelled.
+   */
+  transform-origin: 50% 0;
+  margin-left: -0.5em;
+  padding: 0.1rem 0.4rem;
+  pointer-events: auto;
+  /*
+   * Promoted for the same reason the scroll type is: the transform is written at frame rate.
+   */
+  will-change: transform, opacity;
+  /*
+   * The fade is fast, because the *presence* value already carries the easing — a second slow
+   * transition on top of a per-frame value would lag the projection by a visible margin and
+   * the label would trail its region as the camera moves.
+   */
+  transition: color 140ms linear;
+}
+
+.graph-node-label__name {
+  color: var(--system-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  /*
+   * Sentence case, no uppercase, no wide tracking. The brief names "uppercase plus wide
+   * tracking technical labels" as one of the things to remove, and it is a specific removal
+   * rather than a taste: tracked capitals read as a readout, and a readout is what this layer
+   * is not.
+   */
+  text-transform: none;
+  white-space: nowrap;
+  /*
+   * A shadow rather than an outline or a plate. The labels sit on a picture whose value
+   * beneath them changes from near-black to bone, so a single text colour is either illegible
+   * over the river or too loud over the dark. The shadow does the separating without drawing
+   * a box.
+   */
+  text-shadow: 0 1px 3px rgba(4, 6, 12, 0.9), 0 0 12px rgba(4, 6, 12, 0.7);
+}
+
+/*
+ * The two states. Hover raises the label toward the ink colour and focus takes it to bone —
+ * which is the same rationing the composition uses for the water, so the layer's emphasis and
+ * the frame's emphasis are the same scale rather than two.
+ */
+.graph-node-label.is-hovered .graph-node-label__name {
+  color: var(--system-ready);
+}
+
+.graph-node-label.is-focused .graph-node-label__name {
+  color: var(--system-ink);
+  font-weight: 500;
+}
+
+/*
+ * Reduced motion: no transition at all. The value still moves with the camera — it is a
+ * projection, not an animation — but nothing eases toward it.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .graph-node-label {
     transition: none;
   }
 }

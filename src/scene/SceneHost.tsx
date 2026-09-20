@@ -21,10 +21,16 @@ import { GRAPH_MANIFEST } from '../graph/graphManifest';
 import { deriveGraphProminence } from '../graph/layout';
 import type { QualityProfile, RendererBackend } from '../renderer/types';
 import { createCameraController, sequenceKey } from './camera/cameraController';
+import { heroVista, resolveScrollPose } from './camera/heroShot';
 import { createFieldUniforms } from './field/fieldUniforms';
 import { createSkyBackground, installSkyBackground } from './materials/skyBackground';
 import { deriveFieldState } from './field/deriveFieldState';
 import { createFlowField } from './watershed/flowField';
+import { createInkDensity } from './ink/inkDensity';
+import { createInkField, INK_QUALITY, type InkField } from './ink/inkField';
+import { meanderCourse } from './ink/riverCourse';
+import { projectDomainLabels, type DomainLabelEntry } from './domains/domainLabels';
+import { deriveScrollChoreography } from './scroll/scrollChoreography';
 import { BasinView } from './views/BasinView';
 import { RiverView } from './views/RiverView';
 import { TerrainView } from './views/TerrainView';
@@ -62,7 +68,14 @@ export type SceneHostProps = {
   readonly reducedMotion?: boolean;
   readonly onTelemetry?: (snapshot: RendererTelemetrySnapshot) => void;
   readonly onQualityChange?: (profile: QualityProfile) => void;
+  /**
+   * Publishes the five regions' screen positions once a frame.
+   *
+   * A callback rather than a DOM write, because this module has no legitimate route to
+   * the document — see the note on the label layer for why the two are split.
+   */
   readonly onCommandBusReady?: (bus: CommandBus | null) => void;
+  readonly onDomainLabels?: (entries: readonly DomainLabelEntry[]) => void;
 };
 
 /** Telemetry is a readout, not a per-frame stream. */
@@ -101,6 +114,204 @@ const REDUCED_MOTION_RATE = 24;
  */
 const FLOW_RATE = 0.018;
 
+/**
+ * How high the veil floats above the ground, in world units.
+ *
+ * High enough to parallax against the ground over the distances the scroll
+ * travels, low enough that it is never read as a ceiling. At ninety-six it is about
+ * three channel-widths above the water — which, at the resting eye height, is a
+ * couple of degrees of frame: enough that the two sheets separate when the camera
+ * moves and not enough that the veil ever occludes the river.
+ */
+/*
+ * How far a river's corridor reaches from its spine, as a multiple of channel width.
+ *
+ * Hoisted to one constant because two meshes now depend on it agreeing with itself: the
+ * corridor uses it to decide what it covers, and the basin uses it to decide what the
+ * corridor *already* covers and must not be drawn over. Two copies of this number would
+ * be a strip of ground between them that neither mesh draws, or one that both do — and
+ * both means two coincident surfaces, which is the z-fighting failure exactly.
+ */
+const CORRIDOR_REACH = 22;
+
+const VEIL_HEIGHT = 96;
+
+/**
+ * How much of the veil each tier carries.
+ *
+ * A *presence*, not a brightness, and the difference is the point: MEDIUM and SAFE
+ * have no veil at all rather than a dimmer one, because a translucent sheet's cost
+ * is fill rate and sorting rather than its opacity, and because a tier that keeps a
+ * faint veil would spend that cost to show a wash nobody can see. What the tiers
+ * keep without exception is the ground, the drag and the value hierarchy — which is
+ * where the brief draws the line between an art-directed simplification and a
+ * dimmer copy of the same frame.
+ */
+const VEIL_PRESENCE: Readonly<Record<QualityProfile, number>> = {
+  ultra: 0.9,
+  high: 0.8,
+  medium: 0,
+  safe: 0,
+};
+
+/**
+ * Turns the pointer into a disturbance in the field.
+ *
+ * The pointer is a screen position and the field is a world one, so the two are bridged
+ * by a ray against the ground plane. The plane is `y = 0` rather than the displaced
+ * surface, and that is deliberate: the surface moves every frame — the drag itself moves
+ * it — so raycasting against it would make the brush's own position depend on the brush's
+ * last result, which is a feedback loop that reads as the disturbance sliding away from
+ * the cursor.
+ *
+ * The direction is the pointer's *travel* since the previous frame, not its offset from
+ * the centre of the screen. That is the whole difference between a drag that pushes water
+ * and a hover that lights it, and the field's imprint is shaped along this vector: a
+ * pointer that moves fast leaves a deep narrow crescent, one that moves slowly leaves a
+ * broad shallow one.
+ */
+function updateBrush(
+  raycaster: THREE.Raycaster,
+  pointer: THREE.Vector2,
+  camera: THREE.Camera,
+  ink: InkField,
+  drag: DragState,
+  brushRadius: number,
+): void {
+  if (!drag.down) {
+    // Released, or never pressed. `null` starts the field's own release, which decays
+    // over about two and a half seconds and returns the river to the state the
+    // descriptor authored — the brief's "returns to idle after a few seconds" implemented
+    // as a property of the system rather than as a timer somebody has to remember to run.
+    ink.setBrush(null);
+    drag.hasPrevious = false;
+    return;
+  }
+
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.ray.intersectPlane(GROUND_PLANE, scratchGround);
+  if (hit === null) {
+    // The pointer is above the horizon and the ray never meets the ground. Releasing is
+    // the honest response: the alternative is to hold the last position, which makes the
+    // brush sit still and burn a hole while the cursor is somewhere else entirely.
+    ink.setBrush(null);
+    drag.hasPrevious = false;
+    return;
+  }
+
+  // Once the ray has met the plane it has set `scratchGround`, and `hit` is the same
+  // object — so the read is from one place rather than two that could disagree.
+  const worldX = scratchGround.x;
+  const worldZ = scratchGround.z;
+
+  if (!drag.hasPrevious) {
+    drag.previousX = worldX;
+    drag.previousZ = worldZ;
+    drag.hasPrevious = true;
+    // A press with no travel yet is still an event, and the field should answer it. A
+    // zero-length direction would be normalised to nothing by the field, which falls back
+    // to `+X` — so the very first frame of a drag pushes along the world's X axis, which
+    // is wrong but invisible, because that frame's imprint is a single dot at the cursor.
+    ink.setBrush({ x: worldX, z: worldZ, dirX: 1, dirZ: 0, speed: 0.35 });
+    return;
+  }
+
+  const deltaX = worldX - drag.previousX;
+  const deltaZ = worldZ - drag.previousZ;
+  const travel = Math.hypot(deltaX, deltaZ);
+
+  drag.previousX = worldX;
+  drag.previousZ = worldZ;
+
+  if (travel < 1e-4) {
+    // The pointer is down and still. The field keeps the last imprint decaying rather
+    // than being re-struck, so a stationary press is a mark that fades rather than a
+    // hole that deepens.
+    ink.setBrush(null);
+    return;
+  }
+
+  // Speed is travel *per frame* normalised against a fraction of the brush's own radius,
+  // so the response is a property of the gesture relative to the size of the mark it
+  // makes rather than of the frame rate.
+  const speed = Math.min(1, travel / Math.max(1, brushRadius * 0.22));
+  ink.setBrush({ x: worldX, z: worldZ, dirX: deltaX, dirZ: deltaZ, speed });
+}
+
+/** What the drag has to remember between frames. A ref's contents, never React state. */
+type DragState = {
+  down: boolean;
+  hasPrevious: boolean;
+  previousX: number;
+  previousZ: number;
+};
+
+/**
+ * The ground plane the pointer is projected onto, and the scratch vector that receives
+ * the hit. Both are module-level so the frame loop allocates nothing — a `Vector3` per
+ * frame is a small thing that becomes a large thing once a collector notices it.
+ */
+const GROUND_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+/** Reused by the label projection, for the reason every other scratch vector is. */
+const labelScratch = new THREE.Vector3();
+const scratchGround = new THREE.Vector3();
+
+/**
+ * How far down the scroll story the visitor is, `0`..`1`.
+ *
+ * Read from the document rather than tracked with a listener, and read once per frame from
+ * inside the frame loop. A listener would need a handler, a ref to write into, and a decision
+ * about passive registration; reading two numbers that the browser already maintains costs
+ * nothing and cannot drift out of sync with the actual scroll position. The one thing a
+ * listener would buy is not asking 60 times a second, and two property reads are not worth
+ * an event system.
+ *
+ * A document with no scroll range returns zero rather than dividing by it — which is a real
+ * case, not a defensive one: a viewport taller than the story would otherwise produce a NaN
+ * that reaches the camera and blanks the frame.
+ */
+function readScrollProgress(): number {
+  if (typeof window === 'undefined') return 0;
+  const root = document.documentElement;
+  const body = document.body;
+  const scrollHeight = Math.max(root.scrollHeight, body ? body.scrollHeight : 0);
+  const maxScroll = scrollHeight - window.innerHeight;
+  if (maxScroll <= 0) return 0;
+  return Math.min(1, Math.max(0, window.scrollY / maxScroll));
+}
+
+/**
+ * The last values written to the document, so a frame that changed nothing writes nothing.
+ *
+ * A custom property write invalidates style for the whole subtree that reads it, so writing
+ * one every frame is a per-frame style recalculation for a value that usually has not moved.
+ * The threshold is below one part in five hundred, which is finer than the eye resolves on a
+ * fade and coarse enough that a resting page writes nothing at all.
+ */
+const lastScrollStyle = { opacity: Number.NaN, progress: Number.NaN };
+
+/**
+ * Publishes the story to the DOM.
+ *
+ * The type's exit is done in CSS from one custom property rather than by animating elements
+ * from JavaScript, because the brief asks for the text to leave through opacity, a slight
+ * displacement and a mask — all of which are style, and none of which should be a per-frame
+ * write to several elements' inline styles.
+ */
+function writeScrollStyle(choreography: ReturnType<typeof deriveScrollChoreography>): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  if (!(Math.abs(choreography.textOpacity - lastScrollStyle.opacity) <= 0.002)) {
+    lastScrollStyle.opacity = choreography.textOpacity;
+    root.style.setProperty('--scroll-text-opacity', choreography.textOpacity.toFixed(3));
+  }
+  if (!(Math.abs(choreography.progress - lastScrollStyle.progress) <= 0.002)) {
+    lastScrollStyle.progress = choreography.progress;
+    root.style.setProperty('--scroll-progress', choreography.progress.toFixed(3));
+    root.dataset.scrollStage = choreography.stage;
+  }
+}
+
 export function SceneHost({
   quality,
   backend,
@@ -108,6 +319,7 @@ export function SceneHost({
   onTelemetry,
   onQualityChange,
   onCommandBusReady,
+  onDomainLabels,
 }: SceneHostProps) {
   const settings = useMemo(() => getQualityProfile(quality), [quality]);
   const graphProminence = useMemo(() => deriveGraphProminence(GRAPH_MANIFEST), []);
@@ -140,12 +352,20 @@ export function SceneHost({
    * would be a second answer to a question the descriptor already answers, and the
    * cost of the two disagreeing is a grid that spends its density on ground
    * nobody looks at.
+   *
+   * **No longer read by anything, and kept named rather than deleted.** The ink
+   * composition grades its corridor on the river's own arc length and its camera on
+   * the river's own spine, so neither needs a Z handed to it. What is left is the
+   * descriptor's clearance promise, which is still true and still asserted by
+   * `shots.test.ts`; deleting the read would not delete the promise, and a future
+   * consumer that re-derives it from the corridor would be re-deriving it wrongly.
    */
   const attentionZ = useMemo(() => {
     const corridor = descriptor.cameraCorridors[0];
     if (corridor === undefined) return 0;
     return (corridor.from[2] + corridor.to[2]) / 2;
   }, [descriptor]);
+  void attentionZ;
 
   /**
    * The key light, as one constant for the whole scene.
@@ -155,11 +375,15 @@ export function SceneHost({
    * scene has, so a shot whose `lightDirection` disagreed with the bake would be a
    * shot lit from two directions at once. A `Vector3` readonly tuple, which is
    * what `TerrainGeometryOptions` asks for.
+   *
+   * The ink material takes the same direction as two literals inside its own shading
+   * term rather than through here, so this is currently only the shot system's copy.
    */
   const keyLight = useMemo<readonly [number, number, number]>(
     () => [KEY_LIGHT[0], KEY_LIGHT[1], KEY_LIGHT[2]],
     [],
   );
+  void keyLight;
 
   useEffect(() => {
     uniforms.setQuality(settings.terrainDetail);
@@ -216,6 +440,99 @@ export function SceneHost({
   );
 
   useEffect(() => () => flow.dispose(), [flow]);
+
+  /*
+   * The ink field: the composition's whole subject.
+   *
+   * Built from the descriptor, so the river the visitor sees is the river the
+   * descriptor authored — the same spine the terrain's channels and the camera's own
+   * travel are derived from. The bake is a CPU sweep over eight rivers into two
+   * float textures, and it runs once per descriptor, which is once per load.
+   *
+   * The bake and the field are separate memos because they answer to different
+   * dependencies: the bake is a property of the *world*, and the simulation's
+   * resolution is a property of the *tier*. Folding them together would re-bake the
+   * world on every quality change — close to a second of frozen frame for no visible
+   * gain.
+   */
+  /**
+   * The courses the ink system draws.
+   *
+   * Computed once here and handed to the bake, the corridor mesh and the hero framing,
+   * because all three have to run the same curve. `meanderCourse` adds the river's
+   * curvature to the descriptor's authoring line — the descriptor's own spines are
+   * near-straight, seven points each, which is right for a height field and useless for
+   * a composition whose first named reference quality is river curvature. See
+   * `riverCourse` for what that means and what it deliberately does not change.
+   *
+   * The dependency list is the whole descriptor rather than `descriptor.rivers`, because
+   * a descriptor is rebuilt as a unit by `createWatershedDescriptor` and its `rivers`
+   * array has no identity of its own to key on.
+   */
+  const courses = useMemo(
+    () =>
+      descriptor.rivers.map((river) => ({
+        id: river.id,
+        spine: meanderCourse({ spine: river.spine, width: river.width }, WORLD_SEED),
+        width: river.width,
+        flowRate: river.flowRate,
+        feeds: river.feeds,
+      })),
+    [descriptor],
+  );
+
+  /*
+   * How far the pointer's disturbance reaches, in world units.
+   *
+   * Hoisted out of the field's construction because the frame loop needs it too: the
+   * brush's own strength is normalised against this radius, so the gesture's response is a
+   * property of the mark's size relative to the river rather than a constant that happens
+   * to work at one world scale. Tied to the authored river's width instead of written down
+   * as a literal, because a literal stops being true the first time the descriptor's scale
+   * changes — which this world has already done once.
+   */
+  const brushRadius = useMemo(
+    () => Math.max(24, (descriptor.rivers[0]?.width ?? 32) * 1.4),
+    [descriptor],
+  );
+
+  const inkDensity = useMemo(
+    () =>
+      createInkDensity({
+        rivers: courses,
+        domains: descriptor.domains.map((domain) => ({
+          centre: domain.centre,
+          radius: domain.radius,
+          behaviour: domain.behaviour,
+          terrain: domain.terrain,
+        })),
+        deposits: descriptor.deposits,
+        basin: { centre: descriptor.basin.centre, radius: descriptor.basin.radius },
+        extent: descriptor.field.extent,
+        // The bake's resolution, scaled by detail, and bounded well below the
+        // simulation's: it carries the world's low-frequency structure, whose finest
+        // feature is tens of world units, so texels finer than the simulation's would
+        // be storing detail the advection is about to blur away.
+        resolution: Math.round(384 + 256 * settings.terrainDetail),
+        seed: WORLD_SEED,
+      }),
+    [descriptor, courses, settings.terrainDetail],
+  );
+
+  const ink: InkField = useMemo(
+    () =>
+      createInkField({
+        density: inkDensity,
+        quality: INK_QUALITY[quality],
+        // See `brushRadius` above: the reach is a property of the authored river rather
+        // than a literal here, so it rescales with the world instead of going stale.
+        // changed — which this world has already done once.
+        brushRadius,
+      }),
+    [inkDensity, quality, brushRadius],
+  );
+
+  useEffect(() => () => ink.dispose(), [ink]);
 
   const cameraController = useMemo(
     () => createCameraController({ reducedMotion }),
@@ -280,10 +597,29 @@ export function SceneHost({
    * handful of pure functions over a descriptor that has not changed.
    */
   const aspect = size.width / Math.max(1, size.height);
-  const shots = useMemo(
-    () => planShots(descriptor, aspect, activeDomainId ?? undefined),
-    [descriptor, aspect, activeDomainId],
-  );
+  const shots = useMemo(() => {
+    const planned = planShots(descriptor, aspect, activeDomainId ?? undefined);
+    /*
+     * The resting shot is re-framed for the ink composition.
+     *
+     * `shots.ts`'s `idleVista` stands the camera on the ground and looks at a
+     * horizon, which is the framing of a *landscape* — and this composition has no
+     * horizon. It is replaced here rather than rewritten there because the shot
+     * table's own tests assert a two-sided contract about a world that is still
+     * present, and re-pointing the shared function at a different framing would have
+     * meant rewriting assertions whose subject had not changed, which is how a test
+     * suite stops being evidence.
+     *
+     * Everything else in the table is untouched, so hover, focus, arrival and escape
+     * keep the choreography they were authored with while the resting frame is the
+     * one this stage is composed around.
+     */
+    return {
+      ...planned,
+      idleVista: heroVista(descriptor, aspect, courses),
+      hoverReveal: heroVista(descriptor, aspect, courses, { lift: 1 }),
+    };
+  }, [descriptor, aspect, activeDomainId, courses]);
 
   /**
    * Which shot the camera is in, and the last sequence asked for.
@@ -345,6 +681,40 @@ export function SceneHost({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  /**
+   * Whether a button is down, and where the pointer was last frame.
+   *
+   * A ref rather than state, and the listener set is deliberately on the canvas's own
+   * element for the press and on `window` for the release: a pointer that leaves the
+   * canvas while held still has to end its drag, and a `pointerup` that happened outside
+   * the element never arrives at the element.
+   */
+  const dragRef = useRef<DragState>({
+    down: false,
+    hasPrevious: false,
+    previousX: 0,
+    previousZ: 0,
+  });
+
+  useEffect(() => {
+    const element = gl.domElement;
+    const handleDown = () => {
+      dragRef.current.down = true;
+      dragRef.current.hasPrevious = false;
+    };
+    const handleUp = () => {
+      dragRef.current.down = false;
+    };
+    element.addEventListener('pointerdown', handleDown);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+    return () => {
+      element.removeEventListener('pointerdown', handleDown);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+    };
+  }, [gl]);
+
   const fieldState = useMemo(
     () =>
       deriveFieldState({
@@ -385,7 +755,9 @@ export function SceneHost({
     // The flow's clock is the one thing that never stops. Everything else can
     // hold still and the landscape is still a landscape; water that holds still
     // is a photograph.
-    eased.flow = (eased.flow + safeDelta * FLOW_RATE) % 1;
+    if (!reducedMotion) {
+      eased.flow = (eased.flow + safeDelta * FLOW_RATE) % 1;
+    }
 
     uniforms.update(
       {
@@ -395,7 +767,10 @@ export function SceneHost({
       },
       eased,
       reducedMotion ? 0 : state.clock.elapsedTime,
-      state.clock.elapsedTime,
+      // The flow's own elapsed, and this is the argument that matters for motion: it is
+      // what the bedding's travel and the granule noise read. Frozen with everything else,
+      // because a frame that advances its flow phase is a frame that changes.
+      reducedMotion ? 0 : state.clock.elapsedTime,
     );
 
     // The shot. Which one it is follows from the interaction and from where the
@@ -427,6 +802,29 @@ export function SceneHost({
       });
     }
 
+    /*
+     * The scroll story, once per frame.
+     *
+     * Everything here is a function of one number. The choreography decides the act and the
+     * layer weights; the weights go to the shared uniform block, where the material reads
+     * them; the pose goes to the camera controller, which blends it and remains the only
+     * thing that writes a camera. Nothing in this block touches the camera directly, and that
+     * is the boundary the brief draws between an input source and the camera's owner.
+     */
+    const scrollProgress = readScrollProgress();
+    const choreography = deriveScrollChoreography(scrollProgress);
+    uniforms.setScrollLayers(
+      choreography.layers.pigment,
+      choreography.layers.bedding,
+      choreography.layers.sharpness,
+      choreography.layers.granules,
+    );
+    cameraController.setScrollTrack(
+      resolveScrollPose(descriptor, aspect, courses, choreography.progress),
+      choreography.cameraAuthority,
+    );
+    writeScrollStyle(choreography);
+
     cameraController.setVisualState(
       eased.focus > 0.5 ? 'focusing' : eased.hover > 0.35 ? 'hover_response' : 'idle',
     );
@@ -443,6 +841,65 @@ export function SceneHost({
       state.camera.updateProjectionMatrix();
     }
 
+    /*
+     * Advance the ink field, before anything is drawn.
+     *
+     * It has to run here rather than in an effect or a `useMemo`, and it has to run
+     * *before* R3F's own render — the field's advection is a set of fullscreen passes
+     * into its own render targets, and the frame that follows reads the result. R3F
+     * renders after every priority-zero `useFrame` callback has returned, so this is
+     * the last moment at which the field can be updated and still be the one the
+     * frame samples.
+     *
+     * The renderer is cast to the field's own narrow interface rather than the field
+     * being typed against `WebGPURenderer`: the field needs `setRenderTarget` and
+     * `render` and nothing else, and typing it against the concrete class would make
+     * it untestable without a GPU and would tie a simulation to a renderer version.
+     */
+    /*
+     * The pointer, before the field advances.
+     *
+     * Order matters and is not incidental: the simulation step reads the brush, so writing
+     * it afterwards would apply every gesture one frame late. Under reduced motion the
+     * drag still works — it is direct manipulation, not ambient movement, and taking it
+     * away would remove the page's only form of input rather than quieten it — but the
+     * field's own attack and release rates are what a visitor feels, and those are
+     * unchanged. What reduced motion stops is everything the visitor did *not* ask for.
+     */
+    updateBrush(
+      state.raycaster,
+      state.pointer,
+      state.camera,
+      ink,
+      dragRef.current,
+      brushRadius,
+    );
+
+    /*
+     * A zero delta under reduced motion, which the field reads as "hold". The preference
+     * is therefore honoured where the composition's motion actually comes from, and the two
+     * clocks that drive it are frozen with it.
+     */
+    ink.step(
+      gl as unknown as Parameters<InkField['step']>[0],
+      reducedMotion ? 0 : safeDelta,
+      reducedMotion ? 0 : state.clock.elapsedTime,
+    );
+
+    if (onDomainLabels !== undefined) {
+      onDomainLabels(
+        projectDomainLabels({
+          descriptor,
+          camera: state.camera,
+          width: size.width,
+          height: size.height,
+          hoveredDomainId: graphInteraction.hoveredNodeId as DomainId | null,
+          focusedDomainId: graphInteraction.focusedNodeId as DomainId | null,
+          scratch: labelScratch,
+        }),
+      );
+    }
+    
     if (onTelemetry === undefined) return;
     telemetryClockRef.current.elapsed += safeDelta;
     if (telemetryClockRef.current.elapsed - telemetryClockRef.current.last < TELEMETRY_INTERVAL) {
@@ -503,9 +960,9 @@ export function SceneHost({
       <TerrainView
         descriptor={descriptor}
         uniforms={uniforms}
-        flow={flow}
-        attentionZ={attentionZ}
-        keyLight={keyLight}
+        ink={ink}
+        height={VEIL_HEIGHT}
+        presence={VEIL_PRESENCE[quality]}
       />
       {/*
         The water, laid into the trough the ground above has just cut. Mounted
@@ -514,7 +971,14 @@ export function SceneHost({
         terrain would build a surface against a ground that does not exist yet —
         which is what the previous composition did, and why its rivers floated.
       */}
-      <RiverView descriptor={descriptor} uniforms={uniforms} flow={flow} />
+      <RiverView
+        descriptor={descriptor}
+        uniforms={uniforms}
+        ink={ink}
+        courses={courses}
+        reachMultiple={CORRIDOR_REACH}
+        detail={settings.terrainDetail}
+      />
       {/*
         The Convergence Basin's levels, mounted last and deliberately so. They are
         the only transparent surfaces in the frame that sit *inside* the terrain
@@ -522,7 +986,14 @@ export function SceneHost({
         set into and the water that arrives at them — a sheet drawn before the
         river would have the river composited behind the level it is filling.
       */}
-      <BasinView descriptor={descriptor} uniforms={uniforms} />
+      <BasinView
+        descriptor={descriptor}
+        uniforms={uniforms}
+        ink={ink}
+        courses={courses}
+        reachMultiple={CORRIDOR_REACH}
+        detail={settings.terrainDetail}
+      />
     </>
   );
 }

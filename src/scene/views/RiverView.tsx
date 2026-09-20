@@ -3,69 +3,117 @@
 import { useEffect, useMemo } from 'react';
 import { BufferAttribute, BufferGeometry } from 'three';
 
-import { createRiverMaterial } from '../materials/riverMaterial';
-import { buildRiverGeometry } from '../watershed/riverGeometry';
-import type { FlowField } from '../watershed/flowField';
 import type { FieldUniforms } from '../field/fieldUniforms';
+import type { InkField } from '../ink/inkField';
+import { buildInkCorridor } from '../ink/inkSurface';
+import { createInkMaterial } from '../ink/inkMaterial';
 import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
 
 /**
- * The Data River: every river in the world as one mesh.
+ * The hero: the world's ground, as one graded corridor per river.
  *
- * One draw call, and it is the composition's line of motion — the thing the eye
- * follows from the near foreground into the basin, which is the job the brief gives
- * the idle frame. It is built here rather than folded into `TerrainView` because it
- * is a different surface with a different material and a different blend state; the
- * two meshes share the descriptor, the uniforms and the flow texture, and nothing
- * else.
+ * One draw call, one material, one geometry. Everything the composition is made of is
+ * in this mesh — the meander, its cut banks, its point bars, the pigment that spreads
+ * off it and the black it decays into — because all of those are readings of one
+ * density field, and splitting them across meshes would be splitting one phenomenon
+ * into four draw calls that have to be kept in agreement by hand.
  *
- * **Why the geometry is not one grid.** See `riverGeometry`: a sheet over the whole
- * extent is a full-screen transparent pass that is almost entirely empty, and it
- * spends its resolution evenly on a feature whose whole character is lateral. The
- * ribbon is exactly as wide as the water and dense across the channel.
+ * **What replaced what.** This view used to mount a ribbon exactly as wide as the
+ * water, laid into a channel that `TerrainView` had cut. The brief names that
+ * construction twice in its forbidden list — "clearly closed river banks" and "sharp
+ * transparent ribbons" — and the reason is structural rather than stylistic: a ribbon
+ * has an outline, and an outline is the one thing this composition cannot have. See
+ * `inkSurface` for what is here instead, and why its edges cannot be found.
  *
- * **What it costs.** At ULTRA the eight rivers are 2,200 vertices and 2,400
- * triangles — under two percent of the terrain mesh's 194,000 vertices for the
- * second-most-important surface in the frame. The cost that is real is fill rate:
- * the ribbon is transparent, so it blends, and it shades per pixel including a
- * fractal noise for the grain. That is why the geometry is a ribbon and not a
- * sheet, and why the grain is gated to the rivers fast enough to carry it.
+ * **Why there is no `normal` attribute.** The surface is displaced per-vertex by the
+ * density field and the material reads that field's own gradient in the fragment stage.
+ * A baked normal would be a statement about the *undisplaced* mesh, which the
+ * displacement immediately falsifies — so it would be an attribute that costs bandwidth
+ * and is wrong everywhere the field is doing anything.
  */
+
+export type RiverCourse = {
+  /**
+   * Readonly tuples, not `[number, number]`.
+   *
+   * `Vector2` from the terrain field is a readonly pair, and a mutable tuple type here
+   * would reject every spine in the project — the error is a compile-time one, which is
+   * the good case, but the temptation is to cast at the call site and lose the check
+   * that nothing downstream mutates a course out from under the mesh.
+   */
+  readonly spine: readonly (readonly [number, number])[];
+  readonly width: number;
+};
+
 export type RiverViewProps = {
   readonly descriptor: WatershedDescriptor;
   readonly uniforms: FieldUniforms;
-  /** The same field the ground erodes by. Shared, not rebuilt — see `TerrainView`. */
-  readonly flow: FlowField;
+  readonly ink: InkField;
+  /**
+   * The courses the corridor follows.
+   *
+   * Handed in rather than derived from `descriptor.rivers` here, because the bake, this
+   * mesh and the hero framing all have to run the *same* curve: `meanderCourse` offsets
+   * a spine laterally, and three consumers each computing it separately would be three
+   * chances to disagree about where the water is. The scene host owns the one call.
+   */
+  readonly courses: readonly RiverCourse[];
+  /** `0`..`1`. Scales the corridor's sample counts, never its extent. */
+  /** The corridor's reach, shared with the basin so the two partition the world. */
+  readonly reachMultiple: number;
+  readonly detail: number;
 };
 
-export function RiverView({ descriptor, uniforms, flow }: RiverViewProps) {
+export function RiverView({
+  descriptor,
+  uniforms,
+  ink,
+  courses,
+  reachMultiple,
+  detail,
+}: RiverViewProps) {
+  /*
+   * `ink` identity is the maintenance point, and it replaced a `generation` counter.
+   *
+   * A quality change now *reconstructs* the field rather than mutating it in place, so
+   * the object the memo depends on is a different object and this rebuilds for the
+   * ordinary reason. The counter was the first design and it was worse for a specific,
+   * checkable reason: a TSL graph captures the textures it was built against, so a field
+   * that swapped its targets in place left every consumer holding a graph that sampled a
+   * disposed one — a failure that renders as a field which has stopped moving rather
+   * than as an error. Making the field immutable per tier removes the possibility
+   * instead of documenting it.
+   */
   const geometry = useMemo(() => {
-    const built = buildRiverGeometry({
-      field: descriptor.field,
-      // The rivers' own bodies, matching what `TerrainView` hands the flow field.
-      // A ribbon wider than the field erodes would hang water over dry ground; a
-      // narrower one would cut the river off at a straight edge while the alpha was
-      // still high. Both are the same mistake from either side.
-      rivers: descriptor.rivers.map((river) => ({
-        spine: river.spine,
-        width: river.width,
-      })),
+    const built = buildInkCorridor({
+      courses,
+      extent: descriptor.field.extent,
+      alongStep: 7.5,
+      // Raised from 14. At fourteen the corridor's own edge landed inside the frame at
+      // the resting eye height, so a band of the picture was background rather than
+      // ground — visible in the first capture's luminance map as a large flat region the
+      // field never reached. The margin over the density field's own reach is what keeps
+      // the mesh boundary unfindable, and this is the number that buys it.
+      reachMultiple,
+      acrossCount: 56,
+      detail,
     });
 
     const result = new BufferGeometry();
     result.setAttribute('position', new BufferAttribute(built.positions, 3));
+    result.setAttribute('uv', new BufferAttribute(built.uvs, 2));
+    // `Uint32Array` indices have to be declared as such: a `Uint16Array`-typed index
+    // buffer at this vertex count truncates silently and the failure is a soup of
+    // triangles rather than an error. 32-bit indices are core in WebGL2 via
+    // `OES_element_index_uint`.
     result.setIndex(new BufferAttribute(built.indices, 1));
-    // One bounding sphere over every river. The mesh is a set of ribbons spread
-    // across the world, so the sphere is large and the mesh is never culled — which
-    // is correct, since where the camera can see a river is a question the shot
-    // system answers and a sphere around all of them cannot.
     result.computeBoundingSphere();
     return result;
-  }, [descriptor]);
+  }, [descriptor, courses, reachMultiple, detail]);
 
   const { material, dispose } = useMemo(
-    () => createRiverMaterial(uniforms, flow),
-    [uniforms, flow],
+    () => createInkMaterial(uniforms, ink, { gain: 1, hero: true }),
+    [uniforms, ink],
   );
 
   useEffect(

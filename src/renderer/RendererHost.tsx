@@ -27,6 +27,7 @@ import { SceneHost } from '../scene/SceneHost';
 import type { QualityProfile } from './types';
 import type { RendererTelemetrySnapshot } from '../telemetry/rendererTelemetry';
 import { RendererStatus } from '../ui/RendererStatus';
+import { DomainLabels, type DomainLabelHandle } from '../ui/DomainLabels';
 import { SystemMasthead } from '../ui/SystemMasthead';
 
 function isQualityProfile(value: unknown): value is QualityProfile {
@@ -53,7 +54,15 @@ export function RendererHost() {
   const coordinatorRef = useRef<ReturnType<typeof createBootCoordinator> | null>(
     null,
   );
-  const commandBusRef = useRef<CommandBus | null>(null);
+const commandBusRef = useRef<CommandBus | null>(null);
+/**
+ * The label layer's imperative handle.
+ *
+ * A ref holding an object with an `update` method rather than a ref to the layer's DOM,
+ * so the frame loop cannot reach into the overlay's structure. The scene publishes
+ * positions; only the layer knows what its nodes are called.
+ */
+const domainLabelRef = useRef<DomainLabelHandle | null>(null);
   const latestTelemetryRef = useRef<RendererTelemetrySnapshot | null>(null);
   const lastTelemetryLogRef = useRef(0);
   const [runtimeState, setRuntimeState] = useState(INITIAL_RUNTIME_STATE);
@@ -107,6 +116,9 @@ export function RendererHost() {
           backend={nextState.backend}
           reducedMotion={prefersReducedMotionRef.current}
           onTelemetry={handleTelemetry}
+          onDomainLabels={(entries) => {
+            domainLabelRef.current?.update(entries);
+          }}
           onCommandBusReady={(bus) => {
             commandBusRef.current = bus;
           }}
@@ -309,6 +321,12 @@ export function RendererHost() {
     <section className="renderer-host" aria-label="Graphics runtime">
       <canvas ref={canvasRef} className="renderer-host__canvas" aria-hidden="true" />
       <div className="renderer-host__vignette" aria-hidden="true" />
+      {/*
+        The region labels, between the canvas and the type: above the picture so they can be
+        read, below the masthead so a region passing under the product name does not fight it
+        for the same pixels.
+      */}
+      <DomainLabels handleRef={domainLabelRef} />
       <SystemMasthead />
       <RendererStatus state={runtimeState} />
       <BootExperience

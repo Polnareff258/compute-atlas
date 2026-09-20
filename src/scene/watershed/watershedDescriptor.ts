@@ -422,6 +422,30 @@ export const WATERSHED_PALETTE = Object.freeze({
   spectral: '#3f6bff',
   /** Compression inside the basin. Rationed: it appears once per frame at most. */
   compression: '#ffffff',
+
+  /*
+   * --- The sediment trio, added for the ink-density composition ---
+   *
+   * Three hues this palette did not have, and their absence was measurable rather
+   * than a matter of taste: the captured frames ran at a mean saturation of 0.71
+   * with a near-grey share of 0.04%, which is a picture built from one saturated
+   * blue family with no neutral material anywhere in it.
+   *
+   * The brief names bone white, grey violet and pale pink deposits, and the reason
+   * is what these do that a blue cannot. `bone` is the frame's only *neutral*, so it
+   * is the only value that reads as substance rather than as light — which is what
+   * makes a crest look like sediment instead of like a glow. `palePink` is the only
+   * warm hue, and warmth is what lets the eye find a point bar without being told
+   * where one is. `greyViolet` carries the wide, low-density wash so the soft areas
+   * are a colour rather than an absence.
+   *
+   * All three are rationed, and the rationing is the design: bone is spent on the
+   * thalweg and the bedding's lit faces, pink only on deposition, grey violet only
+   * on the low-density pigment.
+   */
+  bone: '#efe3d2',
+  greyViolet: '#6d6288',
+  palePink: '#d9a2ab',
 });
 
 // --- Per-behaviour terrain ---------------------------------------------------

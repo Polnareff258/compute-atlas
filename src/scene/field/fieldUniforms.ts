@@ -1,4 +1,4 @@
-import { Color, Vector3 } from 'three';
+import { Color, Vector3, Vector4 } from 'three';
 import { uniform } from 'three/tsl';
 
 import { WATERSHED_PALETTE, type DomainPalette } from '../watershed/watershedDescriptor';
@@ -104,6 +104,33 @@ export function createFieldUniforms() {
   const uPeak = uniform(new Color(WATERSHED_PALETTE.compression));
   const uAnomaly = uniform(new Color(WATERSHED_PALETTE.cyan));
 
+  /*
+   * The sediment trio and the floor.
+   *
+   * `uInk` is the composition's bottom value: the whole 70% layer climbs out of it
+   * and the frame's negative space *is* it, so it is the single number the value
+   * hierarchy stands on. The other three are the hues the ink-density material
+   * spends, and they live here rather than as constants inside one material for the
+   * same reason every other colour does — the scene has exactly one place where
+   * "what is happening" becomes numbers, and a second place is how two systems come
+   * to disagree about what the world looks like.
+   */
+  const uInk = uniform(new Color(WATERSHED_PALETTE.ink));
+  const uBone = uniform(new Color(WATERSHED_PALETTE.bone));
+  const uGreyViolet = uniform(new Color(WATERSHED_PALETTE.greyViolet));
+  const uPalePink = uniform(new Color(WATERSHED_PALETTE.palePink));
+  /*
+   * `uMidnight` and `uCobalt` are the same two palette entries `uMass` and `uRim`
+   * already carry. They are declared again under their own names rather than reusing
+   * those, because `uMass` and `uRim` are named for the *rift* composition's roles —
+   * "the mass tone" and "the rim tone" — and a material that read `uMass` for a
+   * pigment wash would be a material whose numbers could not be understood without
+   * reading a stage that no longer exists. Both names resolve to one colour, and the
+   * palette is a single frozen record, so they cannot drift.
+   */
+  const uMidnight = uniform(new Color(WATERSHED_PALETTE.midnight));
+  const uCobalt = uniform(new Color(WATERSHED_PALETTE.cobalt));
+
   /** The active region's own three colours, or the global trio when none is. */
   const uRegionGround = uniform(new Color(WATERSHED_PALETTE.violet));
   const uRegionAmbient = uniform(new Color(WATERSHED_PALETTE.petroleum));
@@ -151,6 +178,20 @@ export function createFieldUniforms() {
     /** Constraint C5's budget: 0..1, and only one region may hold it. */
     uHighlight: uniform(0),
 
+    /**
+     * The scroll story's four layer weights: pigment, bedding, sharpness, granules.
+     *
+     * One `vec4` rather than four floats, because they are never read separately — the
+     * material applies all four to the same term stack in the same expression, and four
+     * names for one gesture is four places for a caller to set three of them.
+     *
+     * At rest they are the hero act's own weights, so a page that is never scrolled renders
+     * the resting composition rather than a frame with a story's weights set to something
+     * arbitrary. The scene host overwrites them every frame; these are the values that hold
+     * before it does.
+     */
+    uScrollLayers: uniform(new Vector4(0.85, 0.45, 1, 0)),
+
     uFlow,
     uSpectral,
     uDeep,
@@ -159,6 +200,13 @@ export function createFieldUniforms() {
     uHaze,
     uPeak,
     uAnomaly,
+
+    uInk,
+    uBone,
+    uGreyViolet,
+    uPalePink,
+    uMidnight,
+    uCobalt,
 
     uRegionGround,
     uRegionAmbient,
@@ -246,6 +294,22 @@ export function createFieldUniforms() {
     uAnomaly.value.set(RESULT_HUES[resolveResultHue(signal.operationResult)]);
   }
 
+  /**
+   * The scroll's layer weights, written once a frame.
+   *
+   * A setter rather than a direct field write, so the clamp lives in one place: a weight
+   * outside `0`..`1` would scale a term past its authored range, and the failure is not a
+   * clamp but a frame that is brighter than any state the art direction was tuned against.
+   */
+  function setScrollLayers(pigment: number, bedding: number, sharpness: number, granules: number): void {
+    uniforms.uScrollLayers.value.set(
+      clamp01(pigment),
+      clamp01(bedding),
+      clamp01(sharpness),
+      clamp01(granules),
+    );
+  }
+
   function setQuality(value: number): void {
     uniforms.uQuality.value = Number.isFinite(value) ? Math.min(1, Math.max(0.1, value)) : 1;
   }
@@ -292,7 +356,7 @@ export function createFieldUniforms() {
     // call sites and every other scene handle read the same way.
   }
 
-  return { uniforms, update, setQuality, setBasin, setRegion, dispose };
+  return { uniforms, update, setQuality, setBasin, setRegion, setScrollLayers, dispose };
 }
 
 function clamp01(value: number): number {

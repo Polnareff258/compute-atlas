@@ -329,6 +329,17 @@ export type ShotSequence = {
  * transitions still happen, but they are short, low-displacement and stop.
  */
 const REDUCED_MOTION_POINTER_DAMPING = 12;
+
+/**
+ * How fast the scroll's authority over the camera rises and falls, per second.
+ *
+ * Fast enough that the camera answers the wheel within a couple of frames — a scroll that
+ * lags its own input feels broken — and slow enough that the transfer out of the resting
+ * shot is a settle. The same rate in both directions, because a scroll that took over
+ * quickly and let go slowly would be a camera that clung to the visitor at the bottom of
+ * the page.
+ */
+const SCROLL_AUTHORITY_DAMPING = 6.5;
 const REDUCED_MOTION_AMPLITUDE_SCALE = 0.42;
 
 export class CameraController {
@@ -349,6 +360,17 @@ export class CameraController {
   private key: string | null = null;
   private driftClock = 0;
   private visualState: CameraVisualState = 'dormant';
+  /**
+   * The scroll's pose and how much of it to believe, `0`..`1`.
+   *
+   * Held here rather than passed into `getResolvedPose` so the frame loop has one place to
+   * write each frame and the resolve has one place to read, which is the same shape the
+   * pointer already uses. `scrollAuthority` is damped toward its target rather than set, so
+   * a scroll that arrives in a single wheel event does not snatch the camera.
+   */
+  private scrollPose: PoseState | null = null;
+  private scrollAuthority = 0;
+  private scrollAuthorityTarget = 0;
 
   public constructor(options: CameraControllerOptions = {}) {
     this.reducedMotion = options.reducedMotion ?? false;
@@ -408,6 +430,19 @@ export class CameraController {
     this.visualState = state;
   }
 
+  /**
+   * Offers the scroll's pose, and how much authority it should have.
+   *
+   * `null` withdraws the scroll entirely, which is what the scene host passes when the page
+   * is at the top and again once the story has handed the frame back. The authority is
+   * damped rather than assigned, at a rate high enough to feel attached to the wheel and low
+   * enough that the transition out of the resting shot is a settle rather than a cut.
+   */
+  public setScrollTrack(pose: CameraPose | null, authority: number): void {
+    this.scrollPose = pose === null ? null : poseState(pose);
+    this.scrollAuthorityTarget = pose === null ? 0 : clamp(authority, 0, 1);
+  }
+
   /** True once the current move has landed and nothing is queued behind it. */
   public isSettled(): boolean {
     return this.elapsed >= this.duration && this.queued.length === 0;
@@ -420,9 +455,23 @@ export class CameraController {
 
   public update(deltaSeconds: number): void {
     const safeDelta = clamp(deltaSeconds, 0, 0.1);
-    this.driftClock += safeDelta;
+    // The idle wander is motion, and under the preference it stops rather than shrinking.
+    // The amplitude scale below still applies to the pointer's own response, which is
+    // input rather than drift and must keep working.
+    if (!this.reducedMotion) {
+      this.driftClock += safeDelta;
+    }
     this.pointerX = approach(this.pointerX, this.pointerTargetX, this.pointerDamping, safeDelta);
     this.pointerY = approach(this.pointerY, this.pointerTargetY, this.pointerDamping, safeDelta);
+
+    // The scroll's authority, damped. A rate rather than a duration because the scroll is
+    // continuous input: there is no moment at which the move "begins" to time from.
+    this.scrollAuthority = approach(
+      this.scrollAuthority,
+      this.scrollAuthorityTarget,
+      SCROLL_AUTHORITY_DAMPING,
+      safeDelta,
+    );
 
     this.elapsed = Math.min(this.duration, this.elapsed + safeDelta);
     const t = this.duration === 0 ? 1 : ease(this.easingName, this.elapsed / this.duration);
@@ -450,10 +499,40 @@ export class CameraController {
 
   /** The pose to draw, with the pointer and the drift applied on top of it. */
   public getResolvedPose(): ResolvedCameraPose {
+    /*
+     * The scroll, blended over the shot.
+     *
+     * The shot's own pose is `this.pose` and it keeps advancing underneath — nothing here
+     * writes to it — so when authority returns to zero the rig is exactly where the shot
+     * system would have put it. That is the property that makes the reveal's hand-off and a
+     * reverse scroll both work without special cases.
+     *
+     * The blend is on position, aim and field of view together, because they are one
+     * framing: interpolating two of the three produces a pose the scroll's own stations
+     * never asked for, which reads as the lens drifting away from the subject.
+     */
+    const authority = this.scrollPose === null ? 0 : this.scrollAuthority;
+    const blended: PoseState =
+      this.scrollPose === null || authority <= 0
+        ? this.pose
+        : {
+            position: [
+              lerp(this.pose.position[0], this.scrollPose.position[0], authority),
+              lerp(this.pose.position[1], this.scrollPose.position[1], authority),
+              lerp(this.pose.position[2], this.scrollPose.position[2], authority),
+            ],
+            lookTarget: [
+              lerp(this.pose.lookTarget[0], this.scrollPose.lookTarget[0], authority),
+              lerp(this.pose.lookTarget[1], this.scrollPose.lookTarget[1], authority),
+              lerp(this.pose.lookTarget[2], this.scrollPose.lookTarget[2], authority),
+            ],
+            fov: lerp(this.pose.fov, this.scrollPose.fov, authority),
+          };
+
     return deriveCameraPose({
-      position: this.pose.position,
-      lookTarget: this.pose.lookTarget,
-      fov: this.pose.fov,
+      position: blended.position,
+      lookTarget: blended.lookTarget,
+      fov: blended.fov,
       handheld: deriveHandheld({
         pointerX: this.pointerX,
         pointerY: this.pointerY,
