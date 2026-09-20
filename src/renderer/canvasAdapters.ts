@@ -69,20 +69,41 @@ export function createCanvasRendererAdapters(
     },
     webgl2: {
       initialize: async ({ quality }) => {
-        const { WebGLRenderer } = await import('three');
-        const renderer = new WebGLRenderer({
+        // The fallback runs the same renderer as the main path, in WebGL2 mode.
+        //
+        // It used to be a plain `WebGLRenderer`, and the two backends therefore
+        // ran two different material systems: node materials on WebGPU, stock
+        // `THREE.Material` on WebGL2. Every shader in the scene had to be
+        // authored twice, and the one time that was tried the two paths disagreed
+        // — the vertex-colour divergence recorded in `surfaceMaterial.ts`, which
+        // cost a stage to find and ended with the whole scene retreating to stock
+        // materials on both backends.
+        //
+        // The visual layer this stage adds cannot retreat to stock materials: the
+        // data-matter field, the membranes and the post chain are all authored
+        // shading. So the fallback is the same `WebGPURenderer` with
+        // `forceWebGL`, which gives one shader graph for both backends instead of
+        // two that drift. What WebGL2 still cannot do is compute and storage
+        // buffers; those are gated on the real backend rather than on this one.
+        const { WebGPURenderer } = await import('three/webgpu');
+        const renderer = new WebGPURenderer({
           alpha: true,
           antialias: true,
           canvas,
+          forceWebGL: true,
           powerPreference: 'high-performance',
         });
 
+        await renderer.init();
         configureRenderer(renderer, canvas, quality);
         rendererRef.current = renderer;
 
         return {
           backend: 'webgl2',
-          rendererName: 'Three.js WebGLRenderer',
+          // Named for what it is. The old string said "WebGLRenderer", which
+          // stopped being true the moment the node renderer took over the
+          // fallback, and a readout that is wrong is worse than a longer one.
+          rendererName: 'Three.js WebGPURenderer (WebGL2 backend)',
           adapterName: null,
           setQuality: (nextQuality) =>
             configureRenderer(renderer, canvas, nextQuality),
