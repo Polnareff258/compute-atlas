@@ -1756,6 +1756,81 @@ async function applyViewport(client, sessionId, size, options) {
     },
     sessionId,
   );
+
+  // Settle, and this is not politeness — it is the difference between a real
+  // measurement and a black frame.
+  //
+  // `setDeviceMetricsOverride` resizes the *screenshot*. The page re-lays-out
+  // afterwards, and the canvas follows one step further behind that: the renderer
+  // is sized from `canvas.clientWidth` inside a resize observer, so there are two
+  // asynchronous hops between the override and a canvas that fills it. Capture
+  // immediately and the screenshot is the requested size with the *previous*
+  // viewport's content in its top-left corner and black to the right and below —
+  // a 2560x1440 file holding a 1920x1080 frame.
+  //
+  // That failure is quiet in the worst way. It was measured as `lit 59.98%`, which
+  // looks like a composition with a lot of dark sky in it; only the black band
+  // along two edges says what it actually is. A run that asks for two sizes in one
+  // process hits it on every size after the first, because the first has a page
+  // load's worth of settling behind it and the rest do not.
+  //
+  // So wait for the thing that is actually wrong: the canvas, not the window.
+  //
+  // Unless there is no canvas, which is the case for the first call: the viewport
+  // is set once before the page is navigated to, and waiting for a canvas on
+  // `about:blank` is waiting forever. The load that follows the override lays the
+  // page out at the new size anyway, so there is nothing to settle at that point.
+  const hasCanvas = await evaluate(
+    client,
+    sessionId,
+    "document.querySelector('canvas') !== null",
+  );
+  if (hasCanvas !== true) return;
+
+  const deadline = Date.now() + 4000;
+  for (;;) {
+    const settled = await evaluate(
+      client,
+      sessionId,
+      `(() => {
+        const canvas = document.querySelector('canvas');
+        if (!canvas) return false;
+        if (window.innerWidth !== ${size.width} || window.innerHeight !== ${size.height}) {
+          return false;
+        }
+        return canvas.clientWidth === ${size.width} && canvas.clientHeight === ${size.height};
+      })()`,
+    );
+    if (settled === true) break;
+    if (Date.now() > deadline) {
+      const seen = await evaluate(
+        client,
+        sessionId,
+        `(() => {
+          const canvas = document.querySelector('canvas');
+          const host = canvas && canvas.parentElement;
+          return JSON.stringify({
+            window: [window.innerWidth, window.innerHeight],
+            canvas: canvas ? [canvas.clientWidth, canvas.clientHeight] : null,
+            host: host ? [host.clientWidth, host.clientHeight] : null,
+            style: canvas ? [canvas.style.width, canvas.style.height] : null,
+          });
+        })()`,
+      );
+      throw new Error(
+        `Viewport ${size.width}x${size.height} did not settle: the canvas never grew to fill it (${seen}).`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+
+  // Two more frames on top of the resize, because a canvas that has just been
+  // resized has been resized but not yet *drawn* at its new size.
+  await evaluate(
+    client,
+    sessionId,
+    'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))',
+  );
 }
 
 async function applyReducedMotion(client, sessionId, enabled) {

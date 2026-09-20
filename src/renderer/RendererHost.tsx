@@ -126,6 +126,61 @@ export function RendererHost() {
       );
     };
 
+    /**
+     * Keeps the drawing buffer the size of the element the canvas sits in.
+     *
+     * **Why this is not R3F's job here, though it is R3F's job in a normal app.**
+     * `configure()` measures the container exactly once — `computeInitialSize`, at
+     * the moment the root is configured — and the `ResizeObserver` that keeps that
+     * measurement current lives in the `<Canvas>` component, which this page does
+     * not use. R3F is driven imperatively here through `createRoot(canvas)`, so
+     * nobody observes anything: after a window resize the canvas keeps the pixel
+     * size it was born with and writes it back as an inline style.
+     *
+     * **What that looked like, because it is not a subtle failure.** The page was
+     * captured at 2560x1440 for the first time and came back with a 1920x1080
+     * picture in the corner of a 2560x1440 file: the viewport had grown, the
+     * container had grown, and the canvas had not. Measured from the page, the
+     * three numbers were `window: [2560,1440]`, `host: [2560,1440]`,
+     * `canvas: [1920,1080]`. A visitor who resizes their window gets the same
+     * thing — the landscape occupying the top-left of a black field — and the shot
+     * plan is calibrated against `useThree().size`, so the framing would be
+     * computed for a viewport that is not the one on screen.
+     *
+     * The store's own `setSize` is the right lever rather than `gl.setSize` directly:
+     * it updates `size` and `viewport` together, the render loop's own size check
+     * then resizes the renderer and rewrites the inline style, and `updateCamera`
+     * runs from the same place — so the aspect the shot plan reads and the aspect
+     * the projection matrix uses cannot drift apart.
+     */
+    let containerObserver: ResizeObserver | null = null;
+
+    const observeContainerSize = (): void => {
+      const host = canvas.parentElement;
+      if (host === null || typeof ResizeObserver === 'undefined') {
+        return;
+      }
+
+      containerObserver = new ResizeObserver(() => {
+        const store = sceneStore?.getState();
+        if (store === undefined) {
+          return;
+        }
+        // `floor`, and never zero: the store's size is what the shot plan divides
+        // by, and a one-pixel element during a collapse would otherwise reach it as
+        // a zero aspect.
+        const width = Math.max(1, Math.floor(host.clientWidth));
+        const height = Math.max(1, Math.floor(host.clientHeight));
+        if (store.size.width === width && store.size.height === height) {
+          return;
+        }
+        store.setSize(width, height, 0, 0);
+      });
+      // The container, not the canvas: the canvas's own style is written by this
+      // very mechanism, so observing it would be a loop.
+      containerObserver.observe(host);
+    };
+
     const coordinator = createBootCoordinator({
       runtime,
       onStateChange: setBootState,
@@ -180,6 +235,7 @@ export function RendererHost() {
         });
         renderScene(nextState);
         renderSceneRef.current = () => renderScene(runtime.getState());
+        observeContainerSize();
       },
     });
 
@@ -226,6 +282,8 @@ export function RendererHost() {
 
     return () => {
       disposed = true;
+      containerObserver?.disconnect();
+      containerObserver = null;
       coordinator.dispose();
       coordinatorRef.current = null;
       commandBusRef.current = null;
