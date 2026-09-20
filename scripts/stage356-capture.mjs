@@ -663,7 +663,15 @@ export function formatCaptureName({ prefix, backend, quality, sizeLabel, stage, 
  * write, and where. The plan therefore carries the file list, not just a count.
  */
 export function resolvePlan(options) {
-  const url = `${options.baseUrl}/?${new URLSearchParams({ boot: 'skip', telemetry: '1' }).toString()}`;
+  // Appended onto whatever query the base URL already carries, rather than as a fixed `?`
+  // pair. The fixed form silently produced a malformed query whenever the base URL had one of
+  // its own — `?debug=0/?boot=skip&telemetry=1` — so the extra parameters were absorbed into
+  // the value of the first and `boot=skip` was never applied. Every frame in the debug bisection
+  // was captured with the boot overlay over it. Those frames stayed comparable with each other,
+  // which is why it survived a whole set of captures, but not with anything captured earlier.
+  const url = new URL(options.baseUrl);
+  url.searchParams.set('boot', 'skip');
+  url.searchParams.set('telemetry', '1');
   const backendLabel = options.backend;
   const files = [];
   const scrollSteps = options.scrollSteps;
@@ -706,7 +714,7 @@ export function resolvePlan(options) {
     }
   }
 
-  return { url, sizes: options.sizes, scrollSteps, reverseSteps, files };
+  return { url: url.toString(), sizes: options.sizes, scrollSteps, reverseSteps, files };
 }
 
 // ---------------------------------------------------------------------------

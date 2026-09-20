@@ -521,7 +521,49 @@ export function createInkMaterial(
     .mul(0.86)
 .add(0.14);
 
-  material.colorNode = surface.mul(depthFade);
+  /*
+   * The diagnostic views.
+   *
+   * Two of these exist because the frame is bright and the cause has to be bisected rather
+   * than argued: `surface without emission` and `emission only`, against `final`, separate the
+   * shaded body of the material from what it emits. Two more separate the emission into its
+   * settle part and the rest, because the settle term is the strongest remaining suspect and
+   * it is used twice — once in the base colour and once in the emission.
+   */
+  const modeIs = (n: number) =>
+    u.uDebugMode.sub(float(n)).abs().lessThan(float(0.5)).select(float(1), float(0));
+
+  // The shaded surface with the emission removed, reconstructed rather than stored, so this
+  // view and the real one cannot drift apart: if the surface expression changes, this changes
+  // with it or fails to compile.
+  const surfaceNoEmission = coloured
+    .mul(lit)
+    .mul(float(1).sub(granuleTerm.mul(0.45)))
+    .mul(options.gain)
+    .add(u.uBone.mul(granuleTerm).mul(0.18));
+
+  const emissionNoSettle = pigmentGlow
+    .mul(ambient)
+    .mul(0.4)
+    .add(u.uBone.mul(sharpness.pow(1.35)));
+
+  const settleEmissionOnly = u.uPalePink
+    .mul(settleTerm.mul(1.15))
+    .mul(u.uActivity.mul(0.4).add(0.5));
+
+  let resolved = surface.mul(depthFade);
+  resolved = mix(resolved, vec3(body), modeIs(1));
+  resolved = mix(resolved, vec3(scour), modeIs(2));
+  resolved = mix(resolved, vec3(settle), modeIs(3));
+  resolved = mix(resolved, vec3(pressure), modeIs(4));
+  resolved = mix(resolved, coloured, modeIs(5));
+  resolved = mix(resolved, emission, modeIs(6));
+  resolved = mix(resolved, surfaceNoEmission, modeIs(7));
+  resolved = mix(resolved, settleEmissionOnly, modeIs(8));
+  resolved = mix(resolved, vec3(depthFade), modeIs(9));
+  resolved = mix(resolved, emissionNoSettle, modeIs(10));
+
+  material.colorNode = resolved;
 
   // --- Displacement -------------------------------------------------------------
   //

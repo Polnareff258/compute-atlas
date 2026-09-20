@@ -190,7 +190,20 @@ export function createFieldUniforms() {
      * arbitrary. The scene host overwrites them every frame; these are the values that hold
      * before it does.
      */
-    uScrollLayers: uniform(new Vector4(0.85, 0.45, 1, 0)),
+uScrollLayers: uniform(new Vector4(0.85, 0.45, 1, 0)),
+
+    /**
+     * Which diagnostic view the hero material draws, or `0` for the real frame.
+     *
+     * A developer diagnostic that stays in the code rather than being applied and reverted
+     * by hand each time a term is suspected. Four rounds of this work were spent editing one
+     * expression, re-capturing and measuring, and every measurement rejected the guess; the
+     * instrument is cheaper than the fifth guess.
+     *
+     * It costs one float in a uniform block that is already uploaded every frame, and the
+     * material's select chain is dead code on every real frame.
+     */
+    uDebugMode: uniform(0),
 
     uFlow,
     uSpectral,
@@ -310,6 +323,16 @@ export function createFieldUniforms() {
     );
   }
 
+  /**
+   * Selects a diagnostic view. Called once at startup from a query parameter.
+   *
+   * Integer modes rather than a string table, because the value has to cross into a shader
+   * and because an unrecognised mode falling back to the real frame is the safe default.
+   */
+  function setDebugMode(mode: number): void {
+    uniforms.uDebugMode.value = Number.isFinite(mode) && mode >= 0 ? Math.floor(mode) : 0;
+  }
+
   function setQuality(value: number): void {
     uniforms.uQuality.value = Number.isFinite(value) ? Math.min(1, Math.max(0.1, value)) : 1;
   }
@@ -356,7 +379,16 @@ export function createFieldUniforms() {
     // call sites and every other scene handle read the same way.
   }
 
-  return { uniforms, update, setQuality, setBasin, setRegion, setScrollLayers, dispose };
+return {
+    uniforms,
+    update,
+    setQuality,
+    setBasin,
+    setRegion,
+    setScrollLayers,
+    setDebugMode,
+    dispose,
+  };
 }
 
 function clamp01(value: number): number {

@@ -375,6 +375,13 @@ export function SceneHost({
 
   useEffect(() => {
     uniforms.setQuality(settings.terrainDetail);
+
+    /*
+     * The diagnostic mode, from the URL. See the material for what each one draws; the point
+     * here is only that a view can be selected reproducibly without touching the source.
+     */
+    const requested = new URLSearchParams(window.location.search).get("debug");
+    uniforms.setDebugMode(requested === null ? 0 : Number.parseInt(requested, 10));
   }, [uniforms, settings.terrainDetail]);
 
   /**
