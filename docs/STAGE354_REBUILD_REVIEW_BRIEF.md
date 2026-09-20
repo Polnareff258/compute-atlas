@@ -193,6 +193,15 @@ batch.
 | MEDIUM idle | spread 249.9, lit 73.1% |
 | SAFE idle | spread 229.1, lit 64.2% |
 
+Verification, run at `9a452d9`:
+
+```
+npm.cmd test        → 35 files, 312 tests, all pass
+npm.cmd run typecheck → clean
+npm.cmd run lint      → 0 errors, 0 warnings
+npm.cmd run build     → pass on Next 16.3.5
+```
+
 Reproduce a whole row, e.g.:
 
 ```
