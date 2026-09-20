@@ -181,8 +181,18 @@ export type WatershedDescriptor = {
 // Everything in this block is art direction and is identical for every seed.
 // The seed moves things *within* these decisions; it never makes one of them.
 
-/** World-space XZ rectangle the field is defined over, with margin on each side. */
-const EXTENT = { minX: -1000, maxX: 1000, minZ: -1200, maxZ: 300 } as const;
+/**
+ * World-space XZ rectangle the field is defined over, with margin on each side.
+ *
+ * `maxZ` is 620 rather than 300, and that is a framing number rather than a
+ * world-building one: the idle camera has to stand far enough back that the
+ * basin fits inside the frame with its rim visible, and the arithmetic in
+ * `shots.ts` puts that distance at about 790 units. If the ground stopped at 300
+ * the camera would be standing in the void with the near field behind it, and
+ * the brief's "cropped translucent data layers in the foreground" would have
+ * nothing to crop.
+ */
+const EXTENT = { minX: -1000, maxX: 1000, minZ: -1200, maxZ: 620 } as const;
 
 const BASIN_CENTRE: Vector2 = [0, -300];
 const BASIN_RADIUS = 190;
@@ -199,7 +209,7 @@ const BASIN_RIM_HEIGHT = 7;
  * the descriptor can generate comes anywhere near the corridor. The test that
  * holds this is what makes the clearance a promise rather than a hope.
  */
-const IDLE_CAMERA_XZ: Vector2 = [0, 170];
+const IDLE_CAMERA_XZ: Vector2 = [0, 480];
 const IDLE_CLEARANCE = 22;
 const IDLE_CORRIDOR_RADIUS = 46;
 const IDLE_CORRIDOR_HALF_LENGTH = 40;
