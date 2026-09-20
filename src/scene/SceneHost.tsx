@@ -18,23 +18,26 @@ import {
 } from '../graph/interaction';
 import { createGraphController } from '../graph/graphController';
 import { GRAPH_MANIFEST } from '../graph/graphManifest';
-import { deriveGraphLayout, deriveGraphProminence } from '../graph/layout';
+import { deriveGraphProminence } from '../graph/layout';
 import type { QualityProfile, RendererBackend } from '../renderer/types';
-import {
-  createCameraController,
-  deriveCameraFocusTarget,
-  deriveCameraFraming,
-} from './camera/cameraController';
+import { createCameraController, sequenceKey } from './camera/cameraController';
 import { createFieldUniforms } from './field/fieldUniforms';
+import { createSkyBackground, installSkyBackground } from './materials/skyBackground';
 import { deriveFieldState } from './field/deriveFieldState';
 import { TerrainView } from './views/TerrainView';
 import {
   createWatershedDescriptor,
   DOMAIN_IDS,
-  WATERSHED_PALETTE,
   type DomainId,
 } from './watershed/watershedDescriptor';
-import { KEY_LIGHT } from './watershed/shots';
+import {
+  deriveShotIntent,
+  entryApproachPose,
+  KEY_LIGHT,
+  planShots,
+  sequenceFor,
+  type ShotIntent,
+} from './watershed/shots';
 
 /**
  * R3F 9 resolves intrinsic elements from this catalogue rather than from the
@@ -104,8 +107,10 @@ export function SceneHost({
   onCommandBusReady,
 }: SceneHostProps) {
   const settings = useMemo(() => getQualityProfile(quality), [quality]);
-  const graphLayout = useMemo(() => deriveGraphLayout(GRAPH_MANIFEST), []);
   const graphProminence = useMemo(() => deriveGraphProminence(GRAPH_MANIFEST), []);
+  // Read here rather than beside `gl` below, because the shot plan needs the
+  // aspect and the shot plan is built before the frame loop.
+  const { gl, scene, size } = useThree();
 
   /**
    * The whole world, as data.
@@ -156,6 +161,19 @@ export function SceneHost({
   useEffect(() => {
     uniforms.setQuality(settings.terrainDetail);
   }, [uniforms, settings.terrainDetail]);
+
+  /**
+   * The air, installed as the scene's own background.
+   *
+   * Written straight onto the scene rather than mounted as a `<color>` or a mesh,
+   * because it is neither: the renderer's background pass draws it on a unit sphere
+   * at the far plane, before anything else and with the depth test off, so it can
+   * neither occlude the landscape nor be occluded by it. See `skyBackground` for
+   * why the mesh form of this did not work.
+   */
+  const sky = useMemo(() => createSkyBackground(uniforms), [uniforms]);
+
+  useEffect(() => installSkyBackground(scene, sky), [scene, sky]);
 
   useEffect(() => {
     uniforms.setBasin(descriptor.basin.centre, descriptor.basinFloor);
@@ -214,6 +232,51 @@ export function SceneHost({
     return DOMAIN_IDS.find((id) => id === candidate) ?? null;
   }, [graphInteraction.focusedNodeId, graphInteraction.hoveredNodeId]);
 
+  /**
+   * The seven framings for this descriptor and this viewport.
+   *
+   * `aspect` comes from the renderer rather than being assumed, because the shot
+   * system's calibration is a property of the frame — `planShots` genuinely
+   * branches on it — and a calibration read off a constant is a calibration that
+   * stops being one the day the frame changes. Replanning on a resize is a
+   * handful of pure functions over a descriptor that has not changed.
+   */
+  const aspect = size.width / Math.max(1, size.height);
+  const shots = useMemo(
+    () => planShots(descriptor, aspect, activeDomainId ?? undefined),
+    [descriptor, aspect, activeDomainId],
+  );
+
+  /**
+   * Which shot the camera is in, and the last sequence asked for.
+   *
+   * Refs rather than state, both: they are written and read by the frame loop,
+   * and routing them through React would be a re-render per transition — the
+   * per-frame state storm the performance preconditions rule out. Nothing
+   * outside the frame loop reads them.
+   */
+  const intentRef = useRef<ShotIntent>('entry');
+  const sequenceKeyRef = useRef<string | null>(null);
+  const enteredRef = useRef(false);
+  const bootedRef = useRef(true);
+
+  /**
+   * The entry, re-armed when the rig itself is replaced.
+   *
+   * Not when the *framings* change: the entry is something a visitor does on
+   * arrival, and re-running it because the window was resized would send
+   * somebody who had already arrived back through the gate. A new controller is
+   * a different rig with no pose at all, which is the one case that does have to
+   * start again. The snap itself happens in the frame loop, so that there is one
+   * place deciding what the camera does rather than two.
+   */
+  useEffect(() => {
+    bootedRef.current = false;
+    enteredRef.current = false;
+    intentRef.current = 'entry';
+    sequenceKeyRef.current = null;
+  }, [cameraController]);
+
   useEffect(() => {
     if (activeDomainId === null) {
       uniforms.setRegion(-1, null);
@@ -223,17 +286,6 @@ export function SceneHost({
     const domain = descriptor.domains.find((candidate) => candidate.id === activeDomainId);
     uniforms.setRegion(index, domain?.palette ?? null);
   }, [uniforms, descriptor, activeDomainId]);
-
-  useEffect(() => {
-    const focusedNodeId = graphInteraction.focusedNodeId;
-    const position =
-      focusedNodeId === null ? ([0, 0, 0] as const) : graphLayout[focusedNodeId];
-    const target = deriveCameraFocusTarget(position);
-    cameraController.setFocusTarget(target[0], target[1], target[2]);
-    cameraController.setFocusDistance(
-      Math.hypot(position[0], position[1], position[2]),
-    );
-  }, [cameraController, graphInteraction.focusedNodeId, graphLayout]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -271,7 +323,6 @@ export function SceneHost({
   // never React state.
   const easedRef = useRef({ hover: 0, focus: 0, activity: 0.24, phase: 0, flow: 0 });
   const telemetryClockRef = useRef({ elapsed: 0, last: 0 });
-  const { gl } = useThree();
 
   useFrame((state, delta) => {
     const safeDelta = Math.min(Math.max(delta, 0), 0.1);
@@ -309,27 +360,50 @@ export function SceneHost({
       state.clock.elapsedTime,
     );
 
-    // Framing is a translate-and-dolly rig: the camera moves and pulls back and
-    // never turns toward the subject. The shot system that replaces it — seven
-    // authored framings with their own poses, focal distances and hero regions —
-    // is what this rig is standing in for.
+    // The shot. Which one it is follows from the interaction and from where the
+    // camera already is, and the run of shots it plays is the choreography.
+    // Derived here rather than in an effect so that "the entry has landed" is a
+    // fact this frame establishes rather than one a re-render has to be told
+    // about — and because it is the same clock that advances the transition.
+    if (!bootedRef.current) {
+      bootedRef.current = true;
+      // Snapped, not travelled: the approach pose is where the entry move
+      // begins, so arriving at it is not a move anybody should see.
+      cameraController.snapTo(entryApproachPose(shots.entry));
+    } else if (intentRef.current === 'entry' && cameraController.isSettled()) {
+      enteredRef.current = true;
+    }
+    const intent = deriveShotIntent({
+      focused: graphInteraction.focusedNodeId === null ? null : activeDomainId,
+      hovered: graphInteraction.hoveredNodeId === null ? null : activeDomainId,
+      entered: enteredRef.current,
+      previous: intentRef.current,
+    });
+    const key = sequenceKey(intent, activeDomainId ?? undefined);
+    if (key !== sequenceKeyRef.current) {
+      intentRef.current = intent;
+      sequenceKeyRef.current = key;
+      cameraController.setSequence({
+        key,
+        shots: sequenceFor(intent).map((id) => shots[id]),
+      });
+    }
+
     cameraController.setVisualState(
       eased.focus > 0.5 ? 'focusing' : eased.hover > 0.35 ? 'hover_response' : 'idle',
     );
     cameraController.update(safeDelta);
-    const framing = deriveCameraFraming({
-      pointerX: cameraController.getPointerX(),
-      pointerY: cameraController.getPointerY(),
-      focusX: cameraController.getFocusX(),
-      focusY: cameraController.getFocusY(),
-      focusZ: cameraController.getFocusZ(),
-      focusDistance: cameraController.getFocusDistance(),
-      response: cameraController.getResponseStrength(),
-      amplitudeScale: cameraController.getAmplitudeScale(),
-      aspect: state.size.width / Math.max(1, state.size.height),
-    });
-    state.camera.position.set(framing.positionX, framing.positionY, framing.positionZ);
-    state.camera.rotation.set(framing.pitch, framing.yaw, 0);
+
+    const pose = cameraController.getResolvedPose();
+    state.camera.position.set(pose.positionX, pose.positionY, pose.positionZ);
+    // `lookAt` rather than a yaw and a pitch: the rig turns toward its subject on
+    // every shot, and composing the view basis by hand is how the two come to
+    // disagree. Three derives the same basis from the same two points.
+    state.camera.lookAt(pose.lookX, pose.lookY, pose.lookZ);
+    if (state.camera instanceof THREE.PerspectiveCamera && state.camera.fov !== pose.fov) {
+      state.camera.fov = pose.fov;
+      state.camera.updateProjectionMatrix();
+    }
 
     if (onTelemetry === undefined) return;
     telemetryClockRef.current.elapsed += safeDelta;
@@ -358,8 +432,14 @@ export function SceneHost({
 
   return (
     <>
-      <color attach="background" args={[WATERSHED_PALETTE.ink]} />
       {/*
+        There is no `<color attach="background">` here any more, and that is the
+        point rather than an omission: the scene's background is installed on the
+        scene itself by the effect above, because a node background is not a
+        colour, a texture or a mesh and has no JSX form. The last colour this
+        scene held was `ink`, and its flatness was the reason the far ground had
+        nowhere to recede into.
+
         The fog is the landscape's air, and it is the descriptor's own figure
         rather than a constant here: the density varies per seed, and a scene
         whose air was written down separately from its world is a scene where the
@@ -367,6 +447,13 @@ export function SceneHost({
         material treats distance as a multiplier on its whole term stack, so a
         feature far out settles into the dark as a silhouette rather than washing
         out to grey.
+
+        Its `tint` is the sky's own horizon colour by construction, and that is
+        the agreement the previous frame was missing: the far ground is driven
+        toward this exact colour as depth grows, so it dissolves into the haze
+        band instead of ending in a hard silhouette against a flat plate. Moving
+        one without the other is what puts a visible edge along the world's own
+        horizon.
       */}
       <fogExp2 attach="fog" args={[descriptor.fog.tint, descriptor.fog.density]} />
       {/*

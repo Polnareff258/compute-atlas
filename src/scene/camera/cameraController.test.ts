@@ -1,282 +1,244 @@
 import { describe, expect, it } from 'vitest';
 
-import { GRAPH_MANIFEST } from '../../graph/graphManifest';
-import { deriveGraphLayout } from '../../graph/layout';
-import type { GraphNodeId } from '../../graph/types';
 import {
-  BASE_CAMERA_DISTANCE,
-  CAMERA_FOV_DEGREES,
+  CUT_DISTANCE,
+  SETTLE_DURATION,
   createCameraController,
-  deriveCameraFraming,
+  type CameraPose,
+  type ShotSequence,
 } from './cameraController';
 
-const ASPECT = 16 / 9;
-const HALF_FOV_TAN = Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 360);
-
-const LAYOUT = deriveGraphLayout(GRAPH_MANIFEST);
-
-const DOMAIN_IDS: readonly GraphNodeId[] = [
-  'graphics',
-  'ai',
-  'game-analysis',
-  'systems',
-  'research',
-];
-
 /**
- * The framing the scene actually ships for one domain.
+ * The rig, as a state machine.
  *
- * Read from the layout rather than from the coordinates that happened to be in
- * this file when it was written: the layout moved to give the rebuilt Core room,
- * and a test holding yesterday's numbers would have gone on passing while
- * describing a composition that no longer existed.
+ * What this file is about is the *sequence*: which pose the camera is heading
+ * for, when it hands off to the next one, and what it does when it is told to go
+ * somewhere else part way. None of that is visible in a frame — a rig that
+ * restarts its transition every time the caller re-asks for the shot it is
+ * already in will settle eventually and look fine in a screenshot, having spent
+ * the whole time at the start of its own move. That is the failure these are for.
  */
-function framingForDomain(nodeId: GraphNodeId) {
-  const position = LAYOUT[nodeId];
-  const distance = Math.hypot(position[0], position[1], position[2]);
-  return framingFor(
-    position[0] / distance,
-    position[1] / distance,
-    distance,
-    position[2] / distance,
-  );
+
+function pose(
+  z: number,
+  duration: number,
+  easing: CameraPose['easing'] = 'linear',
+): CameraPose {
+  return {
+    position: [0, 0, z],
+    lookTarget: [0, 0, z - 100],
+    fov: 48,
+    duration,
+    easing,
+  };
 }
 
-/** Where a world point lands across the half-frame at this framing. */
-function screenX(framing: ReturnType<typeof deriveCameraFraming>, worldX: number): number {
-  const halfWidth = framing.positionZ * HALF_FOV_TAN * ASPECT;
-  return (worldX - framing.positionX) / halfWidth;
+/** Run the rig forward in the step the frame loop uses. */
+function run(controller: ReturnType<typeof createCameraController>, seconds: number, step = 1 / 60): void {
+  const steps = Math.round(seconds / step);
+  for (let index = 0; index < steps; index += 1) controller.update(step);
 }
 
-function screenY(framing: ReturnType<typeof deriveCameraFraming>, worldY: number): number {
-  const halfHeight = framing.positionZ * HALF_FOV_TAN;
-  return (worldY - framing.positionY) / halfHeight;
-}
-
-function framingFor(
-  focusX: number,
-  focusY: number,
-  focusDistance: number,
-  focusZ = 0,
-) {
-  return deriveCameraFraming({
-    pointerX: 0,
-    pointerY: 0,
-    focusX,
-    focusY,
-    focusZ,
-    focusDistance,
-    response: 1,
-    amplitudeScale: 1,
-    aspect: ASPECT,
-  });
+function positionOf(controller: ReturnType<typeof createCameraController>): readonly number[] {
+  return controller.getPose().position;
 }
 
 describe('CameraController', () => {
   it('clamps pointer targets and converges with damping without overshooting', () => {
     const controller = createCameraController();
-    controller.setPointerTarget(4, -4);
-    controller.update(1 / 60);
-
+    controller.setPointerTarget(4, -9);
     expect(controller.getPointerTargetX()).toBe(1);
     expect(controller.getPointerTargetY()).toBe(-1);
-    expect(controller.getPointerX()).toBeGreaterThan(0);
-    expect(controller.getPointerX()).toBeLessThanOrEqual(1);
 
-    for (let index = 0; index < 180; index += 1) {
+    let previous = { x: 0, y: 0 };
+    for (let step = 0; step < 240; step += 1) {
       controller.update(1 / 60);
+      const x = controller.getPointerX();
+      const y = controller.getPointerY();
+      // Monotone approach: an exponential approach that overshoots is a
+      // different filter wearing this one's name.
+      expect(x).toBeGreaterThanOrEqual(previous.x);
+      expect(y).toBeLessThanOrEqual(previous.y);
+      expect(x).toBeLessThanOrEqual(1);
+      expect(y).toBeGreaterThanOrEqual(-1);
+      previous = { x, y };
     }
-
-    expect(controller.getPointerX()).toBeCloseTo(1, 2);
-    expect(controller.getPointerY()).toBeCloseTo(-1, 2);
-    expect(controller.getPointerX()).toBeLessThanOrEqual(1);
-    expect(controller.getPointerY()).toBeGreaterThanOrEqual(-1);
+    expect(previous.x).toBeCloseTo(1, 3);
+    expect(previous.y).toBeCloseTo(-1, 3);
   });
 
-  it('interpolates focus direction independently from pointer parallax', () => {
+  it('lands exactly on a pose it is given a duration for', () => {
     const controller = createCameraController();
-    controller.setFocusTarget(1, -0.5, 0.8);
-    controller.update(0.2);
+    controller.snapTo(pose(0, 0));
+    controller.setSequence({ key: 'a', shots: [pose(-60, 2, 'easeInOut')] });
 
-    expect(controller.getFocusX()).toBeGreaterThan(0);
-    expect(controller.getFocusY()).toBeLessThan(0);
-    expect(controller.getFocusZ()).toBeGreaterThan(0);
+    run(controller, 1);
+    expect(positionOf(controller)[2]).toBeLessThan(0);
+    expect(controller.isSettled()).toBe(false);
+
+    run(controller, 1.5);
+    // Not "close to": the easing is a function of a clamped ratio and the ratio
+    // reaches one, so the rig arrives rather than approaching for ever.
+    expect(positionOf(controller)[2]).toBe(-60);
+    expect(controller.isSettled()).toBe(true);
+  });
+
+  it('does not restart a sequence it is already running', () => {
+    // The caller asks for its intent every frame, because it has no other way to
+    // say "still this". A rig that restarted would sit at t=0 for ever and the
+    // frame would be identical to a still.
+    const controller = createCameraController();
+    const sequence: ShotSequence = { key: 'a', shots: [pose(-60, 2, 'easeOut')] };
+    controller.setSequence(sequence);
+    run(controller, 1);
+    const midway = positionOf(controller)[2];
+
+    for (let step = 0; step < 60; step += 1) controller.setSequence(sequence);
+    expect(positionOf(controller)[2]).toBe(midway);
+  });
+
+  it('chains from the pose it actually reached, not from the pose it aimed at', () => {
+    // The whole reason the rig interpolates in state rather than in a curve: an
+    // interruption has to continue from somewhere real. Here the second shot is
+    // asked for while the first is still moving, so the chain must start from
+    // the position the camera is at rather than from the first shot's target —
+    // otherwise the camera jumps to the end of a move it never made.
+    const controller = createCameraController();
+    controller.snapTo(pose(0, 0));
+    // A first shot with a long duration, and a second asked for before it lands.
+    controller.setSequence({ key: 'a', shots: [pose(-100, 4, 'linear')] });
+    run(controller, 1);
+    const reached = positionOf(controller)[2]!;
+    expect(reached).toBeLessThan(0);
+    expect(reached).toBeGreaterThan(-100);
+
+    controller.setSequence({ key: 'b', shots: [pose(-200, 1, 'linear')] });
+    // At the instant of the switch, before a frame has run. This is the claim:
+    // the interrupting sequence starts where the camera *is*. The first version
+    // of this test stepped a frame and compared, which measured the new
+    // transition's first step rather than its starting point — and would have
+    // passed with the chain beginning at the first shot's target, because that
+    // step is small either way.
+    expect(positionOf(controller)[2]).toBe(reached);
+
+    run(controller, 1 / 60);
+    const afterOneFrame = positionOf(controller)[2]!;
+    expect(afterOneFrame).toBeLessThan(reached);
+    expect(afterOneFrame).toBeGreaterThan(reached - 20);
+  });
+
+  it('moves through every shot of a sequence, in order', () => {
+    const controller = createCameraController();
+    controller.snapTo(pose(0, 0));
+    controller.setSequence({
+      key: 'chain',
+      shots: [pose(-50, 0.5), pose(-100, 0.5), pose(-150, 0.5)],
+    });
+
+    const visited: number[] = [];
+    for (let step = 0; step < 120; step += 1) {
+      controller.update(1 / 60);
+      visited.push(positionOf(controller)[2]!);
+    }
+
+    // Monotone, and past the last shot's value: read as "it went through the
+    // middle one on the way" rather than only as "it arrived".
+    for (let index = 1; index < visited.length; index += 1) {
+      expect(visited[index]!).toBeLessThanOrEqual(visited[index - 1]!);
+    }
+    expect(visited[visited.length - 1]).toBe(-150);
+  });
+
+  it('respects a shot that declares no duration', () => {
+    // A resting pose, which is what `domainInspection` and `idleVista` are. The
+    // distance decides whether that means a cut or a settle — see `SETTLE_DURATION`.
+    const controller = createCameraController();
+    controller.snapTo(pose(0, 0));
+
+    // Already there: a cut, and the rig is settled on the same frame.
+    controller.setSequence({ key: 'near', shots: [pose(0, 0)] });
+    run(controller, 1 / 60);
+    expect(controller.isSettled()).toBe(true);
+    expect(positionOf(controller)[2]).toBe(0);
+
+    // Somewhere else: a settle, of the rig's own length rather than zero.
+    controller.setSequence({ key: 'far', shots: [pose(-400, 0)] });
+    expect(CUT_DISTANCE).toBeLessThan(400);
+    run(controller, SETTLE_DURATION * 0.5);
+    expect(controller.isSettled()).toBe(false);
+    const midway = positionOf(controller)[2]!;
+    expect(midway).toBeLessThan(0);
+    expect(midway).toBeGreaterThan(-400);
+
+    run(controller, SETTLE_DURATION);
+    expect(positionOf(controller)[2]).toBe(-400);
+  });
+
+  it('snaps without travelling when told to', () => {
+    const controller = createCameraController();
+    controller.setSequence({ key: 'a', shots: [pose(-500, 3)] });
+    run(controller, 0.5);
+    controller.snapTo(pose(-9, 0));
+    expect(positionOf(controller)[2]).toBe(-9);
+    expect(controller.isSettled()).toBe(true);
   });
 
   it('settles within a short finite transition when reduced motion is enabled', () => {
     const controller = createCameraController({ reducedMotion: true });
-    controller.setPointerTarget(0.75, -0.25);
-    controller.setFocusTarget(-0.5, 0.4, 0.3);
-    controller.update(1 / 60);
-
-    // Still in motion after one frame: reduced motion is a short transition,
-    // not an instant snap and not a perpetual easing drift.
-    expect(controller.getPointerX()).toBeGreaterThan(0);
-    expect(controller.getPointerX()).toBeLessThan(0.75);
-    expect(controller.getFocusX()).toBeLessThan(0);
-    expect(controller.getFocusX()).toBeGreaterThan(-0.5);
-
-    for (let index = 0; index < 30; index += 1) {
-      controller.update(1 / 60);
-    }
-
-    expect(controller.getPointerX()).toBeCloseTo(0.75, 2);
-    expect(controller.getPointerY()).toBeCloseTo(-0.25, 2);
-    expect(controller.getFocusX()).toBeCloseTo(-0.5, 2);
-    expect(controller.getFocusY()).toBeCloseTo(0.4, 2);
-    expect(controller.getFocusZ()).toBeCloseTo(0.3, 2);
+    controller.snapTo(pose(0, 0));
+    controller.setSequence({ key: 'a', shots: [pose(-60, 1)] });
+    run(controller, 2);
+    expect(controller.isSettled()).toBe(true);
+    expect(positionOf(controller)[2]).toBe(-60);
   });
 
   it('reduces displacement authority under reduced motion and keeps it whole otherwise', () => {
-    expect(createCameraController().getAmplitudeScale()).toBe(1);
-
-    const reducedScale = createCameraController({ reducedMotion: true }).getAmplitudeScale();
-    expect(reducedScale).toBeGreaterThan(0);
-    expect(reducedScale).toBeLessThan(1);
+    const normal = createCameraController();
+    const reduced = createCameraController({ reducedMotion: true });
+    expect(reduced.getAmplitudeScale()).toBeLessThan(normal.getAmplitudeScale());
+    expect(normal.getAmplitudeScale()).toBe(1);
   });
 
-  it('eases the focus distance so binding and releasing travel the same path', () => {
+  it('never lets the drift carry the camera away from its subject', () => {
+    // The brief permits the idle camera to drift and forbids it to orbit. Ten
+    // minutes of standing still is the interval over which an orbit would become
+    // obvious and a bounded wobble would not.
     const controller = createCameraController();
-    expect(controller.getFocusDistance()).toBe(0);
+    controller.snapTo(pose(0, 0));
+    controller.setSequence({ key: 'rest', shots: [pose(0, 0)] });
+    controller.setVisualState('idle');
 
-    controller.setFocusDistance(3.44);
-    controller.update(1 / 60);
-    expect(controller.getFocusDistance()).toBeGreaterThan(0);
-    expect(controller.getFocusDistance()).toBeLessThan(3.44);
-
-    for (let index = 0; index < 180; index += 1) {
+    let furthest = 0;
+    for (let step = 0; step < 10 * 60 * 60; step += 1) {
       controller.update(1 / 60);
+      const position = controller.getPose().position;
+      furthest = Math.max(furthest, Math.hypot(position[0], position[1], position[2]));
     }
-    expect(controller.getFocusDistance()).toBeCloseTo(3.44, 2);
-
-    // A hostile distance cannot push the camera outside its own limits.
-    controller.setFocusDistance(Number.NaN);
-    for (let index = 0; index < 180; index += 1) {
-      controller.update(1 / 60);
-    }
-    expect(controller.getFocusDistance()).toBeCloseTo(0, 3);
-  });
-});
-
-describe('deriveCameraFraming', () => {
-  it('frames idle off centre, with the Core right of the middle', () => {
-    const framing = framingFor(0, 0, 0);
-
-    expect(framing.focus).toBe(0);
-    expect(framing.positionZ).toBe(BASE_CAMERA_DISTANCE);
-    // Idle is off centre but not off frame: the Core still owns the composition.
-    expect(screenX(framing, 0)).toBeGreaterThan(0);
-    expect(screenX(framing, 0)).toBeLessThan(0.2);
+    // The *held* pose never moves at all, which is a stronger statement than the
+    // drawn one and the one that matters: the wobble is applied on top and is
+    // bounded by `deriveHandheld`.
+    expect(furthest).toBe(0);
   });
 
-  it('puts the Core and the bound domain on opposite thirds', () => {
-    // GRAPHICS, the domain the focus choreography reframes against.
-    const framing = framingForDomain('graphics');
-    const graphicsX = LAYOUT.graphics[0];
-
-    expect(framing.focus).toBeCloseTo(1, 6);
-    expect(screenX(framing, 0)).toBeCloseTo(1 / 3, 1);
-    expect(screenX(framing, graphicsX)).toBeCloseTo(-1 / 3, 1);
-    // Both ends of the active route are inside the frame, on opposite sides of
-    // its centre, and neither is against an edge.
-    expect(screenX(framing, 0)).toBeGreaterThan(0);
-    expect(screenX(framing, graphicsX)).toBeLessThan(0);
-    expect(Math.abs(screenX(framing, 0))).toBeLessThan(0.55);
-    expect(Math.abs(screenX(framing, graphicsX))).toBeLessThan(0.55);
-  });
-
-  it('reframes every domain by its own distance rather than one tuned constant', () => {
-    for (const nodeId of DOMAIN_IDS) {
-      const position = LAYOUT[nodeId];
-      const framing = framingForDomain(nodeId);
-
-      // Whichever domain is bound, both ends of the route land inside the frame
-      // on opposite sides of its centre, and neither reaches an edge.
-      expect(framing.focus).toBeCloseTo(1, 6);
-      const ends: readonly (readonly [number, number])[] = [
-        [0, 0],
-        [position[0], position[1]],
-      ];
-      for (const [x, y] of ends) {
-        expect(Math.abs(screenX(framing, x))).toBeLessThanOrEqual(0.34);
-        expect(Math.abs(screenY(framing, y))).toBeLessThanOrEqual(0.34);
-      }
-      // The two ends are mirror images about the frame centre: the Core moves
-      // away from the domain's side, which is what leaves the route between them
-      // running across the middle of the composition.
-      expect(screenX(framing, 0)).toBeCloseTo(-screenX(framing, position[0]), 2);
-      expect(screenY(framing, 0)).toBeCloseTo(-screenY(framing, position[1]), 2);
-      // The active route really is the subject of the frame: its two ends sit a
-      // third apart in the direction the offset runs, not huddled near the axis.
-      expect(
-        Math.hypot(
-          screenX(framing, 0) - screenX(framing, position[0]),
-          screenY(framing, 0) - screenY(framing, position[1]),
-        ),
-      ).toBeGreaterThan(0.4);
-    }
-  });
-
-  it('never rotates toward the target, so the Core keeps one presentation', () => {
-    const idle = framingFor(0, 0, 0);
-    const focused = framingForDomain('graphics');
-
-    expect(idle.yaw).toBe(0);
-    expect(idle.pitch).toBe(0);
-    expect(focused.yaw).toBe(0);
-    expect(focused.pitch).toBe(0);
-    // The camera really moved: this is a translate and a dolly, not a re-aim.
-    // It is a dolly *out* for a domain at GRAPHICS' distance, which is what
-    // makes room for both ends of the route; the assertions are on the two
-    // things that have to hold whatever the domain is — the camera slid a long
-    // way sideways, and the subject did not turn.
-    expect(focused.positionX).toBeLessThan(idle.positionX - 1);
-    expect(focused.positionZ).not.toBe(idle.positionZ);
-  });
-
-  it('keeps the dolly inside a usable range at every aspect and distance', () => {
-    for (const aspect of [0.5, 1, ASPECT, 3]) {
-      for (const distance of [Math.hypot(2.35, 1.75, 1.05), 60]) {
-        const framing = deriveCameraFraming({
-          pointerX: 0,
-          pointerY: 0,
-          focusX: 0.5,
-          focusY: 0.5,
-          focusZ: 0,
-          focusDistance: distance,
-          response: 1,
-          amplitudeScale: 1,
-          aspect,
-        });
-
-        expect(Number.isFinite(framing.positionX)).toBe(true);
-        expect(Number.isFinite(framing.positionY)).toBe(true);
-        // The rig's usable range, stated against the composition rather than as
-        // a bare number: the dolly never comes closer than three fifths of the
-        // idle distance and never pulls back further than twice it, which keeps
-        // the Core somewhere between a quarter and three fifths of the frame.
-        expect(framing.positionZ).toBeGreaterThanOrEqual(BASE_CAMERA_DISTANCE * 0.6);
-        expect(framing.positionZ).toBeLessThanOrEqual(BASE_CAMERA_DISTANCE * 2);
-      }
-    }
-  });
-
-  it('stays finite for hostile viewport and focus inputs', () => {
-    const framing = deriveCameraFraming({
-      pointerX: Number.NaN,
-      pointerY: Number.POSITIVE_INFINITY,
-      focusX: Number.NaN,
-      focusY: Number.NaN,
-      focusZ: Number.NaN,
-      focusDistance: Number.NaN,
-      response: 1,
-      amplitudeScale: 1,
-      aspect: 0,
+  it('stays finite for hostile inputs', () => {
+    const controller = createCameraController();
+    controller.setPointerTarget(Number.NaN, Number.POSITIVE_INFINITY);
+    controller.setSequence({
+      key: 'hostile',
+      shots: [
+        {
+          position: [Number.NaN, 0, 0],
+          lookTarget: [0, 0, Number.NEGATIVE_INFINITY],
+          fov: 48,
+          duration: Number.NaN,
+          easing: 'linear',
+        },
+      ],
     });
-
-    expect(Number.isFinite(framing.positionX)).toBe(true);
-    expect(Number.isFinite(framing.positionY)).toBe(true);
-    expect(Number.isFinite(framing.positionZ)).toBe(true);
-    expect(framing.focus).toBe(0);
+    run(controller, 1);
+    const resolved = controller.getResolvedPose();
+    for (const value of Object.values(resolved)) {
+      expect(Number.isFinite(value), JSON.stringify(resolved)).toBe(true);
+    }
   });
 });

@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { terrainHeight } from './terrainField';
 import {
   CENTRAL_BAND,
+  entryApproachPose,
   insideRect,
   minimumVistaDistance,
   planShots,
   projectPoint,
   selectInterestPoints,
+  sequenceFor,
   SHOT_IDS,
+  SHOT_INTENTS,
   TARGET_ASPECTS,
   type ShotFraming,
   type ShotId,
@@ -176,6 +179,24 @@ describe('every shot is a framing the world can actually support', () => {
   });
 });
 
+/**
+ * The basin's rim plane: the elevation the vista is aimed at.
+ *
+ * These composition tests used to project a point at `basinFloor + 26`, which
+ * was a fair stand-in for "the basin" while the shot was aimed *at* the floor.
+ * It no longer is: the aim moved up to the rim, because centring a floor 26
+ * degrees below the horizon leaves a 48-degree frame with no room for a horizon
+ * at all. So the point these tests project is now the rim — the same subject the
+ * framing is composed around, and still a point that bounds the basin's apparent
+ * size, which is what the core check is for. Keeping the old point would have
+ * meant asserting that an invisible part of the bowl was well composed.
+ */
+const basinRimPoint: Vector3 = [
+  descriptor.basin.centre[0],
+  descriptor.basinFloor + descriptor.basin.depth,
+  descriptor.basin.centre[1],
+];
+
 describe('C2 — the basin lands inside the central band', () => {
   it('frames the basin inside the band at both named targets', () => {
     // The two targets the brief names separately, checked separately. They are
@@ -183,11 +204,7 @@ describe('C2 — the basin lands inside the central band', () => {
     // see `TARGET_ASPECTS`.
     for (const [label, aspect] of Object.entries(TARGET_ASPECTS)) {
       const framing = planShots(descriptor, aspect).idleVista;
-      const centre = projectPoint(
-        [descriptor.basin.centre[0], descriptor.basinFloor + 26, descriptor.basin.centre[1]],
-        framing,
-        aspect,
-      );
+      const centre = projectPoint(basinRimPoint, framing, aspect);
 
       expect(Number.isFinite(centre.x), label).toBe(true);
       expect(insideRect(centre, CENTRAL_BAND), label).toBe(true);
@@ -198,7 +215,7 @@ describe('C2 — the basin lands inside the central band', () => {
     const aspect = SIXTEEN_NINE;
     const framing = planShots(descriptor, aspect).idleVista;
     const core = descriptor.basin.radius * 0.5;
-    const origin: Vector3 = [descriptor.basin.centre[0], descriptor.basinFloor + 26, descriptor.basin.centre[1]];
+    const origin: Vector3 = basinRimPoint;
 
     // The core's extreme points, rather than only its centre: a basin centred in
     // frame but half again too large would pass a centre-only check.
@@ -238,13 +255,23 @@ describe('the focus sequence moves toward the subject, not around it', () => {
   it('closes the distance from approach to arrival to inspection', () => {
     const shots = planShots(descriptor, SIXTEEN_NINE, 'graphics');
     const domain = descriptor.domains.find((candidate) => candidate.id === 'graphics')!;
+    // Measured to the ground under the region's centre, which is the thing the
+    // shots are named for. The previous metric was `position[1] - centre[1]` —
+    // the camera's *height* against the centre's *Z* — which is a category error
+    // that a flat world hid: the Z term was large enough to dominate the sum, so
+    // the assertion held for a reason with nothing to do with the distances.
+    const ground = terrainHeight(domain.centre[0], domain.centre[1], descriptor.field);
     const toDomain = (framing: ShotFraming): number =>
       Math.hypot(
         framing.position[0] - domain.centre[0],
-        framing.position[1] - domain.centre[1],
+        framing.position[1] - ground,
         framing.position[2] - domain.centre[1],
       );
 
+    // Only approach → arrival. Inspection deliberately pulls *back* out to
+    // `radius * 0.95` after arriving at `radius * 0.55`, so the sequence closes
+    // and then opens, and asserting a monotone closure would be asserting the
+    // opposite of what that shot is for.
     expect(toDomain(shots.routeApproach)).toBeGreaterThan(toDomain(shots.domainArrival));
     expect(shots.routeApproach.duration).toBeGreaterThan(0);
     expect(shots.domainArrival.duration).toBeGreaterThan(0);
@@ -254,11 +281,7 @@ describe('the focus sequence moves toward the subject, not around it', () => {
     const aspect = SIXTEEN_NINE;
     for (const domainId of FOCUSABLE) {
       const shots = planShots(descriptor, aspect, domainId);
-      const basin = projectPoint(
-        [descriptor.basin.centre[0], descriptor.basinFloor + 26, descriptor.basin.centre[1]],
-        shots.domainInspection,
-        aspect,
-      );
+      const basin = projectPoint(basinRimPoint, shots.domainInspection, aspect);
 
       expect(Number.isFinite(basin.x), domainId).toBe(true);
       expect(basin.x).toBeGreaterThan(0);
@@ -346,15 +369,103 @@ describe('C1 — the descriptor proposes, the frame disposes', () => {
   });
 });
 
+/**
+ * The paths, not the poses.
+ *
+ * Every clearance check above is about a pose the camera *rests* in, and a rig
+ * that interpolates between two clear poses in a straight line is not thereby
+ * safe: the line between them can pass through a hill that neither end touches.
+ * This is the check that makes the interpolation a decision rather than an
+ * assumption, and it is the one the brief's "the camera must never clip geometry"
+ * actually needs.
+ *
+ * Both halves are here because they fail differently. A path through the ground
+ * is a visible lurch; a path aiming into a hillside is a frame full of dirt for a
+ * few frames. Neither raises anything.
+ */
+describe('every path between two shots is flyable', () => {
+  const ASPECT = SIXTEEN_NINE;
+  const MARGIN = 2;
+
+  /** The paths the choreography actually flies, as pairs of poses. */
+  function pathsFor(domainId?: (typeof FOCUSABLE)[number]): [string, ShotFraming, ShotFraming][] {
+    const shots = planShots(descriptor, ASPECT, domainId);
+    const approach = entryApproachPose(shots.entry);
+    const pairs: [string, ShotFraming, ShotFraming][] = [
+      ['entry approach → gate', approach, shots.entry],
+      ['gate → vista', shots.entry, shots.idleVista],
+      ['vista → hover', shots.idleVista, shots.hoverReveal],
+    ];
+
+    for (const intent of SHOT_INTENTS) {
+      const ids = sequenceFor(intent);
+      for (let index = 0; index < ids.length - 1; index += 1) {
+        pairs.push([
+          `${intent}: ${ids[index]} → ${ids[index + 1]}`,
+          shots[ids[index]!],
+          shots[ids[index + 1]!],
+        ]);
+      }
+    }
+    return pairs;
+  }
+
+  it('never passes the camera through the ground', () => {
+    for (const domainId of FOCUSABLE) {
+      for (const [label, from, to] of pathsFor(domainId)) {
+        for (let step = 0; step <= 40; step += 1) {
+          const t = step / 40;
+          const x = from.position[0] + (to.position[0] - from.position[0]) * t;
+          const y = from.position[1] + (to.position[1] - from.position[1]) * t;
+          const z = from.position[2] + (to.position[2] - from.position[2]) * t;
+          const ground = terrainHeight(x, z, descriptor.field);
+          expect(y - ground, `${label} at t=${t.toFixed(2)}`).toBeGreaterThan(MARGIN);
+        }
+      }
+    }
+  });
+
+  it('never aims the camera into the ground along the way', () => {
+    // What the view actually contains while travelling, which a clearance check
+    // on the camera body says nothing about: a camera ten units above a ridge
+    // pointed straight into the next one is clear and still shows nothing.
+    for (const domainId of FOCUSABLE) {
+      for (const [label, from, to] of pathsFor(domainId)) {
+        for (let step = 0; step <= 10; step += 1) {
+          const t = step / 10;
+          const travelled: ShotFraming = {
+            ...from,
+            position: [
+              from.position[0] + (to.position[0] - from.position[0]) * t,
+              from.position[1] + (to.position[1] - from.position[1]) * t,
+              from.position[2] + (to.position[2] - from.position[2]) * t,
+            ],
+            lookTarget: [
+              from.lookTarget[0] + (to.lookTarget[0] - from.lookTarget[0]) * t,
+              from.lookTarget[1] + (to.lookTarget[1] - from.lookTarget[1]) * t,
+              from.lookTarget[2] + (to.lookTarget[2] - from.lookTarget[2]) * t,
+            ],
+          };
+          expect(nearestGroundAlongView(travelled, 24), `${label} at t=${t.toFixed(2)}`)
+            .toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+});
+
 describe('the shot vocabulary is closed', () => {
   it('names every shot once', () => {
     expect(new Set(SHOT_IDS).size).toBe(SHOT_IDS.length);
-    expect(SHOT_IDS.length).toBe(7);
+    // Eight, not the brief's seven: `routeLift` is the waypoint the focus
+    // traverse rises through, and it exists because the world has relief. See
+    // `liftHeightFor` — a straight leg between two clear poses crossed a ridge.
+    expect(SHOT_IDS.length).toBe(8);
   });
 
   it('gives every moving shot a duration and every resting shot none', () => {
     const shots = planShots(descriptor, SIXTEEN_NINE, 'graphics');
-    const moving: ShotId[] = ['entry', 'hoverReveal', 'routeApproach', 'domainArrival', 'returnVista'];
+    const moving: ShotId[] = ['entry', 'hoverReveal', 'routeApproach', 'routeLift', 'domainArrival', 'returnVista'];
     const resting: ShotId[] = ['idleVista', 'domainInspection'];
 
     for (const id of moving) expect(shots[id].duration, id).toBeGreaterThan(0);

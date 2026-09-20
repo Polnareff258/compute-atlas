@@ -34,6 +34,23 @@ export type BasinShape = {
   /** How far the raised rim extends past `radius`. */
   readonly rimWidth: number;
   readonly rimHeight: number;
+  /**
+   * How far the far side of the basin stands above its near side.
+   *
+   * A symmetric bowl is a hole, and from a camera standing on its own rim it is
+   * a hole you cannot see into: the near lip occludes all but a sliver of the
+   * interior, measured at about a tenth of the basin's surface across a
+   * six-per-cent band of the frame. Tilting the basin opens it — the far wall
+   * rises into the frame as an amphitheatre of terraces facing the viewer, and
+   * the near lip drops so the sight line clears it. Nothing about the basin's
+   * depth or radius changes; it is the same bowl, presented to the lens rather
+   * than away from it.
+   *
+   * Positive tilts the far side up. It is applied as a lift across the whole
+   * bowl, so the floor tilts with it and the drainage from the far sources into
+   * the basin still descends.
+   */
+  readonly tilt: number;
 };
 
 /**
@@ -89,8 +106,26 @@ export type TerrainFieldOptions = {
   readonly extent: { readonly minX: number; readonly maxX: number; readonly minZ: number; readonly maxZ: number };
 };
 
-const BASE_AMPLITUDE = 6.4;
-const BASE_FREQUENCY = 0.0052;
+/**
+ * The world's vertical unit.
+ *
+ * These figures were an order of magnitude too small for a long time, and the
+ * symptom is worth recording because it did not look like a scale bug. At an
+ * amplitude of 6.4 over an extent 2000 units across, the whole landscape measured
+ * 4.7 units of relief against a camera standing 25 above it: the world subtended
+ * about six degrees of a forty-eight degree frame, which is a *thin horizontal
+ * band*, and it read as a broken camera or a broken material rather than as a
+ * flat world. Two rounds of work went into the rig and the terrain material
+ * before anybody measured `max - min`.
+ *
+ * The scale is now authored as what it should read as: the near bank is a
+ * shoulder the camera stands on, the basin is a bowl several hundred units deep,
+ * and the far bank is tall enough that the fog swallows it rather than the frame
+ * ending. The ratios between the terms are the ones that were already tuned —
+ * what changed is the unit they are expressed in.
+ */
+export const BASE_AMPLITUDE = 42;
+const BASE_FREQUENCY = 0.0031;
 const BASE_OCTAVES = 4;
 const BASE_LACUNARITY = 2.07;
 const BASE_GAIN = 0.47;
@@ -120,10 +155,30 @@ const BASE_GAIN = 0.47;
  */
 const BASIN_LATITUDE = -300;
 /** How high the near bank stands above the basin's own latitude. */
-const NEAR_BANK_RISE = 11;
+const NEAR_BANK_RISE = 120;
 /** How high the far sources stand above it. The far bank is taller: it is what
  *  the rivers come down off, and it is what the fog has to swallow. */
-const FAR_BANK_RISE = 18;
+const FAR_BANK_RISE = 260;
+
+/**
+ * Where the near bank's rise tops out — and so, since the ground behind it is
+ * flat, where the camera's shoulder is.
+ *
+ * This is a framing constant wearing a terrain constant's clothes, and it is
+ * here rather than in the descriptor because it is the *shape* of the ground: the
+ * near bank does not level off before the basin, it levels off behind the camera
+ * and falls continuously from there to the basin floor. The earlier value put the
+ * top of the rise 220 units *past* the camera's station, which left the camera
+ * standing on a plateau — and a plateau is a horizon in front of the lens: the
+ * near ground occludes the basin however tall the far bank is.
+ *
+ * The number is the descriptor's `IDLE_CAMERA_XZ` Z. The two are the same fact
+ * from two sides: the field cannot read the camera's station without depending on
+ * the camera, and the camera's station is meaningless without the ground it
+ * stands on. `watershedDescriptor.test.ts` asserts they agree, so that moving one
+ * without the other is a test failure rather than a subtle flattening.
+ */
+export const NEAR_PEAK_Z = 480;
 
 /**
  * The ground height of the featureless world at a given `z`.
@@ -133,7 +188,9 @@ const FAR_BANK_RISE = 18;
  * it rather than to the noisy total.
  */
 export function terrainProfile(z: number): number {
-  const nearBank = NEAR_BANK_RISE * smoothstep(BASIN_LATITUDE, BASIN_LATITUDE + 560, z);
+  // The rise completes at the camera's own station, so the descent to the basin
+  // is the entire foreground and there is no flat shelf in front of the lens.
+  const nearBank = NEAR_BANK_RISE * smoothstep(BASIN_LATITUDE, NEAR_PEAK_Z, z);
   const farBank = FAR_BANK_RISE * smoothstep(BASIN_LATITUDE - 40, BASIN_LATITUDE - 860, z);
   return nearBank + farBank;
 }
@@ -346,13 +403,18 @@ function distanceToSpineInto(
  * radial falloff is a funnel, and a funnel seen from above is a target. Stepping
  * the profile gives concentric shelves whose edges catch light differently, so
  * the shape reads as layered material that has settled in stages.
+ *
+ * The `tilt` is the same argument made about the *camera* rather than about the
+ * material: a symmetric bowl is a hole that its own near lip hides, and tilting
+ * the far side up turns what the lens sees from a ring into a terraced
+ * amphitheatre. See the field on `BasinShape.tilt` for the measurement.
  */
 function basinTerm(x: number, z: number, basin: BasinShape): number {
   // An absent basin is expressed as zero depth and zero rim, and its zero radius
   // would put a NaN through every division below and out into the whole height
   // field. Rejecting it here rather than at each call site is what lets the
   // descriptor hand in a basin entry for every region unconditionally.
-  if (basin.depth === 0 && basin.rimHeight === 0) return 0;
+  if (basin.depth === 0 && basin.rimHeight === 0 && basin.tilt === 0) return 0;
 
   const radius = Math.max(basin.radius, 0);
   const band = Math.max(basin.rimWidth, 0);
@@ -379,7 +441,22 @@ function basinTerm(x: number, z: number, basin: BasinShape): number {
   const levels = bowl * terraces;
   const shelf = (Math.floor(levels) + Math.pow(levels - Math.floor(levels), 0.55)) / terraces;
 
-  return -basin.depth * shelf + rim;
+  // The tilt, as a signed fraction of the span: +1 at the far edge, -1 at the
+  // near one, and zero across the centre line so the floor's own height is
+  // unchanged.
+  const span = radius + band;
+  const acrossSpan = span > 0 ? Math.min(Math.max((basin.centre[1] - z) / span, -1), 1) : 0;
+
+  // and faded to nothing across the rim band, because the tilt has to *end*
+  // somewhere. Outside the basin the term is zero, so a tilt still at full
+  // strength at the basin's outer edge would step by the whole tilt in one
+  // sample — a sixty-unit cliff ringing the basin where its influence stops,
+  // which is both wrong as terrain and visible as a seam. The rim band is
+  // already the basin's fade region and the weight is smooth at both of its
+  // ends, so the tilted bowl meets the surrounding ground with matching slopes.
+  const tiltWeight = band > 0 ? smoothstep(radius + band, radius, distance) : 1;
+
+  return -basin.depth * shelf + rim + basin.tilt * acrossSpan * tiltWeight;
 }
 
 function channelTerm(x: number, z: number, channel: ChannelShape): number {

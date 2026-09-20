@@ -23,6 +23,7 @@
 import type { GraphNodeId } from '../../graph/types';
 import { hashSigned, hashUnit, normalizeSeed } from '../seedRandom';
 import {
+  BASE_AMPLITUDE,
   distanceToSpine,
   terrainHeight,
   type BasinShape,
@@ -198,11 +199,62 @@ export type WatershedDescriptor = {
 const EXTENT = { minX: -1000, maxX: 1000, minZ: -1200, maxZ: 620 } as const;
 
 const BASIN_CENTRE: Vector2 = [0, -300];
+/**
+ * The basin's mouth radius, which is a *framing* number and not a depth one.
+ *
+ * It did not change when the world's vertical scale went up by an order of
+ * magnitude, and that is deliberate rather than an oversight. `shots.ts` derives
+ * the vista distance from this radius — the distance at which the mouth fits
+ * inside the frame with the rim still in shot — and at 190 that distance is
+ * about 790, which is what the extent's `maxZ` of 620 was chosen to hold. A
+ * wider basin buys a deeper-looking bowl and costs the extent, the corridor and
+ * every shot's station, for a rim that would then be cropped. The basin reads as
+ * deep because it is now *steep* — see `BASIN_DEPTH` — not because it is wide.
+ */
 const BASIN_RADIUS = 190;
-const BASIN_DEPTH = 52;
+/**
+ * How far the basin floor falls below the profile line at its own latitude.
+ *
+ * Against the 120-unit near bank this puts the floor 285 below the camera's
+ * shoulder, so the vista looks *down into* the world rather than across it, which
+ * is the entire difference between a landscape and a diagram of one.
+ */
+const BASIN_DEPTH = 165;
 const BASIN_TERRACES = 5;
 const BASIN_RIM_WIDTH = 46;
-const BASIN_RIM_HEIGHT = 7;
+const BASIN_RIM_HEIGHT = 22;
+/**
+ * How far the basin's far side stands above its near side.
+ *
+ * The composition's other half, and the reason the basin reads as a structure
+ * rather than as a ring. A symmetric bowl hides its own interior behind its near
+ * lip — measured at 22 of 216 interior samples visible, across a six-per-cent
+ * band of the frame — and no amount of camera work recovers it, because the
+ * occluder *is* the near lip: any eye low enough to keep a horizon in frame is
+ * an eye looking along the lip rather than over it.
+ *
+ * Tilting the far side up by 60 and the near side down by the same turns the
+ * hidden interior into a terraced wall facing the lens. It is expressed against
+ * the basin's depth so the two stay in proportion: at 165 deep this is a
+ * thirty-six per cent tilt across the span.
+ */
+const BASIN_TILT = 60;
+
+/**
+ * How much deeper the channels cut than they were first authored to.
+ *
+ * The depths in `RIVER_SEEDS` were written against a world whose base relief was
+ * 6.4 units; it is 42 now and the banks stand 120 and 260. A seventeen-unit cut
+ * in that is a scratch, which is why the far bank read as a smooth wall with no
+ * rivers on it.
+ *
+ * The *widths* are deliberately untouched. The camera's station has not moved,
+ * so a river's screen width is exactly what it was, and the thing that broke was
+ * the ratio of cut to relief. Scaling the widths too would have been a second,
+ * unrelated change borrowing the first one's justification — and the one thing
+ * that must not happen here is an unmeasured change.
+ */
+const CHANNEL_DEPTH_SCALE = 2.6;
 
 /**
  * Where the idle camera stands, in XZ, and how much air it needs under it.
@@ -211,9 +263,16 @@ const BASIN_RIM_HEIGHT = 7;
  * beyond `-1000` in Z and every river's conclusion is at the basin, so nothing
  * the descriptor can generate comes anywhere near the corridor. The test that
  * holds this is what makes the clearance a promise rather than a hope.
+ *
+ * The clearance is the camera's height above the ground at its own feet, and it
+ * has to be read as a *framing* figure alongside `NEAR_BANK_RISE`: at 22 against
+ * a 120-unit bank the camera skims the shoulder, and the near ground then subtends
+ * most of the frame with the basin crushed into the sliver above it. Standing 85
+ * above the shoulder is what makes the near field a foreground layer instead of
+ * the whole image.
  */
 const IDLE_CAMERA_XZ: Vector2 = [0, 480];
-const IDLE_CLEARANCE = 22;
+const IDLE_CLEARANCE = 85;
 const IDLE_CORRIDOR_RADIUS = 46;
 const IDLE_CORRIDOR_HALF_LENGTH = 40;
 
@@ -315,26 +374,39 @@ export const WATERSHED_PALETTE = Object.freeze({
 /**
  * What each behaviour does to the ground it sits in.
  *
- * The amplitudes are relative to `BASE_AMPLITUDE` (6.4), so a delta's runnels
- * are a fraction of the world's own relief while a ravine cuts considerably
- * deeper. `step: 0` means the pattern is never quantised, and the two domains
- * with a non-zero step are the two whose character *is* the stepping — the
- * spectral terraces and the throughput strata — which is what distinguishes them
- * from each other by silhouette rather than by colour.
+ * The amplitudes are genuinely *relative* to `BASE_AMPLITUDE` — written as
+ * products of it rather than as numbers that a comment claims are relative to
+ * it. That distinction cost a round of work: the figures used to be the absolute
+ * heights 4.2 / 14 / 7.5 / 9.5 / 1.6, tuned against a base amplitude of 6.4, and
+ * when the world's vertical scale went up by an order of magnitude the five
+ * regions quietly flattened into the base noise. Nothing failed; the regions
+ * simply stopped being distinguishable in a frame, which is a far more expensive
+ * way to find out. Expressed as multiples, a change to the world's scale carries
+ * them with it.
+ *
+ * `step` is not scaled, and that is correct rather than an omission: it is a
+ * quantisation of the *pattern*, whose range is about one unit, not a height in
+ * world units. The same step on a taller amplitude gives the same shelves,
+ * stretched.
+ *
+ * `step: 0` means the pattern is never quantised, and the two domains with a
+ * non-zero step are the two whose character *is* the stepping — the spectral
+ * terraces and the throughput strata — which is what distinguishes them from
+ * each other by silhouette rather than by colour.
  */
 const BEHAVIOUR_TERRAIN: Readonly<Record<DomainBehaviour, Omit<DomainTerrain, 'centre' | 'radius'>>> =
   Object.freeze({
     // Many fine runnels, shallow and close together. Competing candidates.
-    delta: { amplitude: 4.2, frequency: 0.062, terrace: 0, step: 0, invert: 0 },
+    delta: { amplitude: BASE_AMPLITUDE * 0.66, frequency: 0.062, terrace: 0, step: 0, invert: 0 },
     // Deep, wide, evenly spaced shelves.
-    terraces: { amplitude: 14, frequency: 0.019, terrace: 0.9, step: 2.8, invert: 0 },
+    terraces: { amplitude: BASE_AMPLITUDE * 2.2, frequency: 0.019, terrace: 0.9, step: 2.8, invert: 0 },
     // A hollow: the ravine is cut by its own channel, and this only roughens it.
-    ravine: { amplitude: 7.5, frequency: 0.016, terrace: 0.3, step: 3.2, invert: -1 },
+    ravine: { amplitude: BASE_AMPLITUDE * 1.17, frequency: 0.016, terrace: 0.3, step: 3.2, invert: -1 },
     // Shallower than the terraces and twice as regular. Throughput, not optics.
-    strata: { amplitude: 9.5, frequency: 0.024, terrace: 1, step: 1.9, invert: 0 },
+    strata: { amplitude: BASE_AMPLITUDE * 1.48, frequency: 0.024, terrace: 1, step: 1.9, invert: 0 },
     // Almost nothing. The emptiness is the point, and it is load-bearing: it is
     // the frame's only large quiet area.
-    expanse: { amplitude: 1.6, frequency: 0.009, terrace: 0, step: 0, invert: 0 },
+    expanse: { amplitude: BASE_AMPLITUDE * 0.25, frequency: 0.009, terrace: 0, step: 0, invert: 0 },
   });
 
 const DOMAIN_BEHAVIOUR: Readonly<Record<DomainId, DomainBehaviour>> = Object.freeze({
@@ -607,7 +679,7 @@ function deltaBranches(centre: Vector2, radius: number, count: number, seed: num
       // candidates meeting rather than as unrelated scratches.
       spine: [far, midpoint, centre],
       width: 7 + hashUnit(seed, 6200 + index * 13) * 5,
-      depth: 3.2 + hashUnit(seed, 6300 + index * 11) * 2.4,
+      depth: (3.2 + hashUnit(seed, 6300 + index * 11) * 2.4) * CHANNEL_DEPTH_SCALE,
       fullFrom: 0.05,
       fullTo: 0.96,
     });
@@ -628,7 +700,7 @@ function ravineBranches(spine: readonly Vector2[], width: number): ChannelShape[
         z + offset * 0.25 * side,
       ] as Vector2),
       width: width * 0.42,
-      depth: 9,
+      depth: 9 * CHANNEL_DEPTH_SCALE,
       fullFrom: 0.14,
       fullTo: 0.88,
     });
@@ -660,6 +732,9 @@ export function createWatershedDescriptor(seedInput: number, detailInput: number
     terraces: basinTerraces,
     rimWidth: BASIN_RIM_WIDTH,
     rimHeight: BASIN_RIM_HEIGHT,
+    // Scaled with the depth rather than fixed: the tilt is what the lens sees
+    // of the bowl, and a deeper bowl has more to open up.
+    tilt: basinDepth * (BASIN_TILT / BASIN_DEPTH),
   };
 
   // --- Rivers and the channels they carve ------------------------------------
@@ -698,7 +773,7 @@ export function createWatershedDescriptor(seedInput: number, detailInput: number
       width: definition.width * 1.35,
       // The carve follows the flow rate, so a river that runs slower is also a
       // river that has cut less — one number, two consequences.
-      depth: definition.depth * (0.85 + flowRate * 0.3),
+      depth: definition.depth * (0.85 + flowRate * 0.3) * CHANNEL_DEPTH_SCALE,
       // A river enters the ground rather than starting in mid-air: full depth is
       // reached a little way in from the source and held until the mouth.
       fullFrom: 0.1,

@@ -75,6 +75,22 @@ export type TerrainGeometryOptions = {
   /** The basin, so depth darkening can be measured from it. */
   readonly basin: Vector2;
   readonly basinFloor: number;
+  /**
+   * How far the basin's floor falls below the ground around it.
+   *
+   * The scale of the baked *altitude* term, and it is the depth rather than a
+   * written-down span because the two are the same statement. Altitude exists to
+   * separate the banks from the floor between them, so its natural zero is the
+   * floor and its natural one is the rim; dividing by the basin's own depth makes
+   * the ramp reach exactly 1 at the rim for every seed, and a hand-picked divisor
+   * would have to be re-picked the first time a seed built a deeper bowl.
+   *
+   * The previous divisor was a literal 46 against a floor of −182, so altitude
+   * saturated at 1 for every surface above −136 — which is to say *every surface
+   * in the frame*. The term was measuring nothing and the basin's interior came
+   * out as one flat midnight with no gradient in it at all.
+   */
+  readonly basinDepth: number;
   /** Direction the key light comes from. Matches the shots' own key light. */
   readonly keyLight: readonly [number, number, number];
   readonly regions: readonly TerrainRegion[];
@@ -274,6 +290,34 @@ const BASIN_TINT_REACH = 190;
 const DEPTH_HAZE = 0.6;
 
 /**
+ * The lighting's two constants, and they are one decision.
+ *
+ * `facing` is the cosine between a face and the key light, and it drives both how
+ * much of the key's *colour* reaches the surface (`LIT_FLOOR`) and how much value
+ * the surface has at all (`VALUE_FLOOR`). Both floors are above zero, and that is
+ * the whole point: a hard lambert term multiplies out to nothing on a face turned
+ * away from the light, and "nothing" is not a colour ground can be. The measured
+ * failure was exact — the shadowed side of every ridge came out at a linear blue
+ * of about 0.014 against a sky whose own haze band sits at 0.052, so the terrain
+ * had *holes* in it through which the sky showed, and the world read as a
+ * crumpled ribbon with the background visible through its folds.
+ *
+ * The floors are sized against that measurement rather than by taste. Multiplying
+ * the two terms, a fully shadowed face lands at 0.34 × 0.55 = 0.19 of the key
+ * colour, which is a linear blue of about 0.077 — comfortably above the sky's
+ * 0.052, so shadowed ground reads as ground and its silhouette against the sky is
+ * a *value* rather than a cut-out. A fully lit face lands at 1.0, giving the frame
+ * roughly a four-to-one range between its lightest and darkest ground.
+ *
+ * These are deliberately the same *shape* as the half-lambert in `oriented` below
+ * — a floor plus a complement — because they are the same statement about the same
+ * light, and two different shapes would mean the colour mix and the value range
+ * disagreeing about how much light had reached a face.
+ */
+const LIT_FLOOR = 0.34;
+const VALUE_FLOOR = 0.55;
+
+/**
  * The baked vertex colour: orientation, altitude and depth, in that order.
  *
  * Three terms and no more, because each is a different kind of statement and
@@ -281,14 +325,17 @@ const DEPTH_HAZE = 0.6;
  *
  *  1. **Orientation** against the key light. This is what gives a bank its mass
  *     and a basin its readable lip, and it is the term that would have come from
- *     a light rig.
- *  2. **Altitude** relative to the basin floor, which is what separates the two
- *     banks from the floor between them and stops the far ground from meeting the
- *     near ground in value.
+ *     a light rig. It carries both the colour mix and the value range, and both
+ *     have a floor — see `LIT_FLOOR`.
+ *  2. **Altitude** up from the basin floor, which is what gives the bowl an
+ *     interior gradient instead of one flat tone. It saturates at the rim by
+ *     construction and says nothing about the banks.
  *  3. **Depth**, which darkens toward the horizon so the far field settles into
  *     the background as a silhouette. A depth cue that *multiplies* the whole
  *     term stack gives a far end, where a fade toward the background colour gives
  *     a wash, because a wash is what a fade to grey is once the fog is also grey.
+ *     This is also the term that separates the near bank from the far one, since
+ *     altitude no longer can.
  *
  * The region's own ground hue is folded into the ramp *before* the light, not laid
  * over the result afterwards, because a region is not a tint on a lit surface — it
@@ -315,7 +362,8 @@ const DEPTH_HAZE = 0.6;
  * cue the fog is already delivering.
  */
 export function buildTerrainGeometry(options: TerrainGeometryOptions): TerrainGeometry {
-  const { field, resolution, attentionZ, basin, basinFloor, keyLight, regions } = options;
+  const { field, resolution, attentionZ, basin, basinFloor, basinDepth, keyLight, regions } =
+    options;
   const { minX, maxX, minZ, maxZ } = field.extent;
   const columns = resolution + 1;
   const rows = resolution + 1;
@@ -375,11 +423,15 @@ export function buildTerrainGeometry(options: TerrainGeometryOptions): TerrainGe
 
       // Orientation: half-lambert, so a face turned away is dark rather than
       // black and the terrain does not develop holes where the key light misses.
-      const facing = normal[0] * key[0] + normal[1] * key[1] + normal[2] * key[2];
-      const oriented = 0.42 + 0.58 * Math.max(0, facing);
+      const facing = Math.max(0, normal[0] * key[0] + normal[1] * key[1] + normal[2] * key[2]);
+      const oriented = VALUE_FLOOR + (1 - VALUE_FLOOR) * facing;
 
-      // Altitude: 0 at the basin floor, 1 at the highest bank.
-      const altitude = Math.min(1, Math.max(0, (height - basinFloor) / 46));
+      // Altitude: 0 at the basin floor, 1 at the basin's rim and above. Scaled by
+      // the basin's own depth, so the ramp spans the bowl exactly — see
+      // `basinDepth`. It saturates on both banks, deliberately: this term is about
+      // the bowl, and the near bank and the far bank are separated by `depth`
+      // below, which is the composition's own axis.
+      const altitude = Math.min(1, Math.max(0, (height - basinFloor) / Math.max(1, basinDepth)));
       // Depth along the axis the camera looks down: 0 where it stands, 1 at the
       // world's far edge. Not the distance from the basin — see the note above.
       const depth = Math.min(
@@ -457,7 +509,7 @@ export function buildTerrainGeometry(options: TerrainGeometryOptions): TerrainGe
       const lit0 = air === null ? COBALT[0] : COBALT[0] + (air[0] - COBALT[0]) * keyMix;
       const lit1 = air === null ? COBALT[1] : COBALT[1] + (air[1] - COBALT[1]) * keyMix;
       const lit2 = air === null ? COBALT[2] : COBALT[2] + (air[2] - COBALT[2]) * keyMix;
-      const litBy = Math.max(0, facing) * altitude;
+      const litBy = (LIT_FLOOR + (1 - LIT_FLOOR) * facing) * altitude;
       const lifted = [
         base0 + (lit0 - base0) * litBy,
         base1 + (lit1 - base1) * litBy,
@@ -474,6 +526,19 @@ export function buildTerrainGeometry(options: TerrainGeometryOptions): TerrainGe
   // Two triangles per cell, as one `Uint32Array` rather than an array of arrays:
   // the resolution reaches 440, which is 387,200 triangles and well past the
   // 65,535 a `Uint16Array` can address.
+  //
+  // The vertex order is counter-clockwise seen from above, and that is not a
+  // detail: it is what makes the surface *front-facing*, and the mesh is drawn
+  // with the default `FrontSide`, so a cell wound the other way is culled and the
+  // landscape disappears. This was written the other way round and the cost was
+  // not a subtle difference in shading. A downward-wound height field seen from
+  // above survives only where the ground tilts *away* from the lens — the back
+  // faces of ridges — so the world rendered as a few thin ribbons of crumpled
+  // foil floating over the sky, and the whole lower frame, which is a continuous
+  // sheet of ground a couple of hundred units from the eye, showed nothing but
+  // air. It survived a full stage of work because every assertion about this mesh
+  // was about where its vertices *are*, and none was about which way its faces
+  // point. `terrainGeometry.test.ts` now checks the facing directly.
   const cellCount = resolution * resolution;
   const indices = new Uint32Array(cellCount * 6);
   let write = 0;
@@ -484,11 +549,11 @@ export function buildTerrainGeometry(options: TerrainGeometryOptions): TerrainGe
       const bottomLeft = topLeft + columns;
       const bottomRight = bottomLeft + 1;
       indices[write] = topLeft;
-      indices[write + 1] = bottomLeft;
-      indices[write + 2] = topRight;
+      indices[write + 1] = topRight;
+      indices[write + 2] = bottomLeft;
       indices[write + 3] = topRight;
-      indices[write + 4] = bottomLeft;
-      indices[write + 5] = bottomRight;
+      indices[write + 4] = bottomRight;
+      indices[write + 5] = bottomLeft;
       write += 6;
     }
   }

@@ -77,6 +77,7 @@ export function TerrainView({
       attentionZ,
       basin: descriptor.basin.centre,
       basinFloor: descriptor.basinFloor,
+      basinDepth: descriptor.basin.depth,
       keyLight,
       regions: descriptor.domains.map((domain) => ({
         centre: domain.centre,

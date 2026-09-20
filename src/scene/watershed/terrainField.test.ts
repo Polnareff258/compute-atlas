@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BASE_AMPLITUDE,
   fractalNoise2D,
   insideExtent,
   terrainHeight,
@@ -26,6 +27,7 @@ const FLAT_BASIN: BasinShape = {
   terraces: 4,
   rimWidth: 0,
   rimHeight: 0,
+  tilt: 0,
 };
 
 const EXTENT = { minX: -800, maxX: 800, minZ: -800, maxZ: 200 };
@@ -144,6 +146,7 @@ describe('terrainHeight', () => {
       terraces: 5,
       rimWidth: 40,
       rimHeight: 6,
+      tilt: 0,
     };
     const plain = options();
     // Depth zero isolates the rim from the bowl.
@@ -176,6 +179,7 @@ describe('terrainHeight', () => {
       terraces: 5,
       rimWidth: 40,
       rimHeight: 6,
+      tilt: 0,
     };
     const crossing: ChannelShape = {
       spine: [
@@ -225,10 +229,16 @@ describe('terrainHeight', () => {
   });
 
   it('creates a flat floor, not a spike, at a stepped domain', () => {
+    // The amplitude is `BASE_AMPLITUDE` rather than a written-down 10, and that
+    // is the point rather than a convenience: at 10 the stepped and unstepped
+    // spreads measured 3.943 against 3.928, because the base relief's own fine
+    // octaves contribute about four units of variation over a sixty-unit window
+    // and swallowed the domain's whole contribution. The test was then measuring
+    // the base noise, and the domain could have done anything at all inside it.
     const terraced: DomainTerrain = {
       centre: [0, -200],
       radius: 150,
-      amplitude: 10,
+      amplitude: BASE_AMPLITUDE,
       frequency: 0.03,
       terrace: 1,
       step: 0.25,

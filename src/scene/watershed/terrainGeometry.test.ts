@@ -27,6 +27,7 @@ function options(overrides: Partial<TerrainGeometryOptions> = {}): TerrainGeomet
     attentionZ: 480,
     basin: descriptor.basin.centre,
     basinFloor: descriptor.basinFloor,
+    basinDepth: descriptor.basin.depth,
     keyLight: [-0.38, 0.66, 0.65],
     regions: descriptor.domains.map((domain) => ({
       centre: domain.centre,
@@ -98,6 +99,39 @@ describe('the mesh is where the field says it is', () => {
     for (const index of mesh.indices) {
       expect(index).toBeLessThan(mesh.vertexCount);
     }
+  });
+
+  it('winds every triangle counter-clockwise as seen from above', () => {
+    // The facing, and not the shading normal: a triangle's front side is decided
+    // by the order of its indices, and this mesh is drawn `FrontSide`. Wound the
+    // other way every triangle is back-facing from above, so the landscape is
+    // culled and only the ground tilted *away* from the lens survives — the world
+    // renders as a handful of ribbons over the sky, and the near field, which is a
+    // continuous sheet a couple of hundred units from the eye, shows nothing.
+    //
+    // Nothing else in this file could catch it: the positions, the normals and the
+    // colours were all correct while the frame was empty. The assertion is the
+    // right-hand rule on the vertex order, so it is a statement about winding
+    // rather than a golden value, and it holds for a height field at any seed.
+    const mesh = buildTerrainGeometry(options({ resolution: 24 }));
+    const at = (index: number): [number, number, number] => [
+      mesh.positions[index * 3]!,
+      mesh.positions[index * 3 + 1]!,
+      mesh.positions[index * 3 + 2]!,
+    ];
+
+    let upward = 0;
+    for (let triangle = 0; triangle < mesh.triangleCount; triangle += 1) {
+      const a = at(mesh.indices[triangle * 3]!);
+      const b = at(mesh.indices[triangle * 3 + 1]!);
+      const c = at(mesh.indices[triangle * 3 + 2]!);
+      const ab: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const ac: [number, number, number] = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const y = ab[2] * ac[0] - ab[0] * ac[2];
+      expect(y, `triangle ${triangle} faces down`).toBeGreaterThan(0);
+      upward += 1;
+    }
+    expect(upward).toBe(mesh.triangleCount);
   });
 
   it('builds a unit normal on every vertex, pointing up', () => {

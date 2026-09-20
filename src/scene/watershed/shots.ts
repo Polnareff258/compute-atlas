@@ -12,6 +12,7 @@
  * there is no per-frame work: every function below is a function of its
  * arguments alone, so the whole system can be evaluated in a test.
  */
+import type { EasingName } from '../camera/cameraController';
 import { terrainHeight } from './terrainField';
 import type { DomainId, Vector3, WatershedDescriptor } from './watershedDescriptor';
 
@@ -20,6 +21,7 @@ export type ShotId =
   | 'idleVista'
   | 'hoverReveal'
   | 'routeApproach'
+  | 'routeLift'
   | 'domainArrival'
   | 'domainInspection'
   | 'returnVista';
@@ -35,12 +37,21 @@ export const SHOT_IDS = Object.freeze([
   'idleVista',
   'hoverReveal',
   'routeApproach',
+  'routeLift',
   'domainArrival',
   'domainInspection',
   'returnVista',
 ] as const satisfies readonly ShotId[]);
 
-export type EasingName = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
+/**
+ * Re-exported from the rig, which is what actually evaluates it.
+ *
+ * The name is part of a shot's data — a shot says how it wants to be travelled —
+ * but the function that turns a name into a curve is motion, and motion belongs
+ * to the thing that moves. One definition means a shot cannot ask for an easing
+ * the rig does not have.
+ */
+export type { EasingName };
 
 /** A rectangle of the viewport, in fractions: 0 is the left or top edge. */
 export type Rect = {
@@ -260,12 +271,6 @@ export function minimumVistaDistance(coreRadius: number, fov = SHOT_FOV): number
   return coreRadius / (Math.tan((fov * Math.PI) / 360) * bandHalf);
 }
 
-/** The highest ground under a corridor's axis, sampled, with the same margin the descriptor uses. */
-function corridorGround(descriptor: WatershedDescriptor): number {
-  const corridor = descriptor.cameraCorridors.find((candidate) => candidate.id === 'idle');
-  return corridor ? corridor.from[1] : 0;
-}
-
 /** The river that carries a domain's flow: the highest-rate tributary that reaches it. */
 export function riverForDomain(descriptor: WatershedDescriptor, domainId: DomainId) {
   const candidates = descriptor.rivers.filter((river) => river.domainId === domainId);
@@ -321,10 +326,20 @@ function alongRiver(
  */
 function entryShot(descriptor: WatershedDescriptor): ShotFraming {
   const corridor = descriptor.cameraCorridors.find((candidate) => candidate.id === 'idle');
-  const ground = corridorGround(descriptor);
   const basin = descriptor.basin;
 
-  const position: Vector3 = [(corridor?.from[0] ?? 0) + 6, ground + 46, (corridor?.from[2] ?? 480) + 90];
+  // The entry stands *outside* the corridor — it begins the move into it — so it
+  // cannot borrow the corridor's height: that height is a promise about ground
+  // the corridor covers, and 90 units past its end the promise does not hold.
+  // Measured under the camera instead, with the clearance the shot declares on
+  // top. It used to read well only because the world was flat.
+  const entryX = (corridor?.from[0] ?? 0) + 6;
+  const entryZ = (corridor?.from[2] ?? 480) + 90;
+  const position: Vector3 = [
+    entryX,
+    terrainHeight(entryX, entryZ, descriptor.field) + 46,
+    entryZ,
+  ];
   const lookTarget: Vector3 = [basin.centre[0], descriptor.basinFloor + 30, basin.centre[1]];
 
   return framing('entry', position, lookTarget, {
@@ -339,6 +354,37 @@ function entryShot(descriptor: WatershedDescriptor): ShotFraming {
 }
 
 /**
+ * How far above the basin's rim the vista is aimed, as a fraction of the
+ * basin's own depth.
+ *
+ * The aim's height is the single number that decides the whole composition,
+ * because everything else in the frame is at a fixed angle from it. Measured
+ * against the real field at 16:9, aiming *at* the rim puts the world's
+ * silhouette at 0.18 of the frame with the near field taking 0.58 to 1.0 — more
+ * than forty per cent of the image spent on ground the brief only wants as a
+ * foreground layer. Lifting the aim by a third of the depth moves the silhouette
+ * down to about a quarter of the frame and pulls the near field back to about a
+ * third, with the basin's mouth a little below the centre line where the
+ * composition wants it.
+ *
+ * It is expressed relative to the rim and the depth rather than as an absolute
+ * height so that a change to either carries the aim with it. Both numbers were
+ * swept rather than guessed; see the note on the aim target below.
+ */
+const VISTA_AIM_ABOVE_RIM = 0.33;
+
+/**
+ * How much air the camera keeps under it while travelling between two poses.
+ *
+ * Larger than any shot's declared `safeForeground` on purpose: a pose stands
+ * still and can be inspected, whereas a *leg* is a line the camera sweeps
+ * through, and the single worst sample of it is what the shot has to survive.
+ * Twelve is the tightest declared clearance among the seven, and the lift's own
+ * solve uses a wider margin so that the waypoint is not itself a near miss.
+ */
+const MOVE_CLEARANCE = 18;
+
+/**
  * The idle vista, framed from the descriptor's own camera corridor.
  *
  * The camera stands at the corridor's far end and looks at the basin. It is
@@ -346,6 +392,25 @@ function entryShot(descriptor: WatershedDescriptor): ShotFraming {
  * composition continuously, and the composition is the thing this stage is
  * about. The drift is the controller's business; this is the pose it drifts
  * around, and it is a pose the descriptor guarantees is clear of the world.
+ *
+ * The aim is the basin's *rim*, not its floor, and that is a measured
+ * correction rather than a preference. The floor was the aim for a long time,
+ * and the consequence only showed up once somebody projected the world's own
+ * silhouette: aiming at the floor puts the view's axis about 26 degrees below
+ * horizontal, and a 48-degree vertical field of view then has only about 24
+ * degrees above its centre to spend — so the frame's top edge lands *inside* the
+ * far bank and the horizon is cropped away entirely. A sweep over the near
+ * bank's rise, its toe and the camera's clearance found no combination that
+ * fixed it, because raising the eye widens the angle between the horizon and the
+ * basin floor rather than narrowing it. There is no geometry that centres a
+ * deep basin *and* keeps a horizon.
+ *
+ * Aiming at the rim instead costs nothing and buys the whole composition: the
+ * basin's interior takes the lower half, its far rim sits on the centre line,
+ * the far bank and its arriving rivers take the upper third, and above them
+ * there is fog. `shots.test.ts` holds the horizon inside the frame as a test
+ * rather than as a hope, since this is exactly the kind of framing that a later
+ * change to a depth or a clearance would quietly undo.
  */
 export function idleVista(descriptor: WatershedDescriptor, aspect: number): ShotFraming {
   const corridor = descriptor.cameraCorridors.find((candidate) => candidate.id === 'idle');
@@ -354,7 +419,10 @@ export function idleVista(descriptor: WatershedDescriptor, aspect: number): Shot
     : [0, 40, 460];
   const lookTarget: Vector3 = [
     descriptor.basin.centre[0],
-    descriptor.basinFloor + 26,
+    descriptor.basinFloor +
+      descriptor.basin.depth +
+      descriptor.basin.rimHeight +
+      descriptor.basin.depth * VISTA_AIM_ABOVE_RIM,
     descriptor.basin.centre[1],
   ];
 
@@ -374,8 +442,10 @@ export function idleVista(descriptor: WatershedDescriptor, aspect: number): Shot
     // highest ground it sweeps, and this camera stands inside it. This figure is
     // the shot's own, weaker, declared floor, deliberately below that guarantee
     // so the two are not the same number restated. It was 26, which the corridor
-    // does not promise and the pose does not deliver.
-    safeForeground: 20,
+    // does not promise and the pose does not deliver. It was 20 while the world
+    // was an order of magnitude flatter; against a bank 120 tall that is not a
+    // clearance, it is a coincidence.
+    safeForeground: 60,
     lightDirection: KEY_LIGHT,
     fogResponse: 1,
     typography: { anchor: 'bottom-left', titleScale: 0.34, reveal: 1 },
@@ -433,7 +503,19 @@ function routeApproach(
   const ground = terrainHeight(point[0], point[1], descriptor.field);
   const back = river.width * 1.6 + 26;
 
-  const position: Vector3 = [point[0] - forward[0] * back, ground + 26, point[1] - forward[1] * back];
+  // The ground is measured where the camera *stands*, not where the river is.
+  // The two used to be the same number because the world was flat to within a
+  // few units; at the real relief, standing `back` units uphill of the measured
+  // point puts the camera under the ground. It is the same mistake shape as any
+  // other: a height derived at one XZ and spent at another.
+  const standX = point[0] - forward[0] * back;
+  const standZ = point[1] - forward[1] * back;
+  const position: Vector3 = [
+    standX,
+    terrainHeight(standX, standZ, descriptor.field) + 26,
+    standZ,
+  ];
+  // The aim stays at the river's own ground: it is aiming at the river.
   const lookTarget: Vector3 = [anchor[0], ground + 12, anchor[1]];
 
   return framing('routeApproach', position, lookTarget, {
@@ -444,6 +526,98 @@ function routeApproach(
     lightDirection: KEY_LIGHT,
     fogResponse: 0.8,
     typography: { anchor: 'left', titleScale: 0.5, reveal: 0.35 },
+  });
+}
+
+/**
+ * The height a waypoint must reach for a straight leg to clear the ground.
+ *
+ * Solved, not tuned. The rig interpolates linearly between poses — that is a
+ * decision it records and the path tests verify — so a leg between two clear
+ * poses can still cross a ridge, and with the world at its real relief it does:
+ * SYSTEMS has a 147-unit ridge between an approach at 116 and an arrival at 140
+ * that are only 142 apart. The camera flew through it.
+ *
+ * For a leg from a pose at height `y0` to a waypoint at (x, z) at height `y1`,
+ * the line's height at fraction `s` along is `y0 + (y1 - y0) s`. Requiring that
+ * to stand `margin` above the ground at every sample gives, for each sample,
+ * `y1 >= y0 + (margin + ground - y0) / s` — the division by `s` being why a
+ * sample close to the fixed end constrains the waypoint the most. Taking the
+ * maximum over samples and over both legs is the smallest height that works,
+ * which is what keeps the waypoint as low as it can be rather than as high as it
+ * might be. A waypoint lifted further than needed is a waypoint that turns a
+ * fly-through into an aerial.
+ */
+function liftHeightFor(
+  descriptor: WatershedDescriptor,
+  from: Vector3,
+  toX: number,
+  toZ: number,
+  margin: number,
+): number {
+  let needed = -Infinity;
+  const samples = 32;
+  for (let index = 1; index <= samples; index += 1) {
+    const s = index / samples;
+    const x = from[0] + (toX - from[0]) * s;
+    const z = from[2] + (toZ - from[2]) * s;
+    const ground = terrainHeight(x, z, descriptor.field);
+    needed = Math.max(needed, from[1] + (margin + ground - from[1]) / s);
+  }
+  return needed;
+}
+
+/**
+ * The waypoint the focus move rises through: over the ground between the
+ * approach and the arrival, still travelling toward the region.
+ *
+ * It exists because the world is not flat. It is not a shot in the brief's list
+ * — the brief names `routeApproach`, `domainArrival` and `domainInspection`, and
+ * it says "at least these" — and it earns its place by making the two-leg move
+ * verifiable instead of hopeful: the legs are short, each is solved to clear,
+ * and the move reads as the camera rising over the terrain it is crossing rather
+ * than as a cut across it.
+ *
+ * Its aim is the region's own ground, the same subject the arrival takes, so the
+ * rise is spent looking at the destination rather than at the horizon.
+ */
+function routeLift(
+  descriptor: WatershedDescriptor,
+  domainId: DomainId,
+  approach: ShotFraming,
+  arrival: ShotFraming,
+): ShotFraming {
+  const domain = domainById(descriptor, domainId);
+  const anchor: Vector3 = domain
+    ? [domain.centre[0], terrainHeight(domain.centre[0], domain.centre[1], descriptor.field), domain.centre[1]]
+    : [descriptor.basin.centre[0], descriptor.basinFloor, descriptor.basin.centre[1]];
+
+  const midX = (approach.position[0] + arrival.position[0]) / 2;
+  const midZ = (approach.position[2] + arrival.position[2]) / 2;
+
+  // Both legs, because the leg *out of* the waypoint is the one it has to clear
+  // on the way down: solving only the leg in would let the waypoint sit on the
+  // far side of the ridge with nothing to clear until it was already past.
+  const legIn = liftHeightFor(descriptor, approach.position, midX, midZ, MOVE_CLEARANCE);
+  const legOut = liftHeightFor(descriptor, arrival.position, midX, midZ, MOVE_CLEARANCE);
+
+  // Never below either endpoint, which matters in two ways. It makes the move a
+  // rise rather than a dive, and it is what keeps the solve well-defined when
+  // the two endpoints are the *same* pose — a region with no river to travel
+  // falls back to a resting vista, and a waypoint on top of its own endpoint
+  // would otherwise solve to an arbitrarily deep height, because the constraint
+  // `y1 >= y0 + (margin + ground - y0) / s` is unbounded below as `s` shrinks.
+  const atLeast = Math.max(approach.position[1], arrival.position[1]);
+  const position: Vector3 = [midX, Math.max(legIn, legOut, atLeast), midZ];
+
+  return framing('routeLift', position, anchor, {
+    duration: 0.8,
+    easing: 'easeInOut',
+    heroRegion: { left: 0.3, top: 0.24, right: 0.7, bottom: 0.8 },
+    safeForeground: 12,
+    lightDirection: KEY_LIGHT,
+    fogResponse: 0.86,
+    typography: { anchor: 'left', titleScale: 0.54, reveal: 0.55 },
   });
 }
 
@@ -527,10 +701,15 @@ function domainInspection(
   const bearing = away + 0.55;
   const stand = domain.radius * 0.95;
 
+  // Measured under the camera, which is `stand` away from the region's centre —
+  // see `routeApproach` for why spending a centre's height on a ring position is
+  // a hole in the ground once the world has relief.
+  const standX = domain.centre[0] + Math.cos(bearing) * stand;
+  const standZ = domain.centre[1] + Math.sin(bearing) * stand;
   const position: Vector3 = [
-    domain.centre[0] + Math.cos(bearing) * stand,
-    terrainHeight(domain.centre[0], domain.centre[1], descriptor.field) + 46,
-    domain.centre[1] + Math.sin(bearing) * stand,
+    standX,
+    terrainHeight(standX, standZ, descriptor.field) + 46,
+    standZ,
   ];
   const lookTarget: Vector3 = [
     domain.centre[0],
@@ -608,21 +787,152 @@ export function planShots(
 ): Readonly<Record<ShotId, ShotFraming>> {
   const domain = activeDomain ?? 'graphics';
 
+  const approach = activeDomain
+    ? routeApproach(descriptor, domain, aspect)
+    : restingVista(descriptor, aspect, 'routeApproach');
+  const arrival = activeDomain
+    ? domainArrival(descriptor, domain, aspect)
+    : restingVista(descriptor, aspect, 'domainArrival');
+
   return {
     entry: entryShot(descriptor),
     idleVista: idleVista(descriptor, aspect),
     hoverReveal: hoverReveal(descriptor, aspect),
-    routeApproach: activeDomain
-      ? routeApproach(descriptor, domain, aspect)
-      : restingVista(descriptor, aspect, 'routeApproach'),
-    domainArrival: activeDomain
-      ? domainArrival(descriptor, domain, aspect)
-      : restingVista(descriptor, aspect, 'domainArrival'),
+    routeApproach: approach,
+    // Built from the two poses it sits between, so it is where the move actually
+    // is rather than where a second copy of the choreography thinks it is.
+    routeLift: routeLift(descriptor, domain, approach, arrival),
+    domainArrival: arrival,
     domainInspection: activeDomain
       ? domainInspection(descriptor, domain, aspect)
       : restingVista(descriptor, aspect, 'domainInspection'),
     returnVista: returnVista(descriptor, aspect),
   };
+}
+
+// --- The choreography --------------------------------------------------------
+
+/**
+ * What the camera is being asked to do, in the rig's own vocabulary.
+ *
+ * Deliberately not the graph interaction state. That state is about which node
+ * the pointer is over and how far an operation has run; this is about which shot
+ * the camera is in, and the mapping between them is one function
+ * (`deriveShotIntent`) rather than a habit spread across the call sites. The
+ * brief's camera requirements are stated in these terms — enter, hover, focus,
+ * escape — so these are the terms the code uses.
+ */
+export type ShotIntent = 'entry' | 'rest' | 'hover' | 'focus' | 'escape';
+
+/** How far back along its own view axis, and how much higher, the entry starts. */
+const ENTRY_APPROACH_BACK = 0.55;
+const ENTRY_APPROACH_RISE = 0.32;
+
+export const SHOT_INTENTS = Object.freeze([
+  'entry',
+  'rest',
+  'hover',
+  'focus',
+  'escape',
+] as const satisfies readonly ShotIntent[]);
+
+/**
+ * An intent, read off the interaction state and what the camera was last doing.
+ *
+ * `previous` is an argument rather than internal memory because escape is the one
+ * intent that is about a *change* — it is what happens when a focus is released
+ * — and a function that remembered would be a function whose answer depended on
+ * how many times it had been called. The caller holds one `ShotIntent` and hands
+ * it back, which is the whole of the state.
+ *
+ * The order of the branches is the precedence, and the case worth naming is that
+ * a hover arriving while a focus is settling does not downgrade the camera: the
+ * focus is still bound, so `focused` wins and `previous` is not consulted.
+ */
+export function deriveShotIntent(input: {
+  readonly focused: DomainId | null;
+  readonly hovered: DomainId | null;
+  /** False until the entry sequence has landed. */
+  readonly entered: boolean;
+  readonly previous: ShotIntent;
+}): ShotIntent {
+  // Before the world is entered there is no other intent to be had: hover and
+  // focus are answers to a pointer on a landscape the visitor has not arrived at.
+  if (!input.entered) return 'entry';
+  if (input.focused !== null) return 'focus';
+  if (input.hovered !== null) return 'hover';
+  if (input.previous === 'focus' || input.previous === 'escape') return 'escape';
+  return 'rest';
+}
+
+/**
+ * The ordered shots an intent plays, and the name the rig keys it by.
+ *
+ * The order is the choreography, and each list is a complete answer to "what
+ * does the camera do from here". `entry` chains into the vista rather than
+ * stopping at the gate, because the brief's entry is one continuous arrival —
+ * through the gate, then the landscape resolving — and splitting it would put a
+ * seam exactly where the reveal is. `escape` chains back to the vista for the
+ * same reason in reverse: a decompression that stopped at the withdrawn pose
+ * would leave the visitor somewhere they never chose to be.
+ *
+ * `rest` is a single resting pose. Asking for it when the rig is already there
+ * costs nothing — the rig cuts to a pose it is already holding — which is what
+ * makes it safe for the caller to ask for its intent on every frame.
+ */
+export function sequenceFor(intent: ShotIntent): readonly ShotId[] {
+  switch (intent) {
+    case 'entry':
+      return ['entry', 'idleVista'];
+    case 'hover':
+      return ['hoverReveal'];
+    case 'focus':
+      // Three moves rather than two: `routeLift` is the waypoint the traverse
+      // crosses the intervening ground through. The brief asks for a 2–4s
+      // cinematic move and this is 1.4 + 0.8 + 1.1 = 3.3s, still inside it, with
+      // the inspection framing resting after the arrival.
+      return ['routeApproach', 'routeLift', 'domainArrival', 'domainInspection'];
+    case 'escape':
+      return ['returnVista', 'idleVista'];
+    default:
+      return ['idleVista'];
+  }
+}
+
+/**
+ * The pose the entry move starts from.
+ *
+ * Not a shot: it is never rested in, never captured as a state, and has no
+ * typography. It exists because the entry has to come from *somewhere*, and the
+ * brief's entry is a passage — the camera travels through a gate and the
+ * landscape resolves — so the first thing the visitor sees must not be a static
+ * frame that then jumps. Derived from the entry pose by stepping back along its
+ * own view axis and rising, so it is always behind and above the gate whatever
+ * the descriptor does to the entry pose.
+ */
+export function entryApproachPose(entry: ShotFraming): ShotFraming {
+  const dx = entry.position[0] - entry.lookTarget[0];
+  const dy = entry.position[1] - entry.lookTarget[1];
+  const dz = entry.position[2] - entry.lookTarget[2];
+  const length = Math.hypot(dx, dy, dz) || 1;
+
+  const back = length * ENTRY_APPROACH_BACK;
+  return framing(
+    'entry',
+    [entry.position[0] + (dx / length) * back, entry.position[1] + (dy / length) * back + length * ENTRY_APPROACH_RISE, entry.position[2] + (dz / length) * back],
+    entry.lookTarget,
+    {
+      duration: 0,
+      easing: 'linear',
+      heroRegion: entry.heroRegion,
+      // Larger than the entry's own: this pose stands further out, over more
+      // ground, and the clearance the two of them share has to hold for both.
+      safeForeground: entry.safeForeground * 2,
+      lightDirection: entry.lightDirection,
+      fogResponse: entry.fogResponse,
+      typography: entry.typography,
+    },
+  );
 }
 
 // --- C1: choosing what to look at --------------------------------------------

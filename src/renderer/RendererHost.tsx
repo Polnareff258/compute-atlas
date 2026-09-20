@@ -20,7 +20,7 @@ import {
 } from './runtime';
 import { useReducedMotionPreference } from './reducedMotion';
 import {
-  BASE_CAMERA_DISTANCE,
+  BOOTSTRAP_CAMERA_POSITION,
   CAMERA_FOV_DEGREES,
 } from '../scene/camera/cameraController';
 import { SceneHost } from '../scene/SceneHost';
@@ -156,7 +156,12 @@ export function RendererHost() {
           flat: true,
           camera: {
             fov: CAMERA_FOV_DEGREES,
-            position: [0, 0, BASE_CAMERA_DISTANCE],
+            // Where the camera stands for the one frame before `SceneHost` snaps
+            // the rig to the entry's approach pose. Outside the world on purpose,
+            // so that frame is dark sky rather than the inside of a hill — the
+            // previous form of this line was a rift-era distance that put the
+            // watershed's camera underground.
+            position: [BOOTSTRAP_CAMERA_POSITION[0], BOOTSTRAP_CAMERA_POSITION[1], BOOTSTRAP_CAMERA_POSITION[2]],
           },
           events: (store) => {
             const manager = events(store);
