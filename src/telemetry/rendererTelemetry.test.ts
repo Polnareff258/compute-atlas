@@ -7,7 +7,9 @@ describe('sampleRendererTelemetry', () => {
     const snapshot = sampleRendererTelemetry({
       renderer: {
         info: {
-          render: { calls: 7, triangles: 1_240 },
+          // `calls` is present and much larger, and it must not be the one that
+          // is read: it is cumulative since page load, not a frame's cost.
+          render: { calls: 41_902, drawCalls: 7, triangles: 1_240 },
           memory: { geometries: 5, textures: 2 },
         },
       },

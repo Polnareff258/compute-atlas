@@ -1,55 +1,66 @@
 import type { GraphLayout, GraphManifest, GraphNodeId } from './types';
 
 /**
- * Deliberately asymmetric and depth-separated.
+ * Deliberately asymmetric, depth-separated and far apart.
  *
- * An earlier revision mirrored the domains in near-identical pairs, which is
- * exactly what makes a graph read as a diagram rather than a place. Each domain
- * sits at its own distance, height and depth so the composition has a near side
- * and a far side, and GRAPHICS sits clearly to the left of the Core: it is the
- * domain the focus choreography reframes against.
+ * The previous revision arranged the five domains on a ring of radius 5 to 6
+ * around a centred monolith. That is the composition of a knowledge graph: one
+ * thing in the middle, five satellites at a similar distance, and a viewer who
+ * can see all of it at once and therefore reads it as a diagram. The brief for
+ * this stage requires the opposite, so the ring is gone and the domains sit at
+ * five different distances, five different heights and five different depths.
  *
- * The radii are set against the Core rather than against each other, and they
- * have now been moved twice for the same reason. The Core's half-extents are
- * 4.05 by 3.30 by 1.50, so a ring of domains at four units is a ring of domains
- * *inside* the subject, and a domain is placed where its own bay clears that box
- * rather than at a fixed radius.
+ * Three consequences of the new composition are encoded here rather than left to
+ * the camera.
  *
- * Measured, four of the five clear it: graphics 6.24 world units from the
- * origin, systems 5.80, ai 5.64, research 4.70. The fifth does not.
- * `game-analysis` sits 3.41 out, which puts it inside the box on every axis at
- * once — above the mass at 2.85 against a top of 3.30, and 1.70 off centre
- * against a half-width of 4.05 — so the crown passes in front of its lower
- * members and the bay reads as mounted on the machine rather than standing
- * beside it. That is the one place the depth overlap this layout is built for
- * turns into occlusion of a whole domain, and it is visible in the idle frame.
- * This paragraph used to claim the domains "sit at 5.8-7.0, which clears the
- * mass on every side". The radii were moved twice after that was written and the
- * claim was never re-measured, so for a stage the comment asserted a clearance
- * the table below it did not have.
+ * **The scale is roughly doubled.** The hero is a fault more than twenty units
+ * long rather than a body eight units wide, so a domain at radius 5 would be
+ * *inside* it. The radii here run from 8.4 to 17.7.
  *
- * That clipping is the composition rather than a defect. Idle is meant to read
- * as a large computed body with bays arranged around it, not as five icons on a
- * ring: two or three domains are legible at rest, the rest are in depth or
- * partly outside the frame, and the focus choreography is what brings one of
- * them fully into view.
+ * **Nothing is on a sphere.** A uniform radius is the second half of what makes
+ * a graph read as a graph: even with the ring broken, five points at one distance
+ * still read as a shell. The radii are 17.7, 15.6, 12.1, 10.7 and 8.4 — five
+ * distinct distances — and the layout test asserts the spread rather than the
+ * numbers.
+ *
+ * **Every domain is reachable.** The previous revision placed them by screen
+ * position and let three of the five fall outside the frame, which reads well in
+ * a still and is false as a system: the GRAPHICS anchor projected to NDC
+ * (-1.03, -0.80), off the left *and* below the bottom edge at once, so no pointer
+ * position anywhere on the canvas reached its pick zone. Hover, focus and the
+ * whole reframe choreography were unreachable for the domain the choreography is
+ * built around, and the capture harness said so as "0 candidate positions around
+ * the GRAPHICS label none reached hovered". A region you cannot point at is not a
+ * region you can select, and being partly cropped is not the same thing as being
+ * off-screen — the brief's "部分结构接近镜头并被裁切" is about the *structure*.
+ *
+ * So position is now resolved against the idle frustum: at BASE_CAMERA_DISTANCE
+ * of 20 and 48 degrees, a point at world depth z has 0.4452·(20 − z) of
+ * half-height and 1.7778 of that in half-width, and every domain is placed to
+ * land inside about three quarters of each. Depth is what buys the room, which is
+ * why the separation now comes from z: the five sit between z = +7 and z = −13,
+ * a spread of twenty units, so the composition has a near bay, a middle and a far
+ * one rather than five things at one distance.
+ *
+ * **GRAPHICS is the near-left bay.** It is the domain the focus choreography
+ * reframes against, and it is placed furthest left and below the fault's own line
+ * so the active corridor arrives at it diagonally rather than head-on. AI runs
+ * back and up into the far dark — the furthest thing in the composition — which
+ * is where a hierarchy being searched should be; game analysis is the nearest and
+ * the most forward, the one that crosses the fault's silhouette; systems sits
+ * right and back; research is right and near, the lowest thing in the frame and
+ * the one the layout holds closest to an edge.
  *
  * The Core stays at the semantic origin. Its off-centre placement in the frame
  * is a camera concern, so it is not encoded here.
  */
 const NODE_LAYOUT: GraphLayout = {
   core: [0, 0, 0],
-  graphics: [-6.15, -0.9, 0.5],
-  ai: [-4.8, 2.5, -1.6],
-  // Held lower and further back than its original height: at the idle framing a
-  // domain near the top edge arrived as an assembly cut in half with its label
-  // off the frame. It is still the highest thing in the composition, which is
-  // what the spread in the layout test reads.
-  'game-analysis': [1.7, 2.85, 0.8],
-  systems: [5.55, 1.25, -1.1],
-  // The lowest and the nearest thing on its side, kept out of the bottom-right
-  // frame corner so its lower members are not cut off by the frame itself.
-  research: [3.85, -2.3, 1.4],
+  graphics: [-10.5, -4.5, 4],
+  ai: [-9.5, 7.4, -13],
+  'game-analysis': [2.7, 3.9, 7],
+  systems: [13.2, 2.1, -8],
+  research: [9.1, -5.3, 2],
 };
 
 /**
@@ -68,23 +79,20 @@ const NODE_LAYOUT: GraphLayout = {
  */
 const NODE_PROMINENCE: Readonly<Record<GraphNodeId, number>> = {
   core: 1,
-  // The reframe domain, and the one whose interior is worth reading.
-  graphics: 0.74,
-  // The clearest of the four sub-environments as a machine, so it earns a name.
-  systems: 0.6,
-  'game-analysis': 0.5,
-  // Outer frame, held back: silhouette only.
-  //
-  // Raised from 0.22 and 0.17. Presence scales the whole response, so at the old
-  // values these two resolved to about a tenth of their tier colour against a
-  // near-black background — dark enough that the body disappeared and only the
-  // brightest edge of a member was left, which is why a dormant domain read as a
-  // scratch rather than as a machine standing in the depth of the frame. A
-  // silhouette has to be dark *and* whole. The margin is thinner than it was
-  // when that was measured, because the backdrop is now a measured step above
-  // the void rather than the void itself.
-  ai: 0.28,
-  research: 0.24,
+  // The reframe domain, nearest to the fault and the one whose interior is worth
+  // reading.
+  graphics: 0.76,
+  // The most ordered of the regions, and the one whose load is legible from far
+  // away, so it carries a name at rest.
+  systems: 0.62,
+  'game-analysis': 0.47,
+  // The two in the depth of the frame, held back to silhouette. They stay above
+  // the noise floor rather than at it: presence scales the whole response, and a
+  // value low enough to make the body disappear leaves only the brightest edge
+  // of a member visible, which reads as a scratch rather than as a region
+  // standing in the dark. A silhouette has to be dark *and* whole.
+  ai: 0.31,
+  research: 0.26,
 };
 
 /** At or above this, a domain carries its name at rest. */

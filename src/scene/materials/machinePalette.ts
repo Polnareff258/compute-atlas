@@ -30,11 +30,11 @@ export const MACHINE_PALETTE = Object.freeze({
    * backdrop by a visible margin at the darkest face a shell can have; below mid
    * grey at the brightest.
    */
-  shellHigh: '#7c8a88',
-  shellMid: '#475456',
-  shellLow: '#263133',
+  shellHigh: '#6e7688',
+  shellMid: '#3c4250',
+  shellLow: '#1e2430',
   /** Recessed interior faces: present, never competing with the silhouette. */
-  interior: '#101a1c',
+  interior: '#0c1017',
 
   /**
    * The depth behind everything: the backdrop planes and nothing else.
@@ -52,18 +52,18 @@ export const MACHINE_PALETTE = Object.freeze({
    * swap, which is exactly what an early revision of this did. This is the value
    * that clears the background without ever approaching the mass.
    */
-  backdrop: '#1b2629',
+  backdrop: '#131b27',
 
   /** Thin layered surfaces. */
-  membrane: '#7fa39e',
-  membraneQuiet: '#3a5250',
+  membrane: '#5f93a4',
+  membraneQuiet: '#2b3f4d',
 
   /** Route ports and ingress sockets. */
-  port: '#d5e9e8',
-  portQuiet: '#78928f',
+  port: '#cfe4f2',
+  portQuiet: '#6d8896',
 
   /** A domain that is present but not participating. */
-  dormant: '#222d30',
+  dormant: '#1a2130',
 
   /**
    * The pale icy accent: wafers, dies and edge strips.
@@ -73,18 +73,54 @@ export const MACHINE_PALETTE = Object.freeze({
    * dominant tone — most of the structure is not accent, and the accent class
    * spends most of its time below its own resting colour.
    */
-  accent: '#dceeee',
+  accent: '#e6f1ff',
 
-  /** Signal language shared by Core routes, Core signals and Graph routes. */
-  routePrimary: '#cfe3d8',
-  routeSecondary: '#9cb7af',
-  routeAmbient: '#5d7874',
-  routeSignal: '#e8f4ec',
-  routeIngress: '#b9d4c9',
+  /** Signal language shared by the routing field and the matter field. */
+  routePrimary: '#7fe6ff',
+  routeSecondary: '#4aa6c8',
+  routeAmbient: '#28566e',
+  routeSignal: '#ffffff',
+  routeIngress: '#9fd6e8',
 
   /** Text and non-geometric accents. */
-  ink: '#dce6e2',
-  quiet: '#7f8889',
+  ink: '#dbe7f2',
+  quiet: '#76818f',
+});
+
+/**
+ * The energy ladder.
+ *
+ * Structure is a value ladder; energy is a *hue* ladder, and it is the only
+ * place a saturated colour is allowed. Every entry here is emissive — it is
+ * meant to be seen as light rather than as paint, which is why each one is
+ * authored at or near full value and then shaped by the tone curve and bloom
+ * rather than by being mixed toward the background.
+ *
+ * The order is the order of the phenomena, and it is not arbitrary. Cyan is the
+ * bulk flow, so it is by far the most common and owns the composition.
+ * Ultraviolet is deep compute and field deformation — it lives behind and
+ * beneath, and it is what makes the depth of the rift read as volume. Hot white
+ * is compression, so it only appears where matter is actually being squeezed.
+ * Amber is contention and anomaly, which is why it is rationed: an amber frame
+ * is a frame where something is wrong, and that reading only survives while
+ * amber is rare. Magenta is the interference figure at a high-energy crossing
+ * and should be countable on one hand.
+ *
+ * Nothing here is used as a full-screen tint. Each is a local emitter.
+ */
+export const ENERGY_PALETTE = Object.freeze({
+  /** Bulk semantic flow. The dominant emitter. */
+  cyan: '#5fe4ff',
+  /** Deep compute, field deformation, the far side of the rift. */
+  ultraviolet: '#7b5cff',
+  /** Compression peaks: where density collapses. */
+  hot: '#ffffff',
+  /** Contention, anomaly, queue pressure. Rationed. */
+  amber: '#ffab3d',
+  /** Interference at a high-energy intersection. Rare. */
+  magenta: '#ff4fd8',
+  /** The cold structural glow: rims, edges, membrane boundaries. */
+  rim: '#8fd4ee',
 });
 
 export type MachinePalette = typeof MACHINE_PALETTE;

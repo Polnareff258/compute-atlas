@@ -6,6 +6,30 @@ import type {
 export type RendererInfoSource = {
   readonly info?: {
     readonly render?: {
+      /**
+       * Draw calls *of the current frame*, and the only one of the two counters
+       * on `Info.render` that may be reported as a cost.
+       *
+       * `calls` sits beside it and is documented upstream as "the number of
+       * render calls since the app has been started" — it is not cleared by
+       * `Info.reset()`, which the renderer's own source makes explicit: `reset()`
+       * zeroes `drawCalls`, `frameCalls`, `triangles`, `points` and `lines`, and
+       * leaves `calls` alone. Reading it as a per-frame figure therefore yields a
+       * number that climbs for as long as the page is open, and a sixty-second
+       * run of this scene reported three hundred and nineteen thousand of them
+       * against a real cost of about twenty-five. It is not a wrong number so
+       * much as a number about a different thing, and the telemetry panel is a
+       * claim about what the frame costs.
+       */
+      readonly drawCalls?: number;
+      /**
+       * Declared because the renderer really does expose it, and never read.
+       *
+       * A field that exists and is deliberately ignored is worth naming here: a
+       * later revision that reached for `calls` out of habit would be reaching
+       * for the cumulative total, and the test that pins the snapshot would be
+       * the only thing that noticed.
+       */
       readonly calls?: number;
       readonly triangles?: number;
     };
@@ -68,7 +92,7 @@ export function sampleRendererTelemetry(
   return {
     fps: delta === null ? null : rounded(1 / delta, 2),
     frameTimeMs: delta === null ? null : rounded(delta * 1_000, 2),
-    drawCalls: finiteOrNull(input.renderer.info?.render?.calls),
+    drawCalls: finiteOrNull(input.renderer.info?.render?.drawCalls),
     triangles: finiteOrNull(input.renderer.info?.render?.triangles),
     geometries: finiteOrNull(input.renderer.info?.memory?.geometries),
     textures: finiteOrNull(input.renderer.info?.memory?.textures),

@@ -1,78 +1,111 @@
-import type { ComputeCoreVisualState } from '../core/coreTypes';
 import { finiteOr } from '../seedRandom';
 
 export type CameraFocusTarget = readonly [x: number, y: number, z: number];
 
+/**
+ * The states the rig answers to.
+ *
+ * Owned here rather than imported from the hero. The camera's response to being
+ * looked at is a property of the camera, and a rig that could not be reasoned
+ * about without the thing it is pointed at would be a rig that has to be
+ * changed every time the thing is. The scene's own vocabulary lives with the
+ * scene; this is the subset that means something to a camera, and it is spelled
+ * out here so the two can be read side by side and seen to be different things.
+ *
+ * `agent_activity` has no producer in this stage — the Agent Activity interface
+ * exists and accepts the eight signals the brief names, but no agent drives it —
+ * and it is kept because the camera's answer to it is part of what that
+ * interface promises. A vocabulary that only contains what currently happens is
+ * a vocabulary that has to be reopened every time something new happens.
+ */
+export type CameraVisualState =
+  | 'dormant'
+  | 'awakening'
+  | 'idle'
+  | 'hover_response'
+  | 'focusing'
+  | 'agent_activity';
+
 /** The canvas camera's field of view, in degrees. Owned here so it cannot drift. */
 export const CAMERA_FOV_DEGREES = 48;
-const HALF_FOV_TAN = Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 360);
 
 /**
  * Idle camera distance, and the number the whole composition is set against.
  *
- * The Core is a monolith several world units across, and this distance is what
- * makes it read at 55–65% of the frame — the band at which the page is a
- * computational environment rather than a diagram of one. It is deliberately
- * tied to `CORE_SCALE` rather than to the layout: the ratio of the two is what
- * sets the fraction of the frame the mass occupies, so rescaling the hero
- * without moving the camera here would silently change the composition.
+ * The composition is authored for a frame roughly ±13.5 by ±9 world units, and
+ * at 48° of vertical field of view `20 · tan(24°)` gives 8.9 of half-height and
+ * 15.8 of half-width at 16:9. The height is the number the distance was derived
+ * from and it is the axis that binds: the hero is a fault that enters from
+ * off-frame at both ends, so its width is not a quantity the frame is trying to
+ * contain, while its height decides whether the rift reads as a split in
+ * something large or as a band across the middle of an empty page.
  *
- * That paragraph was here before, and the composition drifted anyway. The value
- * was 9.1 and it was right for the hero it was measured against; the Core was
- * then rebuilt, `LOCAL_BOUNDS` grew by half again, and nobody re-measured. By
- * the bounds the mass read at 0.81 of the frame's height, and counting the folds
- * that leave the outline it filled the height edge to edge on screen — the hero
- * was the page, and the five domains around it had been pushed out to the
- * margins where they read as marginalia rather than as bays. A comment saying
- * the ratio matters is not the same thing as a test that measures it, which is
- * the part worth remembering: the number that has to be re-checked is the one
- * that lives in a different file from the thing it is about.
- *
- * 11.5 puts the mass at 0.64 of the frame's height and 0.45 of its width. The
- * height is the number that matters and the width cannot be the one that does:
- * the hero is 4.05 by 3.3 half-extents, so it is nearly square inside a frame
- * that is not, and a distance that fills the width will always have run out of
- * height first. Derived rather than measured would be better still, and the
- * reason it is not is that the constant lives here and the extent lives in the
- * Core; until the two are joined by something a test can read, the value has to
- * be re-measured off a capture whenever the Core's bounds move.
+ * A previous revision of this constant carried a paragraph about the Core's own
+ * half-extents and the 55–65% band of the frame it was meant to occupy. The
+ * number was 9.1, it was right for the hero it was measured against, that hero
+ * was rebuilt with bounds half again as large, and nobody re-measured — so for a
+ * stage the rig drew a monolith that filled the frame edge to edge while five
+ * domains were pushed out to the margins. The lesson is not that the ratio
+ * mattered. It is that the number lives in a different file from the thing it is
+ * about, and a comment saying so is not the same thing as a test that reads
+ * both. `cameraController.test.ts` now does, and a composition that outgrows
+ * this distance fails a test rather than quietly becoming a close-up.
  */
-export const BASE_CAMERA_DISTANCE = 11.5;
+export const BASE_CAMERA_DISTANCE = 20;
 /** Where the camera sits when nothing is bound: negative, so the Core reads right of centre. */
-const IDLE_CAMERA_OFFSET_X = -0.55;
+const IDLE_CAMERA_OFFSET_X = -0.9;
+/** The frame's half-angle, in tangent. Named because the dolly divides by it. */
+const HALF_FOV_TAN = Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 360);
+
 /**
- * Half-frames either side of the pivot the active route has to fit inside.
+ * How much room the dolly leaves either side of the route's midpoint.
  *
- * This is the number that puts the two ends of the active route on the thirds,
- * and it is worth being explicit about why, because it looks like a taste
- * setting and is not one. The camera slides half way to the bound domain and
- * pulls back until the frame holds `FOCUS_HALF_FRAMES · reach` either side of
- * that midpoint; the origin is then `reach/2` from the optical axis and the
- * frame's half-width is `FOCUS_HALF_FRAMES · reach`, so the Core lands at
- * `1/(2 · FOCUS_HALF_FRAMES)` of the half-frame. At 1.5 that is exactly a third.
+ * The reframe is required to hold *both ends of the active route* inside the
+ * frame, on opposite sides of its centre, without either of them reaching an
+ * edge — the brief's "the final framing keeps part of the Core plus the whole
+ * Domain local environment". That is a solvable constraint rather than a taste,
+ * and this is its solution: the camera sits back far enough that the route's own
+ * reach subtends `2 · FOCUS_HALF_FRAMES` half-frames, which puts each end at
+ * about a third of the half-frame once the pivot below takes half of it.
  *
- * It was tried at 1.15 while the hero was being rebuilt, on the reasoning that a
- * tighter frame is the dolly-in the choreography calls for. The arithmetic says
- * otherwise on both counts: 1/2.3 puts the Core at 0.43 of the half-frame, which
- * with a Core half a frame wide leaves its whole left side outside the frame,
- * and the pair stops reading as a diagonal and becomes a close-up of the hero.
- * The subject of a focus frame is the Core *and* the domain, so the frame has to
- * be wide enough for both, and the movement toward the subject is the camera's
- * own slide along the route rather than a change of distance.
+ * The value is in half-frames because that is the unit the constraint is
+ * expressed in, and the `spread` correction below converts it into the two
+ * different clearances the two screen axes actually need.
  */
 const FOCUS_HALF_FRAMES = 1.5;
 /** Where the frame centres along the route. Half way puts the ends on the two thirds. */
 const FOCUS_PIVOT_FRACTION = 0.5;
+/**
+ * The near end of the dolly's usable range.
+ *
+ * `FOCUS_HALF_FRAMES` is a *ratio* — the route subtends this many half-frames —
+ * so on its own it answers "how much room does the route need" and not "how
+ * close is the camera allowed to come". For the five domains that currently
+ * exist the ratio always resolves well outside this floor, and the floor is
+ * therefore invisible in the shipped composition. It exists because the rig's
+ * contract is about the frame, not about any one layout: a bound domain whose
+ * reach is small enough would otherwise be framed from a few units away, and a
+ * camera four units from the Core is not a reframe, it is a different picture of
+ * a different subject. Stated as a fraction of the idle distance so the two move
+ * together — the whole point of the band is the relationship between a close-up
+ * and the establishing shot, and a floor written as a bare number would drift out
+ * of that relationship the next time the hero is rebuilt.
+ *
+ * `MIN_CAMERA_DISTANCE` below is the separate, much lower backstop that keeps the
+ * projection matrix itself from degenerating; this is a composition bound, and
+ * the difference matters when reading a failure.
+ */
+const MIN_FOCUS_DISTANCE = BASE_CAMERA_DISTANCE * 0.6;
 const MIN_CAMERA_DISTANCE = 5;
 /**
  * The backstop on the dolly, twice the idle distance.
  *
  * No legal focus resolves anywhere near it — the furthest of the five domains
- * asks for well under a third of it against the idle distance — so this exists
- * only to keep a hostile or future input from dissolving the composition into a
- * wide shot. It tracks the idle distance, since the only thing it has to be is
- * comfortably outside anything a focus can ask for and comfortably inside the
- * range where the layout is still on screen.
+ * asks for well under two thirds of it — so this exists only to keep a hostile or
+ * future input from dissolving the composition into a wide shot. It tracks the
+ * idle distance, since the only thing it has to be is comfortably outside
+ * anything a focus can ask for and comfortably inside the range where the layout
+ * is still on screen.
  */
 const MAX_CAMERA_DISTANCE = BASE_CAMERA_DISTANCE * 2;
 /** Handheld response to the pointer, in world units at full response. */
@@ -152,19 +185,20 @@ export type CameraFraming = {
  * The camera rig, as a pure function of the controller's scalars.
  *
  * Focus is a genuine reframe: the camera *translates* half way to the bound
- * domain and *dollies* back until the frame is wide enough to hold both ends of
- * the active route. Nothing yaws toward the target and the Core's own group is
- * never rotated, so the hero is seen from the same angle throughout and only its
- * place in the frame changes.
+ * domain and *dollies in* toward it. Nothing yaws toward the target and the
+ * hero's own group is never rotated, so the rift is seen from the same angle
+ * throughout and only its place in the frame changes. That is what keeps a
+ * focused frame a picture of the whole machine rather than a picture of one bay
+ * — the brief's "must not become 相机对准一个图标" is a statement about the rig,
+ * and it is enforced here rather than in the choreography.
  *
- * The arithmetic that makes the thirds fall out: the camera slides half way to
- * the bound domain and pulls back until the frame is wide enough that a point at
- * the origin lands on a third. Both ends are then `reach/2` either side of the
- * optical axis, so the dolly has to show `FOCUS_HALF_FRAMES · reach` in the
- * *offset direction* — and because the frame is wider than it is tall, that
- * resolves per axis to the larger of `|dirX|/aspect` and `|dirY|`. The ratio is
- * independent of `reach`, which is why one rig frames all five domains at their
- * own distances instead of being tuned against one of them.
+ * The distance resolves as an idle fraction plus a term that grows with the
+ * domain's own reach, corrected per axis by the aspect: a domain above the Core
+ * is framed by the frame's height and one beside it by its width, so the two
+ * directions need different amounts of room behind them and the correction is
+ * `max(|dirX|/aspect, |dirY|)`. Reach enters linearly rather than as a ratio, so
+ * the five domains land at five slightly different distances instead of all at
+ * one — which is what keeps the arrival somewhere specific rather than generic.
  */
 export function deriveCameraFraming(input: CameraFramingInput): CameraFraming {
   const pointerX = finiteOr(input.pointerX, 0);
@@ -184,12 +218,19 @@ export function deriveCameraFraming(input: CameraFramingInput): CameraFraming {
   const dirX = bound ? focusX / focus : 0;
   const dirY = bound ? focusY / focus : 0;
 
-  // The dolly the offset direction needs: a domain above the Core is framed by
-  // the frame's height and one beside it by its width, so the two axes are
-  // resolved against the aspect rather than both against the width.
+  // The distance a bound domain is approached to. `spread` is the route's extent
+  // measured in the unit each screen axis actually uses — a domain above the
+  // Core is framed by the frame's height and one beside it by its width — so the
+  // same formula gives a domain in either direction exactly the clearance that
+  // direction needs.
   const spread = Math.max(Math.abs(dirX) / aspect, Math.abs(dirY));
-  const framedDistance = (FOCUS_HALF_FRAMES * reach * spread) / HALF_FOV_TAN;
-  const framedZ = clamp(framedDistance, MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE);
+  const framedDistance =
+    (FOCUS_HALF_FRAMES * reach * spread) / HALF_FOV_TAN;
+  const framedZ = clamp(
+    bound ? framedDistance : BASE_CAMERA_DISTANCE,
+    bound ? MIN_FOCUS_DISTANCE : MIN_CAMERA_DISTANCE,
+    MAX_CAMERA_DISTANCE,
+  );
 
   return {
     // The idle offset fades out as the reframe takes over rather than adding to
@@ -233,7 +274,7 @@ export class CameraController {
   private focusZ = 0;
   private focusDistanceTarget = 0;
   private focusDistance = 0;
-  private visualState: ComputeCoreVisualState = 'dormant';
+  private visualState: CameraVisualState = 'dormant';
 
   public constructor(options: CameraControllerOptions = {}) {
     this.reducedMotion = options.reducedMotion ?? false;
@@ -275,7 +316,7 @@ export class CameraController {
     );
   }
 
-  public setVisualState(state: ComputeCoreVisualState): void {
+  public setVisualState(state: CameraVisualState): void {
     this.visualState = state;
   }
 

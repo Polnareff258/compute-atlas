@@ -12,6 +12,7 @@ export type CanvasRenderer = {
   setPixelRatio: (value: number) => void;
   setSize: (width: number, height: number, updateStyle?: boolean) => void;
   setClearColor: (color: THREE.ColorRepresentation, alpha?: number) => void;
+  readonly info: { autoReset: boolean };
 };
 
 export type CanvasRendererRef = {
@@ -33,6 +34,23 @@ function configureRenderer(
   renderer.setPixelRatio(devicePixelRatio);
   renderer.setSize(width, height, false);
   renderer.setClearColor('#050609', 1);
+
+  // Who resets the render counter is decided here, because the renderer's
+  // ownership and the counter's meaning are the same question.
+  //
+  // By default the renderer zeroes `info` at the start of every `render()` call,
+  // which is right when it is the only thing drawing. When the post pipeline
+  // owns the frame it issues several renders — one per internal pass — and the
+  // default would leave `info` holding the cost of whichever fullscreen quad
+  // happened to go last, so the telemetry would report a fullscreen quad and
+  // call it the frame. In that configuration the pipeline resets the counter
+  // itself, once per displayed frame, and the renderer must not.
+  //
+  // It is set from the quality profile rather than by the pipeline because the
+  // pipeline is a subscriber that comes and goes, and a flag whose correct value
+  // depends on which subscribers happen to be mounted is a flag that is wrong
+  // for one frame at every mount and unmount.
+  renderer.info.autoReset = !quality.allowBloom;
 }
 
 export function createCanvasRendererAdapters(

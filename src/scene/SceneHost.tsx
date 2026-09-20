@@ -19,55 +19,43 @@ import {
 import { createGraphController } from '../graph/graphController';
 import { GRAPH_MANIFEST } from '../graph/graphManifest';
 import { deriveGraphLayout, deriveGraphProminence } from '../graph/layout';
-import type {
-  QualityProfile,
-  RendererBackend,
-} from '../renderer/types';
-import type { RendererAdapterBackend } from '../renderer/runtime';
+import type { QualityProfile, RendererBackend } from '../renderer/types';
 import {
   createCameraController,
   deriveCameraFocusTarget,
+  deriveCameraFraming,
 } from './camera/cameraController';
-import { deriveCoreStructure } from './core/coreStructure';
-import { deriveCoreCirculation } from './core/coreCirculation';
-import { getCoreParameters } from './core/coreParameters';
-import type { ComputeCoreVisualState } from './core/coreTypes';
-import { ComputeCore } from './core/ComputeCore';
-import { deriveDomainCircuits } from './graph/domainCircuits';
-import { deriveDomainEnvironment } from './graph/domainEnvironments';
-import { deriveGraphRouting } from './routing/graphRoutes';
-import {
-  advanceRouteFlow,
-  createRouteFlowState,
-  deriveRouteFlowTarget,
-} from './routing/routeFlow';
-import type { RouteFlowState } from './routing/routeDash';
-import {
-  createRouteFieldSample,
-  deriveRouteFieldTelemetryCounts,
-} from './routing/routeTelemetry';
-import { Atmosphere } from './Atmosphere';
-import { KnowledgeGraph } from './graph/KnowledgeGraph';
+import { createFieldUniforms } from './field/fieldUniforms';
+import { deriveFieldState } from './field/deriveFieldState';
+import { deriveRiftStructure } from './hero/riftStructure';
+import { RiftStructureView } from './hero/RiftStructureView';
+import { deriveMatterCount, type MatterRegion } from './matter/dataMatter';
+import { DataMatterView } from './matter/DataMatterView';
+import { DomainField } from './domains/DomainField';
+import { deriveDomainPhenomena } from './domains/domainPhenomena';
+import { DeepField } from './backdrop/DeepField';
+import { PostPipeline } from './post/PostPipeline';
 
+/**
+ * R3F 9 resolves intrinsic elements from this catalogue rather than from the
+ * THREE namespace at large, so anything the scene mounts as a JSX element has
+ * to be registered before the first render. This list is the whole of the
+ * scene's element vocabulary, and it is deliberately short: the composition is
+ * four draw calls of authored geometry plus one instanced field, and the rest of
+ * the frame is shading.
+ */
 extend({
-  BoxGeometry: THREE.BoxGeometry,
-  BufferAttribute: THREE.BufferAttribute,
-  BufferGeometry: THREE.BufferGeometry,
-  Color: THREE.Color,
-  FogExp2: THREE.FogExp2,
   Group: THREE.Group,
-  IcosahedronGeometry: THREE.IcosahedronGeometry,
-  // The WebGL2 routing fallback drives a bounded instanced dash set, and R3F 9
-  // resolves intrinsic elements from this catalogue rather than from the THREE
-  // namespace at large. Without it `<instancedMesh>` throws during render, which
-  // took the whole fallback scene down rather than degrading one effect.
   InstancedMesh: THREE.InstancedMesh,
   Mesh: THREE.Mesh,
-  MeshBasicMaterial: THREE.MeshBasicMaterial,
   Points: THREE.Points,
-  PointsMaterial: THREE.PointsMaterial,
+  BoxGeometry: THREE.BoxGeometry,
+  PlaneGeometry: THREE.PlaneGeometry,
   SphereGeometry: THREE.SphereGeometry,
-  TorusGeometry: THREE.TorusGeometry,
+  BufferGeometry: THREE.BufferGeometry,
+  BufferAttribute: THREE.BufferAttribute,
+  Color: THREE.Color,
+  FogExp2: THREE.FogExp2,
 });
 
 export type SceneHostProps = {
@@ -82,6 +70,28 @@ export type SceneHostProps = {
 /** Telemetry is a readout, not a per-frame stream. */
 const TELEMETRY_INTERVAL = 0.25;
 
+/**
+ * How fast the interaction strengths ease toward their targets.
+ *
+ * Escape has to be a decompression rather than a cut, so this rate is a real
+ * design parameter and not a smoothing constant: too fast and escape snaps, too
+ * slow and the site feels unresponsive to a pointer. The field's *shape* follows
+ * this, so it is the shape that decompresses.
+ */
+const FIELD_APPROACH_RATE = 3.1;
+const REDUCED_MOTION_RATE = 24;
+
+/**
+ * How much larger the field's volume is than the throat it lives in.
+ *
+ * See the note at `riftRegion`: the field describes the machine's air as well as
+ * its metal, and the brief's "large-scale flowing sheets" are a claim about a
+ * volume several times the throat's. At 2.4 the rift's populated ellipsoid is
+ * about thirty-one by fourteen by twelve units — the size of the composition's
+ * middle distance, which is where a sheet of matter can be seen to be a sheet.
+ */
+const RIFT_FIELD_SPREAD = 2.4;
+
 export function SceneHost({
   quality,
   backend,
@@ -90,77 +100,79 @@ export function SceneHost({
   onQualityChange,
   onCommandBusReady,
 }: SceneHostProps) {
-  const sceneQuality = quality;
-  const settings = getQualityProfile(sceneQuality);
-  const coreParameters = useMemo(() => getCoreParameters(sceneQuality), [sceneQuality]);
+  const settings = useMemo(() => getQualityProfile(quality), [quality]);
   const graphLayout = useMemo(() => deriveGraphLayout(GRAPH_MANIFEST), []);
-  // How much of the idle frame each node is given. Derived once from the layout
-  // and read by the composition, the label budget and the resting field alike,
-  // so those three cannot disagree about which domains idle is about.
   const graphProminence = useMemo(() => deriveGraphProminence(GRAPH_MANIFEST), []);
-  // The Core's own structure is derived here rather than inside ComputeCore so
-  // routing can leave from real Core ports. The Core still never reads the Graph.
-  const structure = useMemo(
-    () => deriveCoreStructure({ structureDetail: coreParameters.structureDetail }),
-    [coreParameters.structureDetail],
+
+  const rift = useMemo(
+    () => deriveRiftStructure({ detail: settings.coreStructureDetail }),
+    [settings.coreStructureDetail],
   );
-  // The Core's interior circulation is derived here too, for the same reason the
-  // structure is: it is part of what the scene draws, so the boundary that
-  // reports on the scene has to be able to describe it without asking a view.
-  const circulation = useMemo(
-    () => deriveCoreCirculation(structure, coreParameters.structureDetail),
-    [coreParameters.structureDetail, structure],
+
+  const phenomena = useMemo(
+    () => deriveDomainPhenomena(GRAPH_MANIFEST, graphLayout, settings.domainDetail),
+    [graphLayout, settings.domainDetail],
   );
-  const routing = useMemo(
-    () => deriveGraphRouting(GRAPH_MANIFEST, graphLayout, structure, settings.domainDetail),
-    [graphLayout, settings.domainDetail, structure],
+
+  // The rift is region 0; the five domains are 1..5. The matter system is handed
+  // plain points and half-extents, so it never learns what a domain is.
+  //
+  // The half-extents are the cavity's own, scaled up, and the scale is not a
+  // fudge. The cavity is the *throat* — thirteen by six by five — and it is the
+  // smallest of the three volumes the brief gives the field: the units circulate
+  // deep in the Core, but they also form the sheets that extend past the rift and
+  // arrive as streams from far out. Confining a hundred thousand units to the
+  // throat's own box is what produced the third capture's solid ball at the
+  // centre of the frame. The field's volume has to be the volume the field is
+  // *about*, which is larger than the metal it passes through.
+  const riftRegion: MatterRegion = useMemo(
+    () => ({
+      centre: rift.cavity.centre,
+      extent: [
+        rift.cavity.halfExtents[0] * RIFT_FIELD_SPREAD,
+        rift.cavity.halfExtents[1] * RIFT_FIELD_SPREAD,
+        rift.cavity.halfExtents[2] * RIFT_FIELD_SPREAD,
+      ],
+      kind: 0,
+    }),
+    [rift],
   );
-  // Each domain is built as its own sub-environment around the point its route
-  // actually arrives at, so the ingress opening and the route agree by
-  // construction rather than by two modules agreeing on a constant.
-  const environments = useMemo(
+  const matterRegions: readonly MatterRegion[] = useMemo(
     () =>
-      routing.routes.map((route) => ({
-        group: route.group,
-        environment: deriveDomainEnvironment(
-          route.domainId,
-          graphLayout[route.domainId],
-          route.ingress,
-          settings.domainDetail,
-        ),
+      phenomena.map((entry) => ({
+        centre: entry.centre,
+        extent: entry.extent,
+        kind: entry.kind,
       })),
-    [graphLayout, routing, settings.domainDetail],
+    [phenomena],
   );
-  // One field for the whole Graph: the channels between the Core and the domains
-  // plus the flow inside each domain, because a domain's interior is where its
-  // route ends up and the two have to be the same signal language.
-  const graphFieldCurves = useMemo(
-    () => [
-      ...routing.curves,
-      ...environments.flatMap((entry) =>
-        deriveDomainCircuits(entry.environment, entry.group),
-      ),
-    ],
-    [environments, routing],
+
+  const uniforms = useMemo(() => createFieldUniforms(), []);
+  // The count the view will actually allocate. Telemetry reads the same number
+  // from the same function, so the reported samples are the drawn samples rather
+  // than a separately maintained guess.
+  const matterCount = useMemo(
+    () => deriveMatterCount(settings.particleBudget, settings.coreStructureDetail),
+    [settings.particleBudget, settings.coreStructureDetail],
   );
-  // One field state for the whole scene: the Core's circulation and the Graph
-  // routes are the same signal language, so they cannot each own a copy.
-  const routeFlowRef = useRef<RouteFlowState>(createRouteFlowState());
-  // Telemetry throttling lives in a ref because it is frame-loop state, not
-  // React state: sampling it must never re-render the scene.
-  const telemetryClockRef = useRef({ elapsed: 0, last: 0 });
-  const { gl } = useThree();
-  // An unavailable backend still needs a defined visual: the CPU path is the
-  // honest answer, so anything that is not WebGPU takes the fallback route.
-  const routeBackend: RendererAdapterBackend =
-    backend === 'webgpu' ? 'webgpu' : 'webgl2';
-  // The field's implementation, resolved in one place and read by both the view
-  // and telemetry, so the count that is reported is the count that is drawn.
-  const coreAdvected = routeBackend === 'webgpu' && coreParameters.advection;
+  const uniformQuality = useMemo(
+    () => settings.coreStructureDetail * 0.5 + settings.domainDetail * 0.5,
+    [settings.coreStructureDetail, settings.domainDetail],
+  );
+
+  useEffect(() => {
+    uniforms.setQuality(uniformQuality);
+  }, [uniforms, uniformQuality]);
+
+  useEffect(() => {
+    uniforms.setRift(rift.riftAxis, rift.riftCentre);
+  }, [uniforms, rift]);
+
   const cameraController = useMemo(
     () => createCameraController({ reducedMotion }),
     [reducedMotion],
   );
+
   const [graphInteraction, setGraphInteraction] = useState<GraphInteractionState>(
     createInitialGraphInteractionState,
   );
@@ -171,12 +183,14 @@ export function SceneHost({
     () => createGraphController(handleGraphAction),
     [handleGraphAction],
   );
+
   const handleQualityChange = useCallback(
     (profile: QualityProfile) => {
       onQualityChange?.(profile);
     },
     [onQualityChange],
   );
+
   const commandBus = useMemo(
     () =>
       createCommandBus({
@@ -199,9 +213,6 @@ export function SceneHost({
       focusedNodeId === null ? ([0, 0, 0] as const) : graphLayout[focusedNodeId];
     const target = deriveCameraFocusTarget(position);
     cameraController.setFocusTarget(target[0], target[1], target[2]);
-    // How far the camera has to travel and how wide the frame has to open are
-    // both functions of this one number, so framing stays a property of where the
-    // domain actually is rather than of a constant tuned for one of the five.
     cameraController.setFocusDistance(
       Math.hypot(position[0], position[1], position[2]),
     );
@@ -209,10 +220,7 @@ export function SceneHost({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') {
-        return;
-      }
-
+      if (event.key !== 'Escape') return;
       const target = event.target;
       if (
         target instanceof HTMLInputElement ||
@@ -222,71 +230,103 @@ export function SceneHost({
       ) {
         return;
       }
-
       setGraphInteraction((state) =>
         reduceGraphInteraction(state, { type: 'CLEAR_FOCUS' }),
       );
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const coreVisualState: ComputeCoreVisualState | null =
-    graphInteraction.focusedNodeId !== null
-      ? 'focusing'
-      : graphInteraction.hoveredNodeId !== null
-        ? 'hover_response'
-        : null;
-
-  // Where the field wants to be, derived from discrete state rather than every
-  // frame. `deriveRouteFlowTarget` builds a fresh weight array, and it used to be
-  // called from inside `useFrame`, so the scene allocated one array, one target
-  // object and one nested weights object per frame for a value that only changes
-  // when the interaction does. It is React-derived state, so it is derived in
-  // render; the frame loop below only eases toward it.
-  const flowTarget = useMemo(
-    () => deriveRouteFlowTarget(routing, graphInteraction, graphProminence),
-    [graphInteraction, graphProminence, routing],
+  const fieldState = useMemo(
+    () =>
+      deriveFieldState({
+        manifest: GRAPH_MANIFEST,
+        layout: graphLayout,
+        interaction: graphInteraction,
+        prominence: graphProminence,
+        rift,
+      }),
+    [graphInteraction, graphLayout, graphProminence, rift],
   );
 
-  // Continuous field scalars are eased here, in one place, from discrete
-  // interaction state. Nothing below this line re-renders at frame rate.
-  useFrame((_, delta) => {
-    advanceRouteFlow(routeFlowRef.current, flowTarget, delta, reducedMotion);
+  // Eased interaction strengths. They are the only thing in the scene that
+  // changes on a frame without a semantic change, so they live in a ref and are
+  // never React state.
+  const easedRef = useRef({ hover: 0, focus: 0, activity: 0.24, phase: 0 });
+  const telemetryClockRef = useRef({ elapsed: 0, last: 0 });
+  const { gl } = useThree();
+
+  useFrame((state, delta) => {
+    const safeDelta = Math.min(Math.max(delta, 0), 0.1);
+    const target = fieldState;
+
+    const wantHover = target.phase === 'awaiting' ? 1 : 0;
+    const wantFocus = target.phase === 'running' ? 1 : 0;
+    const rate = reducedMotion ? REDUCED_MOTION_RATE : FIELD_APPROACH_RATE;
+    const eased = easedRef.current;
+    const step = Math.min(1, safeDelta * rate);
+
+    eased.hover += (wantHover - eased.hover) * step;
+    eased.focus += (wantFocus - eased.focus) * step;
+    eased.activity += (target.activityStrength - eased.activity) * step;
+
+    // The phase advances with the operation rather than with wall time, so a
+    // still frame still says where the work is. Frozen under reduced motion,
+    // which is the point of the reduced-motion path: the frame stops moving but
+    // keeps its state.
+    if (!reducedMotion) {
+      eased.phase = (eased.phase + safeDelta * 0.06) % 1;
+    }
+
+    uniforms.update(
+      {
+        ...target,
+        activityStrength: eased.activity,
+        activityPhase: eased.phase,
+      },
+      eased,
+      reducedMotion ? 0 : state.clock.elapsedTime,
+    );
+
+    // Framing is a translate-and-dolly rig: the camera moves and pulls back and
+    // never turns toward the subject, so the rift is seen from one angle
+    // throughout and only its place in the frame changes. That is what keeps the
+    // hero the compositional centre of gravity under focus instead of becoming
+    // a picture of one bay.
+    cameraController.setVisualState(
+      eased.focus > 0.5 ? 'focusing' : eased.hover > 0.35 ? 'hover_response' : 'idle',
+    );
+    cameraController.update(safeDelta);
+    const framing = deriveCameraFraming({
+      pointerX: cameraController.getPointerX(),
+      pointerY: cameraController.getPointerY(),
+      focusX: cameraController.getFocusX(),
+      focusY: cameraController.getFocusY(),
+      focusZ: cameraController.getFocusZ(),
+      focusDistance: cameraController.getFocusDistance(),
+      response: cameraController.getResponseStrength(),
+      amplitudeScale: cameraController.getAmplitudeScale(),
+      aspect: state.size.width / Math.max(1, state.size.height),
+    });
+    state.camera.position.set(framing.positionX, framing.positionY, framing.positionZ);
+    state.camera.rotation.set(framing.pitch, framing.yaw, 0);
 
     if (onTelemetry === undefined) return;
-
-    const safeDelta = Math.min(Math.max(delta, 0), 0.1);
     telemetryClockRef.current.elapsed += safeDelta;
     if (telemetryClockRef.current.elapsed - telemetryClockRef.current.last < TELEMETRY_INTERVAL) {
       return;
     }
     telemetryClockRef.current.last = telemetryClockRef.current.elapsed;
 
-    // Counted from the same descriptors the views are handed, so the reported
-    // samples are the dashes on screen rather than a separately maintained guess.
-    const counts = deriveRouteFieldTelemetryCounts(coreParameters.configuredFieldBudget, [
-      createRouteFieldSample(coreAdvected, {
-        curves: circulation.curves,
-        detail: coreParameters.structureDetail,
-        lanes: coreParameters.routeLanes,
-      }),
-      createRouteFieldSample(coreAdvected, {
-        curves: graphFieldCurves,
-        detail: settings.domainDetail,
-        lanes: coreParameters.routeLanes,
-      }),
-    ]);
-
     onTelemetry(
       sampleRendererTelemetry({
         renderer: gl,
         backend,
-        quality: sceneQuality,
-        configuredFieldBudget: counts.configuredFieldBudget,
-        renderedFieldSamples: counts.renderedFieldSamples,
-        activeSignalSamples: counts.activeSignalSamples,
+        quality,
+        configuredFieldBudget: settings.particleBudget,
+        renderedFieldSamples: matterCount,
+        activeSignalSamples: Math.round(matterCount * eased.activity),
         deltaSeconds: safeDelta,
         sampledAt: performance.now(),
       }),
@@ -295,32 +335,42 @@ export function SceneHost({
 
   return (
     <>
-      <color attach="background" args={['#050609']} />
-      <fogExp2 attach="fog" args={['#050609', 0.035]} />
-      <Atmosphere />
-      <ComputeCore
-        backend={backend}
-        cameraController={cameraController}
-        circulation={circulation}
-        flowRef={routeFlowRef}
-        parameters={coreParameters}
-        reducedMotion={reducedMotion}
-        structure={structure}
-        visualState={coreVisualState}
+      <color attach="background" args={['#03050a']} />
+      {/*
+        Exponential fog, at half the density it carried while the hero owned its
+        own backdrop.
+        The fog and the energy material's depth fade are two independent depth
+        cues, and while they were both tuned against a far field that filled the
+        frame they agreed. They do not agree about the far field's own structure:
+        at 0.012 a member a hundred units out is seventy-six percent of the way to
+        the fog colour, and the fog colour is within two values of the background,
+        so the far shelves arrived at exactly the value they were cut out of and
+        the composition had no far end at all. The material's depth floor is the
+        cue the far field is authored against; the fog is here to give the middle
+        distance some air, and at 0.006 that is all it does.
+      */}
+      <fogExp2 attach="fog" args={['#050a12', 0.006]} />
+      <DeepField uniforms={uniforms} rift={rift} detail={settings.coreStructureDetail} />
+      <RiftStructureView structure={rift} uniforms={uniforms} />
+      <DataMatterView
+        uniforms={uniforms}
+        rift={riftRegion}
+        regions={matterRegions}
+        count={settings.particleBudget}
+        density={settings.coreStructureDetail}
       />
-      <KnowledgeGraph
-        advection={coreAdvected}
-        backend={routeBackend}
-        environments={environments}
-        fieldCurves={graphFieldCurves}
-        fieldDetail={settings.domainDetail}
-        flowRef={routeFlowRef}
+      <DomainField
+        uniforms={uniforms}
+        phenomena={phenomena}
         interaction={graphInteraction}
-        manifest={GRAPH_MANIFEST}
         onAction={handleGraphAction}
         prominence={graphProminence}
         reducedMotion={reducedMotion}
-        routeLanes={coreParameters.routeLanes}
+      />
+      <PostPipeline
+        uniforms={uniforms}
+        enabled={settings.allowBloom}
+        depthOfField={quality === 'ultra'}
       />
     </>
   );

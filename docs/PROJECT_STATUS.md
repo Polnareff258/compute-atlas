@@ -1,9 +1,9 @@
 # POLNAREFF SYSTEM Project Status
 
-**As of:** 2026-09-19
+**As of:** 2026-09-20
 **Repository:** `Polnareff258/compute-atlas`
 **Current phase:** Phase 1
-**Current stage:** Stage 3.5.3 visual convergence is implemented and captured on both backends. It supersedes 3.5.2's visual layer: the 3.5.2 entry checks passed but its visual review did not. The material divergence 3.5.2 documented is fixed and measured (see `docs/STAGE353_REVIEW_BRIEF.md` §5). Stage 6 is not started.
+**Current stage:** Stage 3.5.4 — Total Visual Rebuild. The visual implementation of the Core, the domains, the routes, the matter field, the atmosphere and the domain layout has been **replaced**, not adjusted. The frame is now one rift structure, one instanced data-matter field, five regional phenomena and a procedural deep field, on one shading model and one post chain. Review brief: `docs/STAGE354_REBUILD_REVIEW_BRIEF.md`. Stage 6 is not started.
 
 ## Confirmed architecture
 
@@ -14,7 +14,7 @@
 - Server-only Ollama access through HTTP + SSE Agent Gateway.
 - Agent whitelist tools and schema validation; no arbitrary code, shell, filesystem or DOM access.
 - Boot state is serializable and isolated from Three.js objects; renderer initialization remains behind the existing runtime boundary.
-- Compute Core owns visual resources and interaction math; it has no Graph, Command or Agent imports.
+- The scene's visual resources and interaction math are owned by the views under `src/scene/` that `SceneHost` mounts; none of them import Command or Agent modules. As of Stage 3.5.4 the old `ComputeCore` is no longer in the render tree, and `src/scene/core/` is dead code awaiting an authorised deletion.
 
 ## Current progress
 
@@ -29,7 +29,8 @@
 | Stage 5.1 — corrective pass | Complete | Hover/focus ownership separated; runtime quality now reaches canvas/R3F DPR; AI handoff added. |
 | Stage 3.5 — Compute Core Visual Identity V2 | Complete | Non-spherical V2 composition, structure-changing states, WebGPU/WebGL2 evidence and fallback correction are complete. |
 | Stage 3.5.1 — Visual Composition Reconstruction | Superseded by Stage 3.5.2 | Deterministic machine topology, local field, five domain silhouettes and truthful draw-count telemetry were introduced here. Its own screenshot pass was never captured in-browser; Stage 3.5.2 rebuilt the visual layer and produced the evidence instead. |
-| Stage 3.5.3 — Visual Convergence | Implemented; captured on WebGPU and WebGL2 | Rebuilt the routing flowfield's density model (per world unit of route rather than per curve), blunted the hero Core's hulls so they close on a face instead of a point, unfolded the focused GRAPHICS stack into real layers, added `routeContract.ts` and `SurfaceInput.presence`, and closed two holes in the capture harness's own interaction evidence. Reviewed in `docs/STAGE353_REVIEW_BRIEF.md`. |
+| Stage 3.5.4 — Total Visual Rebuild | Implemented; captured on WebGPU and WebGL2 | The old Core, domain boxes, dashed routes, atmosphere and radial layout are gone from the render tree. One rift, one instanced data-matter field, five phenomena and a procedural deep field on one shading model. Reviewed in `docs/STAGE354_REBUILD_REVIEW_BRIEF.md`. |
+| Stage 3.5.3 — Visual Convergence | Superseded by Stage 3.5.4 | Rebuilt the routing flowfield's density model (per world unit of route rather than per curve), blunted the hero Core's hulls so they close on a face instead of a point, unfolded the focused GRAPHICS stack into real layers, added `routeContract.ts` and `SurfaceInput.presence`, and closed two holes in the capture harness's own interaction evidence. Reviewed in `docs/STAGE353_REVIEW_BRIEF.md`. |
 | Stage 3.5.2 — Visual Reconstruction | Superseded by Stage 3.5.3 | Rebuilt hero Core, semantic routing flowfield, five domain sub-environments, unified surface material and reduced-motion fix. 31 local evidence PNGs (plus the 7 historical V2 files), error 0 / fatal 0 on both backends. One known node-material mid-tone divergence is documented below. |
 | Stage 6 — Command Palette | Not started | No palette UI has been added. |
 | Stage 7 — backend/Ollama health | Not started | Browser gateway intentionally remains NOT INITIALIZED until this stage. |
@@ -340,3 +341,128 @@ Full review brief: `docs/STAGE353_REVIEW_BRIEF.md`. It supersedes
 
 Stage 3.5.3 is implemented and captured on both backends. The next isolated slice
 remains Stage 6 — Command Palette; do not start it as part of this record.
+
+## Stage 3.5.4 — Total Visual Rebuild
+
+This slice was licensed to delete the visual implementation of the Core, the
+domains, the routes, the field, the atmosphere, the graph views and the domain
+layout, and it did. The entry checks of 3.5.3 passed and its visual layer is
+mostly gone. Baseline for the diff is `5711cbf`.
+
+Full review brief: `docs/STAGE354_REBUILD_REVIEW_BRIEF.md`. It supersedes
+`docs/STAGE354_REVIEW_BRIEF.md` (the "Identity Re-Foundation" pass over
+`e8384e2..a880637`), whose subject — an apertured monolith with a bezel rail — no
+longer exists in the render tree.
+
+### What replaced what
+
+| Old | New | File |
+|---|---|---|
+| `CoreNucleus` / `CoreTopologyView` / `CoreStructureView` — a monolith with an aperture and a bezel rail | A rift: two massifs entering from opposite corners, a throat between them, a barrel of ribs, a baffle stack, membranes and bundled fibres | `src/scene/hero/riftStructure.ts` (815 lines), `RiftStructureView.tsx` |
+| `CoreParticleShell` / `CoreEnergyField` — points and a shader field | One instanced data-matter field, 120,000 units, positioned and shaded entirely in the vertex shader | `src/scene/matter/*` |
+| `GraphNode` / `GraphEdges` / `KnowledgeGraph` — boxes and connecting lines | Five regional *phenomena*, each a different field behaviour with its own geometry family | `src/scene/domains/*` |
+| `RouteDashes` / `routeDashMaterial` — dashed lines between nodes | Gone from the render tree. The route is the matter field's semantic corridor, and it lights the structure it passes through | `src/scene/field/*`, `corridorTerm` in `energyMaterial.ts` |
+| `Atmosphere` / four nested backdrop plates | A procedural deep field: folded, tapering far structures with their own gain and depth floor | `src/scene/backdrop/*` |
+| `surfaceMaterial` + `surfaceResponse` — stock-material response curves | One authored TSL shading model for every solid surface in the scene | `src/scene/materials/energyMaterial.ts` |
+| Five domains on a radius-5 ring around a centred body | Five domains at radii 8.4–17.7, on five different depths from z = +7 to z = −13 | `src/graph/layout.ts` |
+
+### The four layers the brief asked for
+
+1. **A giant data rift and a compute cavity.** `RIFT_AXIS_RAW = [1, 0.92, −0.86]`
+   with `CAVITY_CENTRE = [1.9, 1.5, −0.9]` and half-extents `[6.4, 2.9, 2.6]`.
+   The near massif is authored past the frame corner and *behind* the idle lens
+   plane, so the machine is already large when it enters shot; its reach is 1.4×
+   the idle frustum's half-extents, i.e. it cannot be seen whole.
+2. **Information matter that condenses and disperses.** One instanced field whose
+   units are in one of seven configurations at any moment — volumetric cloud,
+   filament, compressed stream, ribbon, membrane, lattice, local pocket — all of
+   them the *same* field at different points of its parameter space.
+3. **High-density semantic stream bundles.** The corridor: a two-scale gaussian
+   around the signal segment (`CORRIDOR_CORE_RADIUS = 1.6`,
+   `CORRIDOR_SPILL_RADIUS = 6.2`) that both displaces the matter and lights the
+   structure, at idle as well as under interaction (`IDLE_CORRIDOR = 0.4`).
+4. **Five computational regions with different field behaviour.** `inference`
+   (branch/merge), `sampling` (dense interfering sheets), `branching` (parallel
+   state with rollback), `throughput` (saturated bus stacks), `probe` (sparse
+   probes into depth). Distinguished by `organisation`, `pressure` and `rate`
+   before any colour is chosen.
+
+### Measurements
+
+- Idle 1920×1080 ULTRA, sixty-second run: **fps 36–45, frame time 22–28 ms,
+  49 draw calls per frame, 483,200 triangles, 22 geometries, 26 textures** —
+  geometries and textures flat across the whole run, so nothing leaks.
+- Field: **120,000 rendered samples** against a **120,000 configured budget**
+  (ULTRA), of which **48,000** are carrying signal at idle. Draw calls for the
+  whole scene are 49, of which the field is **one**.
+- Luminance, idle 1920×1080 ULTRA: frame mean 0.114, centre mean 0.309, peak
+  1.000, 47.6% of pixels in the bottom histogram bin, 0.2% in the top. A dark
+  frame with a small blown-out core — which is what lets bloom at a threshold of
+  0.72 fire at all.
+- WebGPU against WebGL2, same frame and quality: spread 252.1 against 252.1 at
+  idle, 251.6 against 251.6 at focus-GRAPHICS. Both backends run the same
+  `WebGPURenderer` (WebGL2 via `forceWebGL`), so this is one shader graph.
+
+### Verification evidence
+
+- `npm.cmd test` — pass: 35 files, 312 tests.
+- `npm.cmd run typecheck` — pass. `npm.cmd run lint` — pass (0 errors, 0 warnings).
+- `npm.cmd run build` — pass with Next 16.3.5.
+- Acceptance matrix, captured and inspected: WebGPU ULTRA 1920×1080 ×
+  {idle, hover-GRAPHICS, focus-GRAPHICS, focus-AI, escape}; 2560×1440 idle;
+  480×270 thumbnail; text-hidden; reduced-motion; WebGL2 idle and
+  focus-GRAPHICS; MEDIUM and SAFE idle; and a sixty-second idle run for console
+  and resource state. **error 0, fatal 0** on every batch. Every interaction
+  assertion passed (hover lands, focus withdraws the other labels, escape
+  restores idle with no hovered name).
+- Captures are local only. `.gitignore` excludes `artifacts/`; a reviewer
+  re-runs `scripts/stage352-capture.mjs` rather than expecting PNGs in the tree.
+- No dependency, `package.json` entry or machine-local file was added.
+
+### Defects found and fixed by this stage's own captures
+
+- `rendererTelemetry` reported `info.render.calls`, which three.js documents as
+  cumulative since page load and which `Info.reset()` does not clear. A
+  sixty-second run reported **319,000** draw calls against a real cost of 49.
+  Now reads `render.drawCalls`, and the test pins a fixture containing both.
+- `domainPhenomena.labelAnchor` was authored as an absolute world position and
+  rendered inside a group already translated to `centre`, so every label landed
+  at roughly twice its region's distance from the origin. Three of the five
+  projected off-frame and the whole hover/focus/escape choreography was
+  unreachable; the harness reported it as `[interaction-not-landed]`.
+- `deriveFieldState.IDLE_INFLOW` was dead — the idle corridor strength had moved
+  to `fieldUniforms.IDLE_CORRIDOR` and the constant was a second, unread name for
+  the same decision.
+- `dataMatterMaterial` computed `swirled` and then used `dispersed`: the whole
+  circulation about the spine was an orientation-only effect.
+- `NODE_LAYOUT` placed three of five domains outside the idle frustum.
+- `DomainField` and `PostPipeline` mutated values returned from hooks
+  (materials from `useMemo`, `gl.info.autoReset` from `useThree`). The membrane
+  blend state is now set where the material is made, the frame loop reaches its
+  materials through a ref, and the counter's ownership moved to
+  `canvasAdapters.configureRenderer`, which is where the renderer is created.
+
+### Stage 3.5.4 remaining, real
+
+- **Large flat faces are still the main visual risk.** A single sweep through
+  four or five control points is a plane, and a plane takes one value across its
+  whole area. The surface-density and rim terms now vary across a member, which
+  is why the value hierarchy holds, but the near blade is still the flattest
+  thing in the frame at focus.
+- The veining on large surfaces reads as a fine branching network rather than as
+  a topographic contour — the isolation line traces the zero set of a fractal
+  field, and a fractal with its energy in one octave traces closed islands. The
+  octave weighting fixes it; a different noise basis would fix it more.
+- FPS sits at 36–45 rather than 60 at 1920×1080 ULTRA, measured in a **dev**
+  build with HMR active. A production-build measurement belongs to Stage 11.
+- RESEARCH is very dark at idle — the intended dormant-silhouette treatment, at
+  the edge of readable on a dim display.
+- The old visual tree is still on disk (`src/scene/core/`, `src/scene/Atmosphere.tsx`,
+  `src/scene/graph/{DomainEnvironment,GraphEdges,KnowledgeGraph}`, `src/scene/routing/`,
+  `src/scene/materials/{surfaceMaterial,surfaceResponse}`). Nothing mounts it, and
+  deleting it is a separate, explicitly authorised step.
+
+### Stage 3.5.4 handoff
+
+Stage 3.5.4 is implemented and captured on both backends. The next isolated
+slice remains Stage 6 — Command Palette; do not start it as part of this record.

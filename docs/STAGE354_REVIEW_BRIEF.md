@@ -1,5 +1,12 @@
 # Stage 3.5.4 — Visual Identity Re-Foundation: review brief
 
+> **Superseded.** This brief documents the pass over `e8384e2..a880637` — an
+> apertured monolith with a bezel rail, on a four-plate backdrop. That visual
+> layer is gone from the render tree. The current state of Stage 3.5.4 is
+> documented in `docs/STAGE354_REBUILD_REVIEW_BRIEF.md`, which supersedes this
+> document for regeneration. This file is kept as the record of the earlier pass
+> and of the defects it fixed.
+
 Written to be read **instead of** the transcript. If you are reviewing this
 stage, everything you need to check is below, and every claim carries either a
 command that reproduces it or a file that contains it.
