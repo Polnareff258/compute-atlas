@@ -72,20 +72,34 @@ describe('ink density probe', () => {
     const halfFov = (48 * Math.PI / 180) / 2;
     lines.push(`reveal eye  : ${(Math.max(worldSpanZ / 2 / Math.tan(halfFov), worldSpanX / 2 / (Math.tan(halfFov) * (16 / 9))) * 1.35).toFixed(0)} (for 16:9, 35% margin)`);
 
-    // Coverage: what fraction of the world carries a density at each threshold.
-    const thresholds = [0.15, 0.3, 0.5, 0.75];
-    const counts = thresholds.map(() => 0);
-    let total = 0;
-    for (let i = 0; i < density.width * density.height; i += 1) {
-      const body = density.data[i * 4] ?? 0;
-      total += 1;
-      thresholds.forEach((t, index) => {
-        if (body > t) counts[index] = (counts[index] ?? 0) + 1;
+    /*
+     * Per-channel statistics.
+     *
+     * This is the diagnostic that replaces guessing. Four rounds were spent changing a material
+     * term, re-capturing and measuring, and the measurement rejected every one of them; the
+     * question those rounds were trying to answer by inference is answered here directly, for
+     * every channel the material reads.
+     */
+    const CHANNELS = [
+      { name: 'body', index: 0 },
+      { name: 'scour', index: 1 },
+      { name: 'settle', index: 2 },
+      { name: 'along', index: 3 },
+    ] as const;
+    const AREAS = [0.01, 0.05, 0.1, 0.5];
+    const texels = density.width * density.height;
+    for (const channel of CHANNELS) {
+      const values = new Float64Array(texels);
+      for (let i = 0; i < texels; i += 1) values[i] = density.data[i * 4 + channel.index] ?? 0;
+      const sorted = Float64Array.from(values).sort();
+      const at = (p: number) => sorted[Math.min(texels - 1, Math.round(p * (texels - 1)))] ?? 0;
+      const shares = AREAS.map((t) => {
+        let count = 0;
+        for (let i = 0; i < texels; i += 1) if ((values[i] ?? 0) > t) count += 1;
+        return `${((count / texels) * 100).toFixed(1)}%`;
       });
-    }
-    for (let index = 0; index < thresholds.length; index += 1) {
       lines.push(
-        `body > ${thresholds[index]}: ${(((counts[index] ?? 0) / total) * 100).toFixed(2)}% of the world`,
+        `${channel.name.padEnd(7)}: p50 ${at(0.5).toFixed(3)}  p90 ${at(0.9).toFixed(3)}  p99 ${at(0.99).toFixed(3)}  max ${at(1).toFixed(3)}   area >0.01 ${shares[0]}  >0.05 ${shares[1]}  >0.1 ${shares[2]}  >0.5 ${shares[3]}`
       );
     }
 

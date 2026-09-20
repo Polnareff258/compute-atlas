@@ -1,3 +1,4 @@
+import { BASE_AMPLITUDE } from '../watershed/terrainField';
 import type { DomainBehaviour } from '../watershed/watershedDescriptor';
 
 /**
@@ -100,7 +101,22 @@ export function sampleDomainField(
     const envelope = t * t * (3 - 2 * t);
 
     const pattern = domainPattern(domain, dx, dz, distance, seed + index * 977);
-    const amplitude = Math.max(0, domain.terrain.amplitude) * envelope;
+    /*
+     * The unit conversion, and it is the whole of this fix.
+     *
+     * `terrain.amplitude` is a height in world units — the descriptor builds each one as
+     * `BASE_AMPLITUDE * k`, so the live values run from about eleven to about ninety-two.
+     * The three channels below are density *fractions* the material reads as 0..1 ramps.
+     * Multiplying one by the other saturates on contact: every region clamped to full scour
+     * and full settle the moment it began, which pinned three channels at p90 = 1.000 over
+     * roughly half the world and lifted the entire frame into a pale wash.
+     *
+     * Dividing by `BASE_AMPLITUDE` expresses the region at its own scale relative to the
+     * world it sits in, which is the same relative form the descriptor uses when it writes
+     * the amplitude. It is a conversion rather than a tuning constant, so it is a named
+     * division rather than a number.
+     */
+    const amplitude = (Math.max(0, domain.terrain.amplitude) / BASE_AMPLITUDE) * envelope;
 
     body += pattern.body * amplitude * BODY_SHARE;
     scour += pattern.scour * amplitude;

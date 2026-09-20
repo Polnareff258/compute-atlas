@@ -534,7 +534,10 @@ export function createInkMaterial(
     .mul(SETTLE_HEIGHT)
     .sub(vertexAdvected.y.mul(SCOUR_DEPTH))
     .add(vertexAdvected.x.pow(2).mul(BODY_RELIEF))
-    .add(vertexAdvected.w.mul(PRESSURE_LIFT));
+    // Capped at one, independently of the channel ceiling. The lift is the term that
+    // produced visible spikes, and a spike is the kind of failure the eye finds instantly
+    // while a merely-too-large value is one nobody notices until it is drawn.
+    .add(vertexAdvected.w.min(1).mul(PRESSURE_LIFT));
   material.positionNode = positionLocal.add(vec3(0, vertexHeight, 0));
 
   return {

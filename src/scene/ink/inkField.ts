@@ -175,6 +175,32 @@ const BODY_DIFFUSION = 0.9;
  * curvature bows it — which is where the arc in "arc compression front" actually
  * comes from, rather than from anything bending it at injection time.
  */
+/*
+ * The brush injection rates, per second.
+ *
+ * Chosen from the steady state each channel reaches under a sustained drag, which is
+ * `rate / decayRate`: pressure settles near 0.9, body near 0.8, and the erosion channels near
+ * 0.3, all inside the range the shader and the material were written against. Stating them as
+ * rates is what makes those steady states true at any frame rate; the per-frame form they
+ * replace had a steady state sixty times larger at sixty hertz.
+ */
+const BODY_INJECT_RATE = 0.24;
+const EROSION_INJECT_RATE = 0.05;
+const SETTLE_INJECT_RATE = 0.04;
+const PRESSURE_INJECT_RATE = 1.3;
+
+/**
+ * The ceilings the simulated channels may reach.
+ *
+ * Above the authored maximum, so they bound the visitor contribution rather than the world. The
+ * body channel is capped at one because it is a density the material reads as a `0..1` ramp;
+ * the erosion channels are capped above the bake deposits stack them (1.6); and pressure is
+ * capped at one because it is spent as a multiplier on vertex displacement.
+ */
+const CHANNEL_MAX_BODY = 1.2;
+const CHANNEL_MAX_EROSION = 1.8;
+const CHANNEL_MAX_PRESSURE = 1;
+
 const BRUSH_DEPTH = 0.34;
 const BRUSH_BREADTH = 1.0;
 
@@ -523,18 +549,32 @@ export function createInkField(options: InkFieldOptions): InkField {
       const body = bodySpread
         .mul(decayBody)
         .add(authored.x.mul(float(1).sub(decayBody)).mul(0.55))
-        .add(brush.mul(0.85));
+      // Injection is a *rate*, scaled by the timestep. See the channel ceilings below for
+      // what the per-frame form used to settle at.
+      .add(brush.mul(dt).mul(BODY_INJECT_RATE));
       const scour = erosionBase
         .mul(decayErosion)
         .add(authored.y.mul(float(1).sub(decayErosion)).mul(0.4))
-        .add(brush.mul(leading).mul(0.5));
+      .add(brush.mul(leading).mul(dt).mul(EROSION_INJECT_RATE));
       const settle = settleBase
         .mul(decayErosion)
         .add(authored.z.mul(float(1).sub(decayErosion)).mul(0.4))
-        .add(brush.mul(0.35));
-      const pressure = pressureSpread.mul(decayPressure).add(brush.mul(0.9));
+      .add(brush.mul(dt).mul(SETTLE_INJECT_RATE));
+      const pressure = pressureSpread.mul(decayPressure).add(brush.mul(dt).mul(PRESSURE_INJECT_RATE));
 
-      return vec4(body, scour, settle, pressure);
+      /*
+       * The ceilings.
+       *
+       * Above the authored field maximum in every case: the bake stacks deposits as high as
+       * 1.6, so a clamp at one would flatten the world itself rather than the visitor addition
+       * to it. These bound the *sum*, which is what the material reads.
+       */
+      return vec4(
+        body.min(CHANNEL_MAX_BODY),
+        scour.min(CHANNEL_MAX_EROSION),
+        settle.min(CHANNEL_MAX_EROSION),
+        pressure.min(CHANNEL_MAX_PRESSURE),
+      );
     })();
 
     // The copy pass. Its only job is to move `write` back into `read`, so the graph
