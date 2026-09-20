@@ -91,23 +91,22 @@ const SETTLE_HEIGHT = 17;
 const BODY_RELIEF = 9.5;
 
 /**
- * The thalweg's width and its brightness ceiling.
+ * The primary-core band.
  *
- * `THALWEG_INNER` is deliberately high. The band is meant to be one crisp line and
- * nothing else in the frame is allowed to be crisp, so it starts where the density
- * is already deep into its own core — and because it is a `smoothstep` over a field
- * that is itself advected and diffused, its edge is never a fixed width. It
- * breathes with the simulation, which is what keeps it reading as water rather than
- * as a stroked path.
+ * This selects the composition's one crisp structure, and it does so from the *static* fluvial
+ * speed rather than from the advected composite body. That distinction is the whole fix: a band
+ * over the composite is not a centreline, because by the time the composite is assembled it holds
+ * the rivers, the pigment veil and five regions' contributions, and it therefore fires wherever
+ * that sum happens to be high. Measured, the old form lit 84% of the frame above luma 64 and was
+ * the frame's base illumination rather than its highlight.
+ *
+ * The band is narrow because the rates it separates are close — primary 0.95 against secondary
+ * 0.80, with everything else at 0.67 and below — so it holds the first and excludes the second by
+ * four hundredths. There is deliberately no gain constant here any more: the quantity is already
+ * `0..1`, and a gain on top of it is precisely how the response came to exceed one.
  */
-// Raised from 0.70. The crest is the narrative 10 percent and has to be a small part of a
-// channel; at 0.70 it was selecting a quarter of the world, because the field saturates
-// near one across most of every river band rather than peaking at a centreline.
-const THALWEG_INNER = 0.9;
-// Raised with it, and narrowed: a tighter band is what makes the crest read as a line
-// rather than as a bright region.
-const THALWEG_OUTER = 0.99;
-const THALWEG_GAIN = 1.45;
+const PRIMARY_CORE_INNER = 0.84;
+const PRIMARY_CORE_OUTER = 0.95;
 
 /** The bedding: how many layers along the course, and how fast they travel. */
 const BEDDING_COUNT = 46;
@@ -215,6 +214,29 @@ export function createInkMaterial(
   const fluvial = texture(ink.fluvialTexture, coord);
   const speed = fluvial.z;
   const seedNoise = fluvial.w;
+
+  /*
+   * The primary river core, as a `0..1` mask.
+   *
+   * `speed` is `fluvial.z`, the static channel the bake writes before the regions, the basin and
+   * the pigment veil are mixed in. Unlike the composite body it is a property of the rivers and
+   * it cannot drift with the advection, and its value at a channel centre is essentially that
+   * river's own flow rate - so the separated rates make it a usable selector. The live rates are
+   * primary 0.95, secondary 0.80, then 0.67 and below; the band holds the first and excludes the
+   * second by four hundredths.
+   *
+   * It is named for what it is. It encodes the *primary* course and nothing else, so it could not
+   * be used to select an arbitrary route, and nothing should later assume it can.
+   *
+   * Defined here rather than beside the diagnostic that first proposed it, because the shipping
+   * thalweg and the mode-13 view have to read the same node - two copies of one expression is how
+   * a diagnostic and a frame come to disagree.
+   */
+  const primaryCore = smoothstep(
+    float(PRIMARY_CORE_INNER),
+    float(PRIMARY_CORE_OUTER),
+    speed,
+  );
 
   /**
    * The lateral coordinate.
@@ -395,7 +417,10 @@ export function createInkMaterial(
   // and third one wherever two rivers' corridors overlap, and a frame with three
   // crisp lines has none.
   const thalweg = options.hero
-    ? smoothstep(float(THALWEG_INNER), float(THALWEG_OUTER), body).mul(THALWEG_GAIN)
+    // The primary core, and nothing else. It used to read the composite `body`, which is not a
+    // centreline: it fires wherever the river, the veil and five regions together happen to be
+    // high, which measured as 84% of the frame.
+    ? primaryCore
     : float(0);
 
   /*
@@ -435,7 +460,14 @@ export function createInkMaterial(
   // The crest keeps a floor rather than scaling to zero: a scroll that removed it
   // entirely would leave the decomposition with no subject, because the thalweg is the
   // only thing in the frame that says which way the water runs.
-  const sharpness = thalweg.mul(scrollSharpness.mul(0.7).add(0.3)).add(pressureTerm.mul(0.75));
+  const sharpness = thalweg
+    .mul(scrollSharpness.mul(0.7).add(0.3))
+    .add(pressureTerm.mul(0.75))
+    // Clamped before the power. Pressure is still free to shape a drag front, but it can no
+    // longer push the total past the authored range - and it was the absence of this bound,
+    // together with a gain of 1.45, that let a term meant to be a narrow highlight become the
+    // frame's base illumination.
+    .clamp(0, 1);
 
   // --- The shading response ----------------------------------------------------
   //
@@ -570,6 +602,17 @@ export function createInkMaterial(
   resolved = mix(resolved, pigmentEmission.add(sharpnessEmission).mul(options.gain).mul(depthFade), modeIs(10));
   resolved = mix(resolved, pigmentEmission.mul(options.gain).mul(depthFade), modeIs(11));
   resolved = mix(resolved, sharpnessEmission.mul(options.gain).mul(depthFade), modeIs(12));
+
+  /*
+   * Mode 13 - the primary-core candidate. **Nothing in the shipping path reads this yet.**
+   *
+   * `speed` is `fluvial.z`: the static channel the bake writes before the regions, the basin
+   * and the pigment veil are mixed in, so unlike the composite body it is a property of the
+   * rivers and it cannot drift with the advection. Its value at a channel centre is essentially
+   * that river's own flow rate, and the live rates are well separated - primary 0.95, secondary
+   * 0.80, then 0.67 and below. The band below is chosen to hold the first and exclude the second.
+   */
+  resolved = mix(resolved, vec3(primaryCore).mul(depthFade), modeIs(13));
 
   material.colorNode = resolved;
 
