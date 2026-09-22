@@ -139,7 +139,14 @@ export const STRATA_STEP = 1.5;
  */
 export const BED_RELIEF = 0.15;
 
-/** The basin's reach in world units, matching `terrainGeometry`'s tint reach. */
+/**
+ * The basin's reach in world units.
+ *
+ * 190, and it is the same figure the old CPU terrain mesh used to tint its bowl
+ * with. That mesh is gone — the ground is a value of the density field now, not a
+ * displaced grid — but the number was measured against this world rather than
+ * chosen for that mesh, so it is carried here as the basin's own reach.
+ */
 export const BASIN_REACH = 190;
 const TAU = Math.PI * 2;
 

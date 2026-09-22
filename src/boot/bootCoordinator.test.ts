@@ -28,6 +28,7 @@ const readyState: RendererRuntimeState = {
     webgl2: true,
     preferredBackend: 'webgpu',
     adapterName: 'Test Adapter',
+    webgl2HalfFloatTarget: true,
   },
   error: null,
   startedAt: 20,

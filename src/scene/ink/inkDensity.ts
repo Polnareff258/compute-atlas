@@ -112,15 +112,12 @@ export type InkDensity = {
 /**
  * How far the body's density reaches past the channel, as a multiple of the width.
  *
- * Three and a half, and it is the most important number in this file. At one, the
- * field is a ribbon with an edge. At three and a half, the value at the channel's
- * own bank is still well above a half and the eye cannot find where the water
- * stops — which is what "soft boundaries" means in practice, and what the
- * onformative meander does: its banks are a gradient, not a line. Much wider
- * costs the negative space the composition needs and turns the frame into a wash,
- * which is the failure the baseline was measured against at 100.00% lit.
+ * The simulation keeps a compact transport corridor; the material is responsible
+ * for the much wider optical diffusion. Baking the blur into the transport field
+ * made every course a uniformly thick band, and no shader could recover the lost
+ * separation between moving water and suspended pigment.
  */
-export const INK_REACH = 3.5;
+export const INK_REACH = 2.7;
 
 /**
  * The body's falloff exponent, applied after the reach is normalised.

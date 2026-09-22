@@ -91,6 +91,39 @@ describe('command semantic adapters', () => {
       phase: 'hovering',
     });
   });
+
+  it('routes label hover and leave commands through the graph controller', () => {
+    let state = createInitialGraphInteractionState();
+    const graph = createGraphController((action) => {
+      state = reduceGraphInteraction(state, action);
+    });
+    const bus = createCommandBus({
+      registry: createCommandRegistry({ graph }),
+    });
+
+    expect(
+      bus.dispatch({
+        type: 'HOVER_NODE',
+        source: 'pointer',
+        nodeId: 'graphics',
+      }).status,
+    ).toBe('executed');
+    expect(state).toEqual({
+      hoveredNodeId: 'graphics',
+      focusedNodeId: null,
+      phase: 'hovering',
+    });
+
+    expect(
+      bus.dispatch({
+        type: 'CLEAR_HOVER',
+        source: 'pointer',
+        nodeId: 'graphics',
+      }).status,
+    ).toBe('executed');
+    expect(state).toEqual(createInitialGraphInteractionState());
+  });
+
   it('maps SET_QUALITY to the injected renderer quality seam', () => {
     let runtimeQuality = 'ultra';
     let sceneQuality = 'ultra';

@@ -6,7 +6,7 @@ import * as THREE from 'three';
 
 import { createCommandBus, type CommandBus } from '../commands/bus';
 import { createCommandRegistry } from '../commands/registry';
-import { sampleRendererTelemetry } from '../telemetry/rendererTelemetry';
+import { readFrameCounters, sampleRendererTelemetry } from '../telemetry/rendererTelemetry';
 import type { RendererTelemetrySnapshot } from '../telemetry/rendererTelemetry';
 
 import { getQualityProfile } from '../config/quality';
@@ -25,14 +25,17 @@ import { heroVista, resolveScrollPose } from './camera/heroShot';
 import { createFieldUniforms } from './field/fieldUniforms';
 import { createSkyBackground, installSkyBackground } from './materials/skyBackground';
 import { deriveFieldState } from './field/deriveFieldState';
-import { createFlowField } from './watershed/flowField';
 import { createInkDensity } from './ink/inkDensity';
+import { resolveBrushRadius } from './ink/brushProfile';
 import { createInkField, INK_QUALITY, type InkField } from './ink/inkField';
+import { resolveInkStepTiming } from './ink/inkStepTiming';
 import { meanderCourse } from './ink/riverCourse';
 import { projectDomainLabels, type DomainLabelEntry } from './domains/domainLabels';
 import { deriveScrollChoreography } from './scroll/scrollChoreography';
+import type { InkTargetFormat } from '../renderer/capability';
 import { RiverView } from './views/RiverView';
 import { TerrainView } from './views/TerrainView';
+import { ConvergenceView } from './views/ConvergenceView';
 import {
   createWatershedDescriptor,
   DOMAIN_IDS,
@@ -64,6 +67,12 @@ extend({
 export type SceneHostProps = {
   readonly quality: QualityProfile;
   readonly backend: RendererBackend;
+  /**
+   * The render-target format the ink field may allocate, from the capability
+   * probe. Defaulted to half float so a scene mounted without a runtime — tests,
+   * a tool — still gets the profile every capture in this project was taken at.
+   */
+  readonly inkTargetFormat?: InkTargetFormat;
   readonly reducedMotion?: boolean;
   readonly onTelemetry?: (snapshot: RendererTelemetrySnapshot) => void;
   readonly onQualityChange?: (profile: QualityProfile) => void;
@@ -303,6 +312,7 @@ function writeScrollStyle(choreography: ReturnType<typeof deriveScrollChoreograp
 export function SceneHost({
   quality,
   backend,
+  inkTargetFormat = 'rgba16f',
   reducedMotion = false,
   onTelemetry,
   onQualityChange,
@@ -401,41 +411,6 @@ export function SceneHost({
     uniforms.setBasin(descriptor.basin.centre, descriptor.basinFloor);
   }, [uniforms, descriptor]);
 
-  /**
-   * The flow field, built once and shared by the ground and the water.
-   *
-   * It lives here rather than in either view because it stopped being one view's
-   * business the moment there were two: the ground erodes by it and the water
-   * stands in the trough it cut, and both derive that from the same four channels.
-   * A copy per view would be two answers to "where is the channel" — and since the
-   * water's own cross-section is a *quotient* of two of those channels, the two
-   * copies disagreeing by a texel would be the water sitting off its own bed by a
-   * texel's worth of world.
-   *
-   * The texture is a 384×384 RGBA upload and the build is a CPU sweep over eight
-   * rivers; small, but there is no reason to do it twice and every reason not to
-   * do it twice differently.
-   */
-  const flow = useMemo(
-    () =>
-      createFlowField({
-        field: descriptor.field,
-        // The rivers' own bodies, not the channels that carve them: the flow field
-        // is what the *material* erodes by, and a channel exists precisely because
-        // a river does. Passing both would count every river's work twice.
-        rivers: descriptor.rivers.map((river) => ({
-          spine: river.spine,
-          width: river.width,
-          flowRate: river.flowRate,
-        })),
-        deposits: descriptor.deposits,
-        resolution: descriptor.flowResolution,
-      }),
-    [descriptor],
-  );
-
-  useEffect(() => () => flow.dispose(), [flow]);
-
   /*
    * The ink field: the composition's whole subject.
    *
@@ -487,7 +462,7 @@ export function SceneHost({
    * changes — which this world has already done once.
    */
   const brushRadius = useMemo(
-    () => Math.max(24, (descriptor.rivers[0]?.width ?? 32) * 1.4),
+    () => resolveBrushRadius(descriptor.rivers[0]?.width ?? 32),
     [descriptor],
   );
 
@@ -508,7 +483,7 @@ export function SceneHost({
         // simulation's: it carries the world's low-frequency structure, whose finest
         // feature is tens of world units, so texels finer than the simulation's would
         // be storing detail the advection is about to blur away.
-        resolution: Math.round(384 + 256 * settings.terrainDetail),
+        resolution: Math.round(512 + 512 * settings.terrainDetail),
         seed: WORLD_SEED,
       }),
     [descriptor, courses, settings.terrainDetail],
@@ -519,20 +494,44 @@ export function SceneHost({
       createInkField({
         density: inkDensity,
         quality: INK_QUALITY[quality],
+        // The capability probe's answer, not a constant: a WebGL2 context that
+        // could not give a complete half-float framebuffer allocates bytes
+        // instead of drawing into a target the driver never made. See
+        // `probeHalfFloatRenderTarget`.
+        targetFormat: inkTargetFormat,
         // See `brushRadius` above: the reach is a property of the authored river rather
         // than a literal here, so it rescales with the world instead of going stale.
         // changed — which this world has already done once.
         brushRadius,
       }),
-    [inkDensity, quality, brushRadius],
+    [inkDensity, quality, brushRadius, inkTargetFormat],
   );
 
   useEffect(() => () => ink.dispose(), [ink]);
 
-  const cameraController = useMemo(
-    () => createCameraController({ reducedMotion }),
-    [reducedMotion],
+  /**
+   * The rig, built once for the visit.
+   *
+   * **Why the preference is not a dependency.** It used to be, which meant
+   * toggling `prefers-reduced-motion` built a second controller — and a second
+   * controller has no pose, so the boot snap ran again and the visitor was sent
+   * back through the entry they had already made. A mode change is not a new
+   * rig; `setReducedMotion` below is the whole of what changes, and the entry
+   * state (`enteredRef`, `intentRef`) survives it because nothing resets them.
+   *
+   * The initial value comes from the preference the page was loaded with, read
+   * once through a lazy `useState` initialiser — the primitive that is allowed
+   * to take a prop at construction time. An effect would be too late (it runs
+   * after the first frame) and a ref read during render is not a place this
+   * codebase reads props from.
+   */
+  const [cameraController] = useState(() =>
+    createCameraController({ reducedMotion }),
   );
+
+  useEffect(() => {
+    cameraController.setReducedMotion(reducedMotion);
+  }, [cameraController, reducedMotion]);
 
   const [graphInteraction, setGraphInteraction] = useState<GraphInteractionState>(
     createInitialGraphInteractionState,
@@ -627,24 +626,24 @@ export function SceneHost({
   const intentRef = useRef<ShotIntent>('entry');
   const sequenceKeyRef = useRef<string | null>(null);
   const enteredRef = useRef(false);
-  const bootedRef = useRef(true);
 
   /**
-   * The entry, re-armed when the rig itself is replaced.
+   * The entry, and the one thing that re-arms it.
    *
-   * Not when the *framings* change: the entry is something a visitor does on
-   * arrival, and re-running it because the window was resized would send
-   * somebody who had already arrived back through the gate. A new controller is
-   * a different rig with no pose at all, which is the one case that does have to
-   * start again. The snap itself happens in the frame loop, so that there is one
-   * place deciding what the camera does rather than two.
+   * `bootedRef` starts false so the first frame places the rig — snapped, never
+   * travelled — and then stays true for the rest of the page's life. It is
+   * deliberately *not* re-armed when the reduced-motion preference changes, and
+   * that is a repair rather than an omission: the rig used to be replaced by a
+   * preference change, and the replacement was treated as a rig with no pose,
+   * which reset `entered` and sent somebody who had already arrived back through
+   * the entry. `entered` is a fact about the visit, not about the controller, so
+   * nothing about the controller is allowed to clear it.
+   *
+   * The original note stands for the case that does have to start again:
+   * re-running the entry because the window was resized would be the same
+   * failure, and a new *world* is a different thing to have arrived in.
    */
-  useEffect(() => {
-    bootedRef.current = false;
-    enteredRef.current = false;
-    intentRef.current = 'entry';
-    sequenceKeyRef.current = null;
-  }, [cameraController]);
+  const bootedRef = useRef(false);
 
   useEffect(() => {
     if (activeDomainId === null) {
@@ -701,12 +700,20 @@ export function SceneHost({
       dragRef.current.down = false;
     };
     element.addEventListener('pointerdown', handleDown);
+    // Chrome DevTools automation and a few embedded browser shells can emit the
+    // compatibility mouse event without a PointerEvent. Listening to both is
+    // idempotent here (the handler only sets two values) and keeps the direct
+    // manipulation path available in those hosts as well as on normal pointer input.
+    element.addEventListener('mousedown', handleDown);
     window.addEventListener('pointerup', handleUp);
     window.addEventListener('pointercancel', handleUp);
+    window.addEventListener('mouseup', handleUp);
     return () => {
       element.removeEventListener('pointerdown', handleDown);
+      element.removeEventListener('mousedown', handleDown);
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
+      window.removeEventListener('mouseup', handleUp);
     };
   }, [gl]);
 
@@ -730,6 +737,62 @@ export function SceneHost({
   useFrame((state, delta) => {
     const safeDelta = Math.min(Math.max(delta, 0), 0.1);
     const target = fieldState;
+
+    /*
+     * Telemetry, and the frame boundary it is read at.
+     *
+     * At the *top* of the frame, before anything this frame draws, and that
+     * position is the measurement rather than a convenience. `gl.info` is not
+     * reset by the renderer — see `configureRenderer`, which turns Three.js's own
+     * automatic reset off so that several passes can be counted as one frame —
+     * so what it holds here is exactly the frame that finished: the ink field's
+     * passes and R3F's own render, both from frame N-1, and nothing older,
+     * because the counters were cleared at the top of frame N-1.
+     *
+     * The counters are cleared on *every* frame, not only on the ones that
+     * report, and that is the half that is easy to get wrong. The readout is
+     * throttled to a quarter-second, so clearing only when a report is due makes
+     * the value a report reads the sum of every frame since the last report: the
+     * first version of this measured 126 draw calls where the frame costs 21,
+     * which is six frames wearing one frame's field name. A readout may be stale;
+     * it may not describe a different interval from the one it names.
+     */
+    if (onTelemetry === undefined) {
+      // Cleared even with nobody listening. The counters belong to the frame, not
+      // to the readout, and a reset that only happens when a subscriber is
+      // mounted is a counter whose meaning depends on who is watching.
+      gl.info.reset();
+    } else {
+      telemetryClockRef.current.elapsed += safeDelta;
+
+      if (
+        telemetryClockRef.current.elapsed - telemetryClockRef.current.last >=
+        TELEMETRY_INTERVAL
+      ) {
+        telemetryClockRef.current.last = telemetryClockRef.current.elapsed;
+        const report = onTelemetry;
+        readFrameCounters(gl, () => {
+          report(
+            sampleRendererTelemetry({
+              renderer: gl,
+              backend,
+              quality,
+              configuredFieldBudget: settings.particleBudget,
+              // Zero, and truthfully so: the landscape's geometry and its units do not
+              // exist yet. The two figures are separate arguments precisely so that a
+              // plan and a fact cannot be reported as the same number, and reporting
+              // the budget here would be the plan wearing the fact's name.
+              renderedFieldSamples: 0,
+              activeSignalSamples: 0,
+              deltaSeconds: safeDelta,
+              sampledAt: performance.now(),
+            }),
+          );
+        });
+      } else {
+        gl.info.reset();
+      }
+    }
 
     const wantHover = target.phase === 'awaiting' ? 1 : 0;
     const wantFocus = target.phase === 'running' ? 1 : 0;
@@ -775,9 +838,30 @@ export function SceneHost({
     // about — and because it is the same clock that advances the transition.
     if (!bootedRef.current) {
       bootedRef.current = true;
-      // Snapped, not travelled: the approach pose is where the entry move
-      // begins, so arriving at it is not a move anybody should see.
-      cameraController.snapTo(entryApproachPose(shots.entry));
+      if (reducedMotion) {
+        /*
+         * Reduced motion arrives at the resting framing instead of travelling to
+         * it. The entry is a *passage* — the camera starts behind the gate and
+         * flies in, and the landscape resolves as it arrives — and a preference
+         * that asks the page to stop moving is not a request for a smaller
+         * version of that passage. What it keeps is the composition: the resting
+         * vista is where the entry was going, so landing on it directly shows
+         * the frame the site is composed around rather than a frame on its way
+         * there.
+         *
+         * `entered` is set here rather than earned by a settle, because there is
+         * no settle to earn it from — and it has to be set, or the intent would
+         * stay `entry` and the rig would keep asking for a sequence it has
+         * already been told not to play.
+         */
+        enteredRef.current = true;
+        intentRef.current = 'rest';
+        cameraController.snapTo(shots.idleVista);
+      } else {
+        // Snapped, not travelled: the approach pose is where the entry move
+        // begins, so arriving at it is not a move anybody should see.
+        cameraController.snapTo(entryApproachPose(shots.entry));
+      }
     } else if (intentRef.current === 'entry' && cameraController.isSettled()) {
       enteredRef.current = true;
     }
@@ -875,10 +959,16 @@ export function SceneHost({
      * is therefore honoured where the composition's motion actually comes from, and the two
      * clocks that drive it are frozen with it.
      */
+    const inkTiming = resolveInkStepTiming(
+      safeDelta,
+      state.clock.elapsedTime,
+      reducedMotion,
+    );
     ink.step(
       gl as unknown as Parameters<InkField['step']>[0],
-      reducedMotion ? 0 : safeDelta,
-      reducedMotion ? 0 : state.clock.elapsedTime,
+      inkTiming.ambientDelta,
+      inkTiming.elapsed,
+      inkTiming.interactionDelta,
     );
 
     if (onDomainLabels !== undefined) {
@@ -894,30 +984,7 @@ export function SceneHost({
         }),
       );
     }
-    
-    if (onTelemetry === undefined) return;
-    telemetryClockRef.current.elapsed += safeDelta;
-    if (telemetryClockRef.current.elapsed - telemetryClockRef.current.last < TELEMETRY_INTERVAL) {
-      return;
-    }
-    telemetryClockRef.current.last = telemetryClockRef.current.elapsed;
 
-    onTelemetry(
-      sampleRendererTelemetry({
-        renderer: gl,
-        backend,
-        quality,
-        configuredFieldBudget: settings.particleBudget,
-        // Zero, and truthfully so: the landscape's geometry and its units do not
-        // exist yet. The two figures are separate arguments precisely so that a
-        // plan and a fact cannot be reported as the same number, and reporting
-        // the budget here would be the plan wearing the fact's name.
-        renderedFieldSamples: 0,
-        activeSignalSamples: 0,
-        deltaSeconds: safeDelta,
-        sampledAt: performance.now(),
-      }),
-    );
   });
 
   return (
@@ -972,13 +1039,11 @@ export function SceneHost({
         ink={ink}
         detail={settings.terrainDetail}
       />
-      {/*
-        The Convergence Basin's levels, mounted last and deliberately so. They are
-        the only transparent surfaces in the frame that sit *inside* the terrain
-        rather than on it, so they have to be drawn after both the ground they are
-        set into and the water that arrives at them — a sheet drawn before the
-        river would have the river composited behind the level it is filling.
-      */}
+      <ConvergenceView
+        descriptor={descriptor}
+        uniforms={uniforms}
+        quality={quality}
+      />
     </>
   );
 }

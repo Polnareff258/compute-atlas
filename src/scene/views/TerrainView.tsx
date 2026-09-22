@@ -41,6 +41,17 @@ export type TerrainViewProps = {
   readonly presence: number;
 };
 
+/*
+ * One high, faint dispersion sheet.
+ *
+ * Three copies of the same contour did not become volume; they became three visible bands and
+ * made the entire system read as stacked ribbons. The hero surface now owns the structure. This
+ * sheet only supplies a delayed atmospheric echo at a different depth.
+ */
+const VEIL_LAYERS = [
+  { height: 1.18, gain: 0.20 },
+] as const;
+
 export function TerrainView({
   descriptor,
   uniforms,
@@ -66,17 +77,23 @@ export function TerrainView({
     return result;
   }, [descriptor]);
 
-  const { material, dispose } = useMemo(
-    () => createVeilMaterial(uniforms, ink, { height, gain: presence }),
+  const layers = useMemo(
+    () =>
+      VEIL_LAYERS.map((layer) =>
+        createVeilMaterial(uniforms, ink, {
+          height: height * layer.height,
+          gain: presence * layer.gain,
+        }),
+      ),
     [uniforms, ink, height, presence],
   );
 
   useEffect(
     () => () => {
       geometry.dispose();
-      dispose();
+      for (const layer of layers) layer.dispose();
     },
-    [geometry, dispose],
+    [geometry, layers],
   );
 
   // Not mounted at all at a tier where the veil does not exist, rather than mounted
@@ -85,5 +102,16 @@ export function TerrainView({
   // there is none.
   if (presence <= 0) return null;
 
-  return <mesh geometry={geometry} material={material} />;
+  return (
+    <>
+      {layers.map((layer, index) => (
+        <mesh
+          key={index}
+          geometry={geometry}
+          material={layer.material}
+          renderOrder={2 + index}
+        />
+      ))}
+    </>
+  );
 }

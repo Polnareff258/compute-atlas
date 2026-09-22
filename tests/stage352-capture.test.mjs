@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import {
+import { JSDOM } from 'jsdom';
+import * as capture from '../scripts/stage352-capture.mjs';
+
+const {
   buffersEqual,
   buildSearchCandidates,
+  CAPTURE_MODE_CSS,
   captureVariants,
   evaluateExpectation,
   findDomainLabel,
+  LABEL_STATE_EXPRESSION,
   formatCaptureName,
   readDomainState,
-} from '../scripts/stage352-capture.mjs';
+} = capture;
 
 const VIEWPORT = { label: '1920x1080', width: 1920, height: 1080 };
 
@@ -15,9 +20,8 @@ const VIEWPORT = { label: '1920x1080', width: 1920, height: 1080 };
 const graphicsLabel = {
   name: 'GRAPHICS',
   state: 'idle',
-  hasDescription: false,
   rect: { left: 900, top: 600, width: 200, height: 24 },
-  wrapper: { left: 900, top: 600, width: 200, height: 24 },
+  wrapper: null,
 };
 
 describe('domain label lookup', () => {
@@ -32,15 +36,14 @@ describe('domain label lookup', () => {
   it('reports what every label is doing, so a failure names the actual state', () => {
     const state = readDomainState(
       [
-        { name: 'AI', state: 'idle', hasDescription: false },
-        { name: 'GRAPHICS', state: 'focused', hasDescription: true },
+        { name: 'AI', state: 'idle' },
+        { name: 'GRAPHICS', state: 'focused' },
       ],
       'graphics',
     );
     expect(state).toMatchObject({
       found: true,
       state: 'focused',
-      hasDescription: true,
       labelCount: 2,
       focusedNames: ['GRAPHICS'],
     });
@@ -48,14 +51,67 @@ describe('domain label lookup', () => {
   });
 });
 
+describe('current DomainLabels DOM probe', () => {
+  it('recognizes hover, focus, and Escape on the current domain-label buttons', () => {
+    expect(typeof CAPTURE_MODE_CSS).toBe('string');
+    expect(typeof LABEL_STATE_EXPRESSION).toBe('string');
+    const dom = new JSDOM(`<!doctype html><html><head></head><body>
+      <div class="domain-labels" aria-label="Compute regions">
+        <button class="graph-node-label" data-domain-id="ai"><span class="graph-node-label__name">AI</span></button>
+        <button class="graph-node-label" data-domain-id="graphics"><span class="graph-node-label__name">Graphics</span></button>
+        <button class="graph-node-label" data-domain-id="game-analysis"><span class="graph-node-label__name">Game analysis</span></button>
+        <button class="graph-node-label" data-domain-id="systems"><span class="graph-node-label__name">Systems</span></button>
+        <button class="graph-node-label" data-domain-id="research"><span class="graph-node-label__name">Research</span></button>
+      </div>
+    </body></html>`);
+    const { document } = dom.window;
+    const style = document.createElement('style');
+    style.textContent = CAPTURE_MODE_CSS;
+    document.head.append(style);
+
+    const observe = () =>
+      readDomainState(
+        new Function('document', `return ${LABEL_STATE_EXPRESSION}`)(document),
+        'graphics',
+      );
+
+    const graphics = document.querySelector('[data-domain-id="graphics"]');
+    expect(observe().state).toBe('idle');
+
+    graphics.classList.add('is-hovered');
+    const hovered = observe();
+    expect(hovered.state).toBe('hovered');
+    expect(evaluateExpectation(hovered, 'hover', 'graphics').ok).toBe(true);
+
+    graphics.classList.remove('is-hovered');
+    graphics.classList.add('is-focused');
+    const focused = observe();
+    expect(focused.labelCount).toBe(5);
+    expect(focused.focusedNames).toEqual(['Graphics']);
+    expect(evaluateExpectation(focused, 'focus', 'graphics').ok).toBe(true);
+
+    graphics.classList.remove('is-focused');
+    const escaped = observe();
+    expect(evaluateExpectation(escaped, 'escape', 'graphics').ok).toBe(true);
+
+    document.documentElement.classList.add('capture-text-hidden');
+    expect(dom.window.getComputedStyle(document.querySelector('.domain-labels')).display).toBe('none');
+    dom.window.close();
+  });
+});
+
 describe('candidate pointer positions', () => {
-  it('searches outward from the label toward its anchor, below the text', () => {
+  it('tries the current button itself before searching around its former scene anchor', () => {
+    expect(buildSearchCandidates(graphicsLabel, VIEWPORT)[0]).toEqual({ x: 1000, y: 612 });
+  });
+
+  it('keeps the scene-anchor search as a fallback below the text', () => {
     const candidates = buildSearchCandidates(graphicsLabel, VIEWPORT);
     expect(candidates.length).toBeGreaterThan(1);
-    const [first] = candidates;
+    const firstFallback = candidates[1];
     // The label is right of centre, so its anchor is further right and lower.
-    expect(first.x).toBeGreaterThan(graphicsLabel.rect.left + graphicsLabel.rect.width);
-    expect(first.y).toBeGreaterThan(graphicsLabel.rect.top + graphicsLabel.rect.height);
+    expect(firstFallback.x).toBeGreaterThan(graphicsLabel.rect.left + graphicsLabel.rect.width);
+    expect(firstFallback.y).toBeGreaterThan(graphicsLabel.rect.top + graphicsLabel.rect.height);
   });
 
   it('keeps every candidate inside the viewport and free of duplicates', () => {
@@ -78,7 +134,6 @@ describe('interaction expectations', () => {
   const hovered = {
     found: true,
     state: 'hovered',
-    hasDescription: true,
     labelCount: 5,
     focusedNames: [],
     hoveredNames: ['GRAPHICS'],
@@ -87,8 +142,7 @@ describe('interaction expectations', () => {
   const focused = {
     found: true,
     state: 'focused',
-    hasDescription: true,
-    labelCount: 1,
+    labelCount: 5,
     focusedNames: ['GRAPHICS'],
     hoveredNames: [],
     observed: [],
@@ -96,7 +150,6 @@ describe('interaction expectations', () => {
   const idle = {
     found: true,
     state: 'idle',
-    hasDescription: false,
     labelCount: 5,
     focusedNames: [],
     hoveredNames: [],
@@ -109,24 +162,27 @@ describe('interaction expectations', () => {
     expect(verdict.reason).toMatch(/idle, not hovered/);
   });
 
-  it('refuses a hover that arrived without its description', () => {
-    expect(evaluateExpectation({ ...hovered, hasDescription: false }, 'hover', 'graphics').ok).toBe(
-      false,
-    );
+  it('recognizes a hovered label without obsolete description markup', () => {
     expect(evaluateExpectation(hovered, 'hover', 'graphics').ok).toBe(true);
   });
 
-  it('requires focus to withdraw the other domains as well as arrive', () => {
-    expect(evaluateExpectation({ ...focused, labelCount: 5 }, 'focus', 'graphics').ok).toBe(false);
+  it('requires exactly the requested domain to carry the focus state', () => {
     expect(evaluateExpectation(focused, 'focus', 'graphics').ok).toBe(true);
+    expect(
+      evaluateExpectation(
+        { ...focused, focusedNames: ['GRAPHICS', 'AI'] },
+        'focus',
+        'graphics',
+      ).ok,
+    ).toBe(false);
     expect(evaluateExpectation(hovered, 'focus', 'graphics').ok).toBe(false);
   });
 
   it('treats Escape as restoring the idle composition, not merely dropping focus', () => {
     expect(evaluateExpectation(focused, 'escape', 'graphics').ok).toBe(false);
     expect(evaluateExpectation(idle, 'escape', 'graphics').ok).toBe(true);
-    // A frame that still shows a single label has not left the focus composition.
-    expect(evaluateExpectation({ ...idle, labelCount: 1 }, 'escape', 'graphics').ok).toBe(false);
+    // The label buttons remain mounted in focus and idle; the probe must judge state classes.
+    expect(evaluateExpectation({ ...idle, focusedNames: ['GRAPHICS'] }, 'escape', 'graphics').ok).toBe(false);
     // And a pointer still resting on a domain leaves it hovered, which keeps the
     // routing field bent toward it even though focus is gone. Idle is a claim
     // about hover as well as about focus, so Escape has to clear both.

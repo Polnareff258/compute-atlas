@@ -5,6 +5,8 @@ export type CommandSource = 'pointer' | 'keyboard' | 'palette' | 'agent' | 'syst
 
 export type Command =
   | { readonly type: 'NAVIGATE_HOME'; readonly source: CommandSource }
+  | { readonly type: 'HOVER_NODE'; readonly source: CommandSource; readonly nodeId: GraphNodeId }
+  | { readonly type: 'CLEAR_HOVER'; readonly source: CommandSource; readonly nodeId: GraphNodeId }
   | { readonly type: 'FOCUS_NODE'; readonly source: CommandSource; readonly nodeId: GraphNodeId }
   | { readonly type: 'OPEN_SECTION'; readonly source: CommandSource; readonly sectionId: string }
   | { readonly type: 'SYSTEM_STATUS'; readonly source: CommandSource }

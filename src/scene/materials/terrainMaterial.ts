@@ -54,9 +54,11 @@ import { sampleGround } from './groundField';
  * tessellation, and a perturbation below the shading's own resolution does that
  * without needing to be shaded itself.
  *
- * **What the fragment stage is allowed to be.** Not a lighting model. The baked
- * vertex colour already carries the light's direction and the depth — see
- * `terrainGeometry` — and there is no light rig in this scene. What is left for
+ * **What the fragment stage is allowed to be.** Not a lighting model. The vertex
+ * colour this material is handed already carries the light's direction and the
+ * depth — that was the CPU mesh's job when this material was written for it, and
+ * it is the density bake's job now — and there is no light rig in this scene.
+ * What is left for
  * the fragment stage is the part that is a function of time or of the view: the
  * wet sheen on working ground, the region's accent, and the basin's compression.
  * Every one of those is a *response*, and none of them is allowed to be a filter

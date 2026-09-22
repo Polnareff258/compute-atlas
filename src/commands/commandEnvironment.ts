@@ -2,6 +2,8 @@ import type { GraphNodeId } from '../graph/types';
 import type { QualityProfile } from '../renderer/types';
 
 export type GraphCommandEnvironment = {
+  readonly hoverNode: (nodeId: GraphNodeId) => void;
+  readonly clearHover: (nodeId: GraphNodeId) => void;
   readonly focusNode: (nodeId: GraphNodeId) => void;
   readonly clearFocus: () => void;
 };

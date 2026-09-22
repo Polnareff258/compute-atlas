@@ -345,9 +345,23 @@ export type ShotSequence = {
 
 /**
  * Reduced motion keeps state causality readable without perpetual drift:
- * transitions still happen, but they are short, low-displacement and stop.
+ * transitions still happen, but they are *cuts* rather than travels.
+ *
+ * It used to be "short and low-displacement" — the same transitions at 42% of
+ * the amplitude — and that is a defensible reading of a preference about
+ * animation until it is measured. What it produced was a camera that still
+ * travelled: an entry that still began behind the gate and still flew in, a
+ * focus that still took three and a half seconds, an escape that still
+ * decompressed. Nobody who asks for reduced motion is asking for a smaller
+ * version of the same move; they are asking not to be moved. So the rig lands
+ * on the pose the sequence rests in and skips the ones it would have passed
+ * through, and the amplitude scale below is what is left of the old reading —
+ * it still softens the pointer's own response, which is input rather than
+ * animation. See `setReducedMotion` for why the preference is a setter rather
+ * than a constructor argument.
  */
 const REDUCED_MOTION_POINTER_DAMPING = 12;
+const DEFAULT_POINTER_DAMPING = 7;
 
 /**
  * How fast the scroll's authority over the camera rises and falls, per second.
@@ -362,9 +376,19 @@ const SCROLL_AUTHORITY_DAMPING = 6.5;
 const REDUCED_MOTION_AMPLITUDE_SCALE = 0.42;
 
 export class CameraController {
-  private readonly pointerDamping: number;
-  private readonly amplitudeScale: number;
-  private readonly reducedMotion: boolean;
+  /**
+   * Mutable, and that is the whole of the reduced-motion toggle's cost.
+   *
+   * It used to be three `readonly` fields set once in the constructor, which
+   * meant the only way for `SceneHost` to change the preference was to build a
+   * new rig — and a new rig has no pose, which is what re-armed the entry and
+   * sent a visitor who had already arrived back through the gate. A preference
+   * is a change of mode, not a change of rig, so it is a setter.
+   */
+  private pointerDamping: number;
+  private readonly pointerDampingOverride: number | null;
+  private amplitudeScale: number;
+  private reducedMotion: boolean;
   private pointerTargetX = 0;
   private pointerTargetY = 0;
   private pointerX = 0;
@@ -393,9 +417,8 @@ export class CameraController {
 
   public constructor(options: CameraControllerOptions = {}) {
     this.reducedMotion = options.reducedMotion ?? false;
-    this.pointerDamping =
-      options.pointerDamping ??
-      (this.reducedMotion ? REDUCED_MOTION_POINTER_DAMPING : 7);
+    this.pointerDampingOverride = options.pointerDamping ?? null;
+    this.pointerDamping = this.resolvePointerDamping();
     this.amplitudeScale = this.reducedMotion ? REDUCED_MOTION_AMPLITUDE_SCALE : 1;
 
     const start: PoseState = {
@@ -406,6 +429,45 @@ export class CameraController {
     this.pose = start;
     this.from = start;
     this.to = start;
+  }
+
+  private resolvePointerDamping(): number {
+    if (this.pointerDampingOverride !== null) {
+      return this.pointerDampingOverride;
+    }
+    return this.reducedMotion ? REDUCED_MOTION_POINTER_DAMPING : DEFAULT_POINTER_DAMPING;
+  }
+
+  /**
+   * Changes the rig's mode without replacing it.
+   *
+   * **Why this is not a constructor argument any more.** The preference can
+   * change while the page is open — that is what a media query subscription is
+   * for — and the previous shape handled it by rebuilding the controller. A new
+   * controller starts with no pose, so the scene host had to re-run the boot
+   * snap and the entry, and toggling the preference mid-visit therefore replayed
+   * the whole arrival: the camera flew back through the gate for somebody who had
+   * been standing in the landscape for a minute. Keeping one rig and changing its
+   * mode removes the failure by construction rather than by remembering not to
+   * re-arm it.
+   *
+   * Turning it *on* also finishes whatever move is in flight, at the pose the
+   * move was heading for. A rig that carried on travelling to a destination it
+   * has just been told not to travel to would be honouring the letter of the
+   * setting and none of it.
+   */
+  public setReducedMotion(prefersReducedMotion: boolean): void {
+    if (prefersReducedMotion === this.reducedMotion) {
+      return;
+    }
+
+    this.reducedMotion = prefersReducedMotion;
+    this.pointerDamping = this.resolvePointerDamping();
+    this.amplitudeScale = prefersReducedMotion ? REDUCED_MOTION_AMPLITUDE_SCALE : 1;
+
+    if (prefersReducedMotion) {
+      this.landOnTarget();
+    }
   }
 
   public setPointerTarget(x: number, y: number): void {
@@ -443,6 +505,35 @@ export class CameraController {
     this.key = sequence.key;
     this.queued = rest;
     this.begin(first);
+
+    // Reduced motion takes the sequence's own destination and skips its way
+    // points. The destination is the *last* pose rather than the first, and that
+    // is not an arbitrary choice: `sequenceFor` is written so that the pose an
+    // intent rests in is the one it ends on — `entry` chains into `idleVista`,
+    // `escape` chains back to it, and `focus` ends on `domainInspection` — so the
+    // last pose is exactly "where this intent is asking the camera to be".
+    // Snapping to the first would leave the rig parked on a waypoint.
+    if (this.reducedMotion) {
+      this.landOnTarget();
+    }
+  }
+
+  /**
+   * Finish the current move and everything queued behind it, without travelling.
+   *
+   * The pose the sequence was heading for, which is its last queued shot when
+   * there is one and the pose already being moved into when there is not.
+   */
+  private landOnTarget(): void {
+    const lastQueued = this.queued[this.queued.length - 1];
+    const destination: PoseState = lastQueued === undefined ? this.to : poseState(lastQueued);
+    this.pose = destination;
+    this.from = destination;
+    this.to = destination;
+    this.duration = 0;
+    this.easingName = 'linear';
+    this.elapsed = 0;
+    this.queued = [];
   }
 
   public setVisualState(state: CameraVisualState): void {

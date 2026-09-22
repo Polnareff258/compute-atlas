@@ -17,7 +17,10 @@
 export function SystemMasthead() {
   return (
     <header className="system-masthead">
-      <p className="system-masthead__title">Polnareff System</p>
+      <h1 className="system-masthead__title">
+        <span>Polnareff</span>
+        <span>System</span>
+      </h1>
       <p className="system-masthead__subline">A local computing environment</p>
     </header>
   );

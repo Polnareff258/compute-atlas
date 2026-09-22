@@ -4,11 +4,14 @@ Replaces the previous version of this file, which referenced a superseded commit
 deleted Voronoi corridor/basin construction as live, and carried blocking issues that have since
 been fixed. Everything below is written against the code as it stands.
 
-    HEAD      035f360  "fix: the simulation passes write state through outputNode, not colorNode"
-    branch    master, in sync with origin/master, clean tree
-    evidence  artifacts/baseline-035f360/  (50 files, prefix baseline-035f360-*)
+    HEAD      04b367e  "docs: record the fifth console warning, and the dev-server restart requirement"
+    branch    master, working tree carries the uncommitted Stage 3.5.x visual work
+    evidence  artifacts/baseline-035f360/   (50 files, prefix baseline-035f360-*)
+              artifacts/stage35x-verify/   (post-repair runs, prefix s356*)
 
-This is a **preparation** document. No visual work was done in the commit that produced it.
+The tree is **not** clean, and the last commit is **not** where the picture comes from: the approved
+frames in `artifacts/codex-reconstruction/pass63-final-polish` were captured from the uncommitted
+working tree, which is the state everything below describes.
 
 ## 1. Verified state of the checks
 
@@ -16,15 +19,25 @@ This is a **preparation** document. No visual work was done in the commit that p
 |---|---|
 | `npm run typecheck` | passes |
 | `npm run lint` | passes, 0 errors 0 warnings |
-| `npm test` | **1 failed, 196 passed of 197** |
+| `npm test` | **269 passed of 269, 37 files, no timeout** |
 | browser console | error 0, fatal 0 on every capture batch |
 
-The single failure is `src/scene/watershed/terrainGeometry.test.ts` → *"builds a mesh at ULTRA
-detail within a sane budget"*. It **passes in isolation** (2.9 s) and fails only when the suite
-runs in parallel, where competing workers push it past vitest's default 5 s per-test timeout. The
-global timeout was deliberately **not** raised and the module was **not** deleted. That module is
-not on the render path — only its own test imports it — but confirming that and removing it are a
-separate decision for a later commit.
+The single failure this table used to carry — `src/scene/watershed/terrainGeometry.test.ts` →
+*"builds a mesh at ULTRA detail within a sane budget"*, passing in isolation at 2.9 s and failing
+only under a parallel suite — has been **closed by removing the module**, not by raising the
+timeout. The confirmation the previous version deferred ("only its own test imports it") was re-run
+against the current tree: no production module, view, script or test outside its own file imported
+`buildTerrainGeometry`, and nothing imported `rowWarp` or `terrainSampleXZ` either. So
+`terrainGeometry.ts` and `terrainGeometry.test.ts` are deleted, and the two comments that pointed at
+the deleted module (`groundField.ts`'s basin reach, `terrainMaterial.ts`'s baked-vertex-colour note)
+now say what they mean themselves. `watershedDescriptor.terrainResolution` is kept — it is an
+art-directed ladder and `watershedDescriptor.test.ts` still asserts it — with its doc recording that
+no live geometry picks it up. The lesson the module carried is not lost: the sRGB-versus-linear
+vertex-colour error it documents belonged to a CPU vertex attribute, and the live path passes
+`new Color('#rrggbb')` uniforms, which convert on construction.
+
+A full suite run of the repaired tree is **7.3 s**, against 6.6 s before the deletion — the parallel
+suite no longer has a single test sitting one second under the cliff.
 
 ## 2. Rendering path map (read from the current source)
 
@@ -55,8 +68,16 @@ rendered from inside it. `RendererHost` renders, in order: the canvas, the vigne
 - `fluvialTextureSource` — from `inkDensity().fluvial`: R tangent X, G tangent Z, **B speed**,
   A seed noise.
 
-**Simulation** (`new THREE.RenderTarget`, half-float, no depth, ping-ponged by copy rather than by
-swapping): `read` and `write`, sized by `INK_QUALITY[tier].simulationResolution` (512/384/256/192).
+**Simulation** (`new THREE.RenderTarget`, no depth, ping-ponged by copy rather than by swapping):
+`read` and `write`, sized by `INK_QUALITY[tier].simulationResolution` — **1024 / 640 / 256 / 192**
+across ULTRA / HIGH / MEDIUM / SAFE. (This line read 512/384/256/192 and was wrong for the two
+tiers above MEDIUM.) Type is `RGBA16F` when the capability probe proved a complete half-float
+framebuffer on the running context, and `RGBA8` when it could not — see §8.
+
+At the top of the field's first `step`, and only there, the two targets are also advanced through
+`planInkSettlement()` — the field's own integrator, its own decay rates and its own velocity field,
+with the autonomous clock held at zero — so the state the first presented frame samples is the
+fixed point the running simulation is heading for rather than the raw bake. See §8.
 
 ### Where each channel is produced and consumed
 
@@ -196,13 +217,24 @@ idle, against 90.83% before the `outputNode` fix. Mode 12 now measures 4.19% aga
 4.48% — the relationship that must hold once pressure stops masking the corrected thalweg.
 
 **Console.** error 0 and fatal 0 on every batch. The warnings are the known environment set:
-favicon 404, `THREE.Clock` deprecation, `powerPreference` ignored on Windows, HMR notice, and one
-that a later reading of the dev server's own log added to this list —
+`THREE.Clock` deprecation, `powerPreference` ignored on Windows, HMR notice, and one that a later
+reading of the dev server's own log added to this list —
 `THREE.WebGPURenderer: PCFSoftShadowMap has been removed. Using PCFShadowMap instead.`, reported
 from the ink field's render calls. It is benign (this composition has no shadow-casting lights) but
 it is emitted repeatedly, it is attributable to a file in this stage, and an earlier version of
 this document listed only four warnings. Recorded because a console accounting that omits a
 repeating warning is not an accounting.
+
+**The favicon 404 is gone from this list.** `src/app/icon.svg` now carries the app's icon under
+Next's file convention, which emits `<link rel="icon" href="/icon.svg?…" sizes="any"
+type="image/svg+xml">` into the head and serves the route at 200. The mark is drawn from
+`WATERSHED_PALETTE` — `ink` ground, `cyan` core, `spectral` at the far end of the flow ramp — and
+uses no colour the world does not already own. `THREE.Clock` is the one warning that stays, and it
+is not fixable from this repository: the only `Clock` constructed is React Three Fiber's own, inside
+its store factory, and R3F exposes no seam for it (no `clock` root option, and it writes
+`state.clock.oldTime`, which `THREE.Timer` does not have). The evaluation is recorded at the call
+site in `RendererHost.tsx` rather than acted on, because replacing it would mean patching a
+dependency or globally filtering three's console output to delete one true deprecation notice.
 
 ### Running it
 
@@ -223,19 +255,14 @@ five keyframes; the debug views; the reduced-motion idle frame; both backends ag
 
 **Not verified — and not to be claimed as passing:**
 
-- **Under reduced motion the drag produces exactly zero pixel change.** The harness reports
-  `the drag moved 0.000% of pixels (0 px)`, below its 0.3% floor, and refuses to write the frames.
-  This is a direct consequence of the reduced-motion repair: `SceneHost` passes `delta = 0` to
-  `ink.step`, which holds everything including the brush injection, so the drag writes nothing.
-  Direct manipulation should still work under the preference and currently does not.
-- **No sustained-drag evidence.** A ~5 s hold and release frames at 0/1/3/5 s are not captured; the
-  harness has no hold-duration option and adding one was out of scope for a preparation commit.
 - **No frame-rate consistency evidence.** 30/60/120 FPS were not tested; the browser tooling here
   cannot control frame rate reliably, so this is untested rather than passing.
-- **Reduced-motion ambient stop is measured only indirectly.** Two samples were captured but the
-  difference between them is not reported here as a stop, because the two runs capture at
-  comparable scene clocks — that makes them a determinism check, not a motion probe.
-- MEDIUM and SAFE were not captured in this baseline.
+
+Closed since this list was written, and now measured rather than open — see §8 for the numbers and
+for `--drag-duration-ms`, `--reduced-motion-toggle`, `--measure-startup` and the harness's dynamic
+frame rules: the reduced-motion drag (it writes pixels), the sustained-drag gap (a five-second
+gesture is captured and its release is waited for as a stable state), the reduced-motion ambient
+stop (two samples under the preference are compared as bytes), and MEDIUM/SAFE (both captured).
 
 ## 7. Current visual state, stated factually
 
@@ -255,3 +282,127 @@ No art direction is proposed here; these are observations for the next model.
 
 This is **not a finished or shippable visual state**, and the previous handoff's framing of the work
 as complete should not be carried forward.
+
+## 8. The Stage 3.5.x engineering pass
+
+The visual work above was already approved and is unchanged by this section: no composition,
+palette, camera angle, material brightness, ink morphology, typography or interaction timing was
+touched. Everything below is either an initialisation defect, a capability check, a quality ladder
+that was not being applied, or harness semantics. Evidence: `artifacts/stage35x-verify/`
+(nine runs, prefix `s356*`, logs beside the PNGs).
+
+### 8.1 Reduced motion was freezing the raw bake
+
+`SceneHost` passes a zero ambient delta under the preference, and the advection shader's every term
+is a function of that delta: the diffusion mix is `uDiffusion · dt`, so it went to zero; the decay
+was `exp(dt · rate) = 1`, so nothing was pulled toward the authored river; and the backtrace offset
+was `velocity · dt / span = 0`, so nothing moved. The preference therefore did not freeze a settled
+field — it froze the seed, which is the one state in the field's life that is the bake's own
+texture, region membranes and polygon boundaries included.
+
+The repair is a **pre-computation, not a recolour**: `planInkSettlement()` runs the field's own
+`advance` pass 160 times at a fixed 1/20 s step — about eight simulated seconds, two and a half
+decay time constants — with the autonomous clock held at zero, so the frozen frame inherits the
+integrator's fixed point under exactly the clock it will keep. It runs once, at the top of the first
+`step`, in both modes.
+
+**The pre-computation's cost was measured rather than estimated, and the first two answers were
+wrong.** `--measure-startup` reports the main thread's long tasks
+(`artifacts/stage35x-verify/run-s356v-ultra-1920x1080.log`):
+
+| build | worst long task |
+|---|---|
+| 1 settlement step | 3646 ms |
+| 160 steps (shipping) | 4282 ms |
+| 640 steps | 3592 ms |
+
+The 640-step run is the one that decides it: four times the shipping pass count costs *less* than
+the baseline sample, so the settlement's own contribution is under the noise of a task that is
+present with or without it. That task is roughly 3.6–4.3 s and is the **pre-existing** CPU
+ink-density bake plus surface construction — the same order as `inkDensity.probe.test.ts`'s 1.6 s
+under Node, and present at SAFE (3891 ms) where the simulation is 28× smaller. It is the largest
+startup cost in the app and it is **not** addressed here; it is recorded because a 3.6-second
+blocked main thread is the sort of thing that gets attributed to whatever change happened last.
+
+### 8.2 Reduced motion and the camera
+
+A preference change used to rebuild `CameraController`, and a replacement rig has no pose, so the
+boot snap re-ran and the entry replayed. `CameraController` is now built once per visit and the
+preference is a `setReducedMotion()` mode change; `setSequence` lands on the pose an intent *rests*
+in — the last shot of the chain — instead of travelling through the ones it passes through. Entry,
+focus and Escape therefore play no interpolation under the preference. Direct manipulation is
+untouched: `resolveInkStepTiming` splits ambient from interaction time, the drag is interaction
+time, and it still writes pixels.
+
+Measured (`run-s356mt`): with the preference applied after load, two samples 350 ms apart are
+**byte-identical**; the toggle moved **12.40%** of the frame against **7.91%** of the scene's own
+drift over the same probe; withdrawing it moved **12.85%**.
+
+### 8.3 Half-float targets are probed, not assumed
+
+"WebGL2 exists" and "a `RGBA16F` framebuffer is renderable" are different questions, and a context
+that answers the first and refuses the second draws nothing rather than throwing.
+`probeHalfFloatRenderTarget` allocates the texture, attaches it, reads `checkFramebufferStatus`, and
+unbinds and deletes on every path — including the paths where it refuses. `resolveInkTargetFormat`
+turns that verdict into the field's allocation: `RGBA16F` on WebGPU and on a proven WebGL2 context,
+`RGBA8` otherwise. The byte fallback keeps the advection and so keeps the drag, and states what it
+costs — eight bits, a hard clamp at 1 where the half-float ceilings run to 1.2 and 1.8, and banding
+the half-float target would not have had.
+
+### 8.4 The fallback, and a backend name that was a lie
+
+Two WebGPU failure modes are now distinguished, and the harness can force both. `--backend webgl2`
+hides `navigator.gpu`, so the probe reports no adapter. `--fail-webgpu-init` advertises an adapter
+whose `requestDevice()` rejects, which is where `WebGPUBackend.init` gives up.
+
+That second run found a defect: **the status line read `WebGPU — Ultra` over a frame the console was
+simultaneously explaining was drawn by WebGL2.** Three.js catches a failed WebGPU backend itself,
+warns `WebGPU is not available, running under WebGL2 backend`, swaps in its own `WebGLBackend` and
+**resolves `init()`** — so it never reaches the adapter as a rejection. `resolveBuiltBackend` now
+asks the renderer what it built, and `RendererRuntime` judges fallback on
+`handle.backend !== report.preferredBackend` rather than on which adapter ran, carrying the
+adapter's `fallbackReason`. The run now reports `WebGL2 fallback — Ultra`, and its frame differs
+from a plain WebGL2 run by **0.443%** of pixels (mean delta 0.29/255) — the same picture, correctly
+labelled.
+
+`CanvasSurface` handles the other half: a `HTMLCanvasElement` answers a context request once, so the
+WebGL2 adapter *acquires* an element rather than using the one it was constructed with, and gets a
+replacement if the failed WebGPU attempt may have claimed it. A half-built renderer is disposed
+before the error is rethrown, because the runtime never received a handle for it and its own `stop`
+cannot reach it.
+
+### 8.5 The convergence volume had no quality ladder
+
+Six sheets at 288×150 segments is 43,938 vertices apiece, and SAFE drew all six at that figure.
+`CONVERGENCE_TIERS` now states two things per tier and nothing else — a segmentation and a layer
+subset: ULTRA 288×150 / 220×72 with all six, HIGH at three quarters, MEDIUM at half with five
+layers, SAFE at 88×46 / 66×22 with the three primaries (`rear-membrane`, `signal-tissue-a`,
+`front-membrane`). No scale, height, rotation, gain or colour differs between tiers, and ULTRA is
+the approved frame's own figures. Nothing downgrades automatically.
+
+Measured idle luminance at 1920×1080: mean **23.45 / 23.46 / 22.71 / 21.76** and p99 **135.2 at all
+four**, peak **230.4 at all four** — the ladder spends glow and keeps the composition.
+Cross-capture pixel diffs between tiers are *not* offered as tier evidence: ULTRA-vs-SAFE measures
+7.16% while ULTRA-vs-HIGH measures 4.56%, which is the field's own drift dominating the comparison,
+not the ladder.
+
+### 8.6 The capture harness was asking the wrong question of the held frame
+
+Every capture waited for consecutive frames to stop changing, including the drag's mid-gesture
+frame — which does not produce a better drag frame, it produces a frame of a drag that has already
+been released. `drag-during` is now taken as found and judged as a moving frame by
+`evaluateDynamicFrame`: the `--changed-min` floor unchanged, plus the changed set's bounding-box
+coverage against a ceiling, its density inside that box, and both frames' clipped fraction. On the
+five-second run (`--drag-duration-ms 5000`) the during frame reports **13.19%** changed at **37.5%**
+coverage and **35.2%** density with **0.000%** clipped, and the release frame is still waited for as
+a stable state.
+
+### 8.7 What is still open
+
+- The 3.6 s startup block in §8.1. Pre-existing, measured, not fixed.
+- The canvas-rebuild path is unit-tested (`canvasSurface.test.ts`), not browser-tested: forcing a
+  claimed canvas *and* a failing device needs an injection this harness does not have.
+- `powerPreference` and `THREE.Clock` warnings remain, deliberately — see §5.
+- `riverGeometry.ts`, `strataGeometry.ts`, `membraneMaterial.ts`, `riverMaterial.ts` and
+  `terrainMaterial.ts` have no importer on the render path either. They cost no test time, so they
+  were left alone rather than swept up with `terrainGeometry.ts`.

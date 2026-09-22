@@ -59,6 +59,19 @@ export type DomainProjectionInput = {
   readonly scratch: ThreeVector3;
 };
 
+/**
+ * Typography follows attention instead of annotating the whole landscape.
+ *
+ * A dormant label remains just perceptible at full resolution so the regions are still
+ * discoverable, but it drops out of the thumbnail and stops turning the composition back
+ * into a diagram. Hover is the readable preview; focus gets the complete information budget.
+ */
+export function resolveDomainLabelPresence(hovered: boolean, focused: boolean): number {
+  if (focused) return 1;
+  if (hovered) return 0.78;
+  return 0.045;
+}
+
 export function projectDomainLabels(input: DomainProjectionInput): DomainLabelEntry[] {
   const { descriptor, camera, width, height, scratch } = input;
   const entries: DomainLabelEntry[] = [];
@@ -91,11 +104,10 @@ export function projectDomainLabels(input: DomainProjectionInput): DomainLabelEn
       x,
       y,
       visible: !behind && onFrame,
-      // The interaction's own presence, plus a floor so an untouched region is still legible.
-      // The floor is not decoration: it is what makes the region findable at idle, which is
-      // the whole of the brief's finding 1. A region whose label faded to nothing until it was
-      // hovered would be unusable by definition, because hovering it requires finding it.
-      presence: Math.min(1, 0.42 + (hovered ? 0.34 : 0) + (focused ? 0.58 : 0)),
+      // Dormant regions remain discoverable but do not flatten the idle frame into a labelled
+      // diagram. Interaction supplies the contrast: hover makes the local environment legible,
+      // focus gives it the full typographic budget.
+      presence: resolveDomainLabelPresence(hovered, focused),
       hovered,
       focused,
     });

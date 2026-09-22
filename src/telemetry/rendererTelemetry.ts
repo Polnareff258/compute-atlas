@@ -105,3 +105,46 @@ export function sampleRendererTelemetry(
     sampledAt: input.sampledAt,
   };
 }
+
+/** Anything whose frame counters can be handed back empty. */
+export type FrameCounterOwner = {
+  readonly info: { reset: () => void };
+};
+
+/**
+ * The frame boundary: read what the frame that just finished cost, then hand the
+ * counters back empty for the one about to be drawn.
+ *
+ * ## Why this is a function rather than a line at the call site
+ *
+ * Because its absence was a defect that no type could catch and no screenshot
+ * could show. `drawCalls` and `triangles` are only meaningful as *the cost of a
+ * frame*; Three.js produces them by resetting its own `info` at the start of
+ * every `render()` call, and `canvasAdapters` deliberately turns that off —
+ * because with several renders per frame the default leaves the counters holding
+ * whichever pass happened to go last, and the telemetry then reports a
+ * fullscreen quad and calls it the frame. The comment there said the *pipeline*
+ * would reset the counters once per displayed frame instead.
+ *
+ * There is no pipeline. Nothing reset them. So `info` was never cleared at all:
+ * a capture run over twenty-three seconds reported `drawCalls` climbing
+ * 467 → 740 → 1202 → … → 5360 and `triangles` reaching 2,007,321,458, and the
+ * only thing wrong with those numbers was that they were totals from page load
+ * wearing a per-frame field's name.
+ *
+ * Reading and clearing in one function is what makes the order assertable, and
+ * the order is the whole contract: clearing first would report the frame that has
+ * not been drawn yet, and clearing never would report the whole session. The
+ * `finally` covers the third case — a read that throws must still leave the
+ * counters empty, or the next report is a total again.
+ */
+export function readFrameCounters<T>(
+  owner: FrameCounterOwner,
+  read: () => T,
+): T {
+  try {
+    return read();
+  } finally {
+    owner.info.reset();
+  }
+}

@@ -12,16 +12,32 @@ export type RendererStatus =
   | 'stopped';
 
 /**
- * The knobs a quality tier turns, named for the watershed rather than for the
- * composition it replaced.
+ * The knobs a quality tier turns.
  *
- * Every field here is read by one system and only one, so a tier is a list of
- * separate decisions rather than one dial. That matters because the frame has to
- * degrade *in art direction* rather than in fidelity — the brief's rule is that
- * the fallback is an art-direction-consistent simplification, not a worse
- * picture — and separate knobs are what let a lower tier drop volumetric fog
- * while keeping the basin's terraces, which is the trade the spec's table asks
- * for.
+ * ## Every field here is read, and that is now enforced by the type
+ *
+ * The sentence above this one used to be aspirational. An audit of the tier
+ * table found five settings that were declared, given a different value per
+ * tier, and read by nothing at all:
+ *
+ * | setting | readers before this pass |
+ * |---|---|
+ * | `graphDensity` | none |
+ * | `membraneRegions` | none |
+ * | `allowVolumetricFog` | none — there is no volumetric pass |
+ * | `allowTrails` | none — there is no trail or distortion pass |
+ * | `allowBloom` | one: `renderer.info.autoReset = !quality.allowBloom`, and there is no bloom |
+ *
+ * They were not harmless. `allowBloom` is what made the frame counters' meaning
+ * depend on the tier — via a post pipeline that does not exist — and that is the
+ * bug this pass fixed: for ULTRA and HIGH nothing reset `info`, so `drawCalls`
+ * and `triangles` were session totals reported under a per-frame name. A dead
+ * `allowVolumetricFog` is worse than dead code: it reads as a switch somebody
+ * could flip, and flipping it would change the picture the art direction was
+ * approved at.
+ *
+ * So they are gone rather than kept "for later". What a tier may change is the
+ * five settings below, each of which has exactly one reader.
  *
  * Detail is a *count* multiplier, never a position one: `watershedDescriptor`
  * asserts that reducing `detail` removes strata, deposits and resolution without
@@ -30,11 +46,17 @@ export type RendererStatus =
  * one and the two could not be compared at all.
  */
 export type QualitySettings = {
-  /** Structured units across every river, stratum, membrane and deposit. */
+  /**
+   * Structured units across every river, stratum, membrane and deposit.
+   *
+   * A *plan*, not a measurement, and read only as `configuredFieldBudget` in the
+   * telemetry — where it is deliberately reported beside `renderedFieldSamples`
+   * and never as it. See `rendererTelemetry`.
+   */
   particleBudget: number;
+  /** Ceiling on the drawing-buffer scale. Read by `deriveEffectiveDpr`. */
   maxDpr: number;
-  allowBloom: boolean;
-  graphDensity: number;
+  /** Scale applied to the device ratio before `maxDpr` clamps it. */
   pixelRatioScale: number;
   /**
    * How much of the terrain's own relief, strata, deposits and membrane regions
@@ -47,13 +69,4 @@ export type QualitySettings = {
    * field nothing reads.
    */
   terrainDetail: number;
-  /**
-   * How many regions may carry a translucent membrane. A count rather than a
-   * toggle because the middle tier's answer is "one", which a boolean cannot say.
-   */
-  membraneRegions: number;
-  /** Raymarched volumetric fog. ULTRA only. */
-  allowVolumetricFog: boolean;
-  /** Temporal trails and screen-space distortion. ULTRA only. */
-  allowTrails: boolean;
 };

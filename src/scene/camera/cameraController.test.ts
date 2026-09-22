@@ -192,6 +192,78 @@ describe('CameraController', () => {
     expect(positionOf(controller)[2]).toBe(-60);
   });
 
+  it('lands on a sequence\u2019s destination rather than travelling through it', () => {
+    // The entry, the focus and the escape are all multi-shot moves, and the pose
+    // an intent *rests* in is the one it ends on. Sampling every frame is the
+    // point of the test: a rig that arrived at the destination without passing
+    // through the waypoints would satisfy a start/end assertion and would still
+    // have played the move.
+    const controller = createCameraController({ reducedMotion: true });
+    controller.snapTo(pose(0, 0));
+    controller.setSequence({ key: 'focus', shots: [pose(-40, 1.4), pose(-90, 0.8), pose(-150, 1.1)] });
+
+    const visited: number[] = [];
+    for (let step = 0; step < 240; step += 1) {
+      controller.update(1 / 60);
+      visited.push(positionOf(controller)[2]!);
+    }
+
+    expect(new Set(visited)).toEqual(new Set([-150]));
+    expect(controller.isSettled()).toBe(true);
+  });
+
+  it('finishes a move already in flight when the preference turns on', () => {
+    // The preference can arrive mid-visit, which is what a media-query
+    // subscription means. A rig told to stop, that then carried on to a
+    // destination it had just been told not to travel to, would be honouring
+    // the letter of the setting and none of it.
+    const controller = createCameraController();
+    controller.snapTo(pose(0, 0));
+    controller.setSequence({ key: 'a', shots: [pose(-400, 4, 'linear')] });
+    run(controller, 1);
+    const travelling = positionOf(controller)[2]!;
+    expect(travelling).toBeLessThan(0);
+    expect(travelling).toBeGreaterThan(-400);
+
+    controller.setReducedMotion(true);
+
+    expect(positionOf(controller)[2]).toBe(-400);
+    expect(controller.isSettled()).toBe(true);
+  });
+
+  it('finishes a whole queued sequence, not just the leg it is on', () => {
+    const controller = createCameraController();
+    controller.snapTo(pose(0, 0));
+    controller.setSequence({
+      key: 'focus',
+      shots: [pose(-40, 4, 'linear'), pose(-90, 4, 'linear'), pose(-150, 4, 'linear')],
+    });
+    run(controller, 1);
+
+    controller.setReducedMotion(true);
+
+    // The last shot, which is where the intent rests — not the one being moved
+    // into when the preference arrived.
+    expect(positionOf(controller)[2]).toBe(-150);
+  });
+
+  it('restores the whole mode when the preference is turned back off', () => {
+    const controller = createCameraController({ reducedMotion: true });
+    const reducedScale = controller.getAmplitudeScale();
+
+    controller.setReducedMotion(false);
+
+    expect(controller.getAmplitudeScale()).toBe(1);
+    expect(controller.getAmplitudeScale()).toBeGreaterThan(reducedScale);
+
+    // And motion is back: a move asked for now takes its own duration again.
+    controller.snapTo(pose(0, 0));
+    controller.setSequence({ key: 'a', shots: [pose(-60, 2, 'easeInOut')] });
+    run(controller, 0.5);
+    expect(controller.isSettled()).toBe(false);
+    expect(positionOf(controller)[2]).toBeGreaterThan(-60);
+  });
+
   it('reduces displacement authority under reduced motion and keeps it whole otherwise', () => {
     const normal = createCameraController();
     const reduced = createCameraController({ reducedMotion: true });

@@ -29,17 +29,16 @@ import type { Vector3, WatershedDescriptor } from '../watershed/watershedDescrip
 /**
  * The eye's height as a multiple of the basin's radius.
  *
- * Three and four tenths. A 48-degree frame shows about `1.58h` of ground across its
- * horizontal axis, so this puts roughly five and a half basin radii across the frame —
- * the bowl at about a fifth of the width, its incoming courses filling the rest. The
- * basin's radius is the one length in the world that is already a statement about how
- * big the subject is; setting the eye from a channel's width instead would compose
- * around a thread and crop the confluence, which is the thing worth looking at.
+ * Just under two basin radii. The former overview height kept every domain and almost the
+ * complete route in frame, which made the system read as a diagram. Idle is now a close
+ * encounter with the convergence: foreground pigment is allowed to leave the viewport and
+ * dormant regions are only hinted at. The scroll passage moves through the convergence rather
+ * than restoring a diagrammatic overview.
  */
-const EYE_BASIN_MULTIPLE = 3.4;
+const EYE_BASIN_MULTIPLE = 1.86;
 
 /** The eye's floor and ceiling, whatever the world's scale. */
-const MIN_EYE = 300;
+const MIN_EYE = 260;
 const MAX_EYE = 820;
 
 /**
@@ -49,7 +48,7 @@ const MAX_EYE = 820;
  * ground of the frame is water, the far ground is the basin, and the veil's height is
  * chosen to separate from both.
  */
-const BACKSTEP = 0.75;
+const BACKSTEP = 0.52;
 
 /**
  * Where along the principal course the camera turns off, as a fraction of its arc length
@@ -58,7 +57,7 @@ const BACKSTEP = 0.75;
  * Near the mouth, so the camera stands at the head of the confluence with the course it
  * came down laid out ahead of it rather than behind.
  */
-const STAND_AT = 0.72;
+const STAND_AT = 0.46;
 
 /**
  * How much of the way from the camera's own station toward the basin the view aims.
@@ -72,10 +71,11 @@ const STAND_AT = 0.72;
  * the thing actually worth looking at. The basin stays in frame either way; what changes
  * is how much of the picture is water rather than ground.
  *
- * At `0.30` about a third of the frame's depth is the approach and the rest is the
- * confluence. At `1.0` — the first value tried — the water sat along the bottom edge.
+ * Just under halfway keeps the convergence above centre while letting the near course occupy
+ * the foreground. The tighter idle eye means this no longer has to pull back toward the camera
+ * merely to fill empty ground.
  */
-const AIM_TOWARD_BASIN = 0.3;
+const AIM_TOWARD_BASIN = 0.74;
 
 export type HeroVistaOptions = {
   /** `0`..`1`. Above the resting value the eye lifts a little, for hover response. */
@@ -278,19 +278,21 @@ export type ScrollStation = {
   readonly backstep: number;
   /** How far from the station toward the basin the view aims, `0`..`1`. */
   readonly aim: number;
+  /** Sideways travel along the course normal, as a fraction of eye height. */
+  readonly lateral: number;
 };
 
 export const SCROLL_STATIONS: readonly ScrollStation[] = [
   // The resting shot, reproduced exactly. The authority easing means the scroll takes over
   // from this pose, so the two being equal is what makes the hand-over invisible.
-  { at: 0, arc: 1 - STAND_AT, eye: 1, backstep: BACKSTEP, aim: AIM_TOWARD_BASIN },
+  { at: 0, arc: 1 - STAND_AT, eye: 1, backstep: BACKSTEP, aim: AIM_TOWARD_BASIN, lateral: 0 },
   // The descent. Lower, closer to the mouth, and aiming further ahead now that the near
   // ground is worth looking at.
-  { at: 0.48, arc: 0.56, eye: 0.74, backstep: 0.88, aim: 0.52 },
+  { at: 0.48, arc: 0.56, eye: 0.74, backstep: 0.88, aim: 0.52, lateral: 0.16 },
   // The decomposition. Low and close; the flow is seen almost along its length.
-  { at: 0.78, arc: 0.82, eye: 0.46, backstep: 0.98, aim: 0.78 },
+  { at: 0.78, arc: 0.82, eye: 0.46, backstep: 0.98, aim: 0.78, lateral: 0.30 },
   // The reveal. Standing at the confluence, looking at the basin itself.
-  { at: 1, arc: 0.97, eye: 0.33, backstep: 1.08, aim: 1 },
+  { at: 1, arc: 0.97, eye: 0.33, backstep: 1.08, aim: 1, lateral: 0.34 },
 ];
 
 /** Smoothstep, so a station is held rather than passed through at a corner. */
@@ -304,6 +306,27 @@ function mix(from: number, to: number, t: number): number {
 }
 
 /**
+ * The sideways component of the scroll camera's path.
+ *
+ * Forward travel alone keeps the visible river on one screen axis and turns the
+ * final reveal into a map-like column. A restrained move along the course normal
+ * exposes the membrane spacing and makes the arrival a three-quarter view. The
+ * function is separate so the choreography remains deterministic and testable.
+ */
+export function resolveScrollLateral(progress: number): number {
+  const clamped = Math.min(1, Math.max(0, progress));
+  let lowerIndex = 0;
+  for (let index = 0; index < SCROLL_STATIONS.length - 1; index += 1) {
+    if (clamped >= SCROLL_STATIONS[index]!.at) lowerIndex = index;
+  }
+  const from = SCROLL_STATIONS[lowerIndex] ?? SCROLL_STATIONS[0]!;
+  const to = SCROLL_STATIONS[lowerIndex + 1] ?? SCROLL_STATIONS[SCROLL_STATIONS.length - 1]!;
+  const span = to.at - from.at;
+  const t = span <= 1e-6 ? 1 : stationEase((clamped - from.at) / span);
+  return mix(from.lateral, to.lateral, t);
+}
+
+/**
  * The pose the scroll asks for at a given progress.
  *
  * Continuous in `progress` by construction — every station is bracketed by the two around
@@ -312,80 +335,33 @@ function mix(from: number, to: number, t: number): number {
  * visitor reached it from.
  */
 /**
- * The reveal framing, computed from where the world subjects actually are.
+ * The reveal stays inside the computation.
  *
- * Why this cannot be a constant: the reveal has to hold the basin and the five regions, and
- * where those sit is a property of the descriptor - seed-derived, and different for a
- * different seed. A hand-picked eye height would frame one world and crop another.
- *
- * Why the value it replaces was not merely suboptimal. The station used the same descent
- * multiplier as the rest of the story, an eye near 213 units, chosen for the approach.
- * Measured against the world, the five regions span 960 by 760 units centred at (40, -480),
- * which needs an eye near 1150 to hold them all. So the reveal sat about five times too low
- * to contain the thing it exists to reveal, and the projected DOM labels confirmed it: at the
- * end of the story none of the three sampled regions was in frame. The act was called world
- * reveal and revealed one basin.
- *
- * That is the defect a constant hides and a computation cannot: the constant was not wrong
- * about anything it could see, because it could see nothing.
+ * Earlier versions solved a camera height that contained all five domain discs.
+ * The math was correct and the art direction was not: after the strongest close
+ * passage, the camera retreated to a labelled overview and turned the last frame
+ * back into a diagram. Domains are revealed through focus; the scroll ending is
+ * allowed to remain a cinematic encounter with the confluence itself.
  */
-const REVEAL_MARGIN = 1.35;
-
-/** A ceiling, so a pathological descriptor cannot pull the camera into orbit. */
-const REVEAL_MAX_EYE = 1800;
+const REVEAL_EYE_MULTIPLE = 0.63;
 
 function revealStation(
-  descriptor: WatershedDescriptor,
+  _descriptor: WatershedDescriptor,
   aspect: number,
   baseEye: number,
 ): ScrollStation {
-  const centres: readonly (readonly [number, number])[] = [
-    descriptor.basin.centre,
-    ...descriptor.domains.map((domain) => domain.centre),
-  ];
-  let minX = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let minZ = Number.POSITIVE_INFINITY;
-  let maxZ = Number.NEGATIVE_INFINITY;
-  for (const centre of centres) {
-    if (centre[0] < minX) minX = centre[0];
-    if (centre[0] > maxX) maxX = centre[0];
-    if (centre[1] < minZ) minZ = centre[1];
-    if (centre[1] > maxZ) maxZ = centre[1];
-  }
-
-  // The regions own radii, not only their centres: a region is a disc, and framing its centre
-  // would leave its edges outside the frame. The largest radius is enough, because the frame
-  // is rectangular and the discs are not packed into its corners.
-  let widest = descriptor.basin.radius;
-  for (const domain of descriptor.domains) {
-    if (domain.radius > widest) widest = domain.radius;
-  }
-
-  const halfFov = ((CAMERA_FOV_DEGREES * Math.PI) / 180) / 2;
-  const spanX = maxX - minX + widest * 2;
-  const spanZ = maxZ - minZ + widest * 2;
-  const eye = clamp(
-    Math.max(
-      spanZ / 2 / Math.tan(halfFov),
-      spanX / 2 / (Math.tan(halfFov) * Math.max(0.6, aspect)),
-    ) * REVEAL_MARGIN,
-    MIN_EYE,
-    REVEAL_MAX_EYE,
-  );
+  // Narrow frames need a little more breathing room because the confluence's
+  // authored silhouette is wide. Desktop remains close enough that foreground
+  // membranes may leave the viewport.
+  const eye = baseEye * REVEAL_EYE_MULTIPLE * (aspect < 1.35 ? 1.12 : 1);
 
   return {
     at: 1,
-    // Still on the course, so the near edge of the frame has water in it. The reveal rises
-    // rather than lands: a story that descended for forty per cent of its length and then
-    // stopped at the bottom would end in a trench rather than in a world.
-    arc: 0.97,
+    arc: 0.84,
     eye: eye / baseEye,
-    // A shallow stand-off, because a reveal seen straight down is a map and the brief is
-    // explicit that this is a world. The obliquity is what keeps the five regions at
-    // different depths, which is the staggering the brief asks them to show.
-    backstep: 0.34,
-    aim: 0.5,
+    backstep: 0.94,
+    aim: 0.86,
+    lateral: 0.44,
   };
 }
 
@@ -426,14 +402,15 @@ export function resolveScrollPose(
   const eye = baseEye * mix(from.eye, to.eye, t);
   const backstep = mix(from.backstep, to.backstep, t);
   const aim = mix(from.aim, to.aim, t);
+  const lateral = mix(from.lateral, to.lateral, t);
 
   const principal = principalCourse(courses, descriptor);
   const stand = atArc(principal.spine, arc);
 
   const position: Vector3 = [
-    stand.point[0] - stand.forward[0] * eye * backstep,
+    stand.point[0] - stand.forward[0] * eye * backstep - stand.forward[1] * eye * lateral,
     eye,
-    stand.point[1] - stand.forward[1] * eye * backstep,
+    stand.point[1] - stand.forward[1] * eye * backstep + stand.forward[0] * eye * lateral,
   ];
   const lookTarget: Vector3 = [
     stand.point[0] + (basin.centre[0] - stand.point[0]) * aim,

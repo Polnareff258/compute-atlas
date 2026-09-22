@@ -15,20 +15,10 @@ does not work).
 
 ### Opening the site
 
-`START_REVIEW.cmd` in the repository root — double-click, or
-`START_REVIEW.cmd --prod` for the production build, `--capture` to also write the
-review frames. It probes port 3000, reuses the server only when the page title
-proves it is ours, never stops a process it did not start, then opens Chrome at
-`?boot=skip&telemetry=1`.
-
-Quality cannot be set from a URL: `RendererHost` listens for the
-`compute-atlas:dev-quality` event and only under `NODE_ENV === 'development'`. The
-launcher prints the DevTools line for each profile, and
-`tests/review-launcher.test.mjs` fails if that line and the renderer's listener
-ever stop agreeing.
-
-`START_STAGE351_REVIEW.cmd` and `scripts/stage351-review-launcher.mjs` still exist
-and still work, but they are stage-named and superseded by `START_REVIEW.cmd`.
+`START_POLNAREFF.cmd` in the repository root — double-click to start the
+development server, or pass `--no-open` to keep the browser closed. It checks
+port 3000 before starting, never stops an unrelated process, waits for the
+POLNAREFF SYSTEM page to become ready, and opens `http://localhost:3000`.
 
 ## Product
 

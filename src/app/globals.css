@@ -117,14 +117,10 @@ input {
 }
 
 .system-masthead {
-  top: 2rem;
-  left: 2.25rem;
-  right: 2.25rem;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  border-top: 1px solid var(--system-line);
-  padding-top: 0.9rem;
+  top: clamp(2.4rem, 5vh, 4.8rem);
+  left: clamp(2rem, 4.2vw, 5rem);
+  display: block;
+  max-width: min(36rem, 44vw);
 }
 
 .system-masthead p,
@@ -134,17 +130,33 @@ input {
 
 /* Sentence case, no tracking, one size step. See `SystemMasthead`. */
 .system-masthead__title {
-  color: var(--system-ink);
-  font-size: 1.4rem;
-  font-weight: 500;
-  letter-spacing: normal;
+  margin: 0;
+  color: rgba(229, 232, 232, 0.92);
+  font-size: clamp(3.2rem, 5.6vw, 6.8rem);
+  font-weight: 400;
+  letter-spacing: -0.065em;
+  line-height: 0.82;
+  text-wrap: balance;
+}
+
+.system-masthead__title span {
+  display: block;
+}
+
+.system-masthead__title span:last-child {
+  margin-left: 0.72em;
+  color: rgba(171, 184, 194, 0.72);
+  font-weight: 300;
 }
 
 .system-masthead__subline {
-  margin-top: 0.5rem !important;
-  color: var(--system-muted);
-  font-size: 0.95rem;
-  letter-spacing: normal;
+  max-width: 15rem;
+  margin-top: clamp(1.4rem, 2.5vh, 2.2rem) !important;
+  margin-left: 0.25rem !important;
+  color: rgba(166, 179, 184, 0.62);
+  font-size: clamp(0.78rem, 0.8vw, 0.94rem);
+  letter-spacing: -0.01em;
+  line-height: 1.45;
 }
 
 /* A caption for the composition, not a panel beside it. */
@@ -182,8 +194,8 @@ input {
 @media (max-width: 700px) {
   .system-masthead {
     left: 1.25rem;
-    right: 1.25rem;
     top: 1.25rem;
+    max-width: 70vw;
   }
 
   .renderer-status {
@@ -691,12 +703,26 @@ input {
    * the label would trail its region as the camera moves.
    */
   transition: color 140ms linear;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: Arial, Helvetica, sans-serif;
+  line-height: 1.2;
+  appearance: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.graph-node-label:focus-visible {
+  outline: 1px solid rgba(95, 228, 255, 0.42);
+  outline-offset: 0.28rem;
 }
 
 .graph-node-label__name {
-  color: var(--system-muted);
-  font-size: 0.7rem;
-  letter-spacing: 0.02em;
+  color: rgba(181, 193, 198, 0.58);
+  font-size: clamp(0.68rem, 0.62vw, 0.78rem);
+  font-weight: 400;
+  letter-spacing: -0.01em;
   /*
    * Sentence case, no uppercase, no wide tracking. The brief names "uppercase plus wide
    * tracking technical labels" as one of the things to remove, and it is a specific removal
@@ -711,7 +737,7 @@ input {
    * over the river or too loud over the dark. The shadow does the separating without drawing
    * a box.
    */
-  text-shadow: 0 1px 3px rgba(4, 6, 12, 0.9), 0 0 12px rgba(4, 6, 12, 0.7);
+  text-shadow: 0 1px 3px rgba(4, 6, 12, 0.95), 0 0 16px rgba(4, 6, 12, 0.78);
 }
 
 /*
@@ -729,11 +755,44 @@ input {
 }
 
 /*
+ * Semantic type yields to the region being inspected.
+ *
+ * The projected Graphics anchor can legitimately pass through the masthead's
+ * subline in the resting shot. Moving the label would detach it from the world,
+ * so the sentence quietly withdraws while any region is engaged. Focus reduces
+ * the title to a ghost rather than removing it: the camera shot deliberately
+ * opens a large field of negative space, and a trace of the identity keeps that
+ * space composed without competing with the active terrain.
+ */
+.system-masthead__subline {
+  transition: opacity 180ms ease, transform 220ms ease;
+}
+
+body:has(.graph-node-label.is-hovered) .system-masthead__subline,
+body:has(.graph-node-label.is-focused) .system-masthead__subline {
+  opacity: 0;
+  transform: translateY(-0.28rem);
+}
+
+body:has(.graph-node-label.is-focused) .system-masthead {
+  opacity: calc(var(--scroll-text-opacity, 1) * 0.18);
+  transform: translateY(-0.75rem);
+}
+
+body:has(.graph-node-label.is-focused) .renderer-status {
+  opacity: 0.28;
+}
+
+/*
  * Reduced motion: no transition at all. The value still moves with the camera — it is a
  * projection, not an animation — but nothing eases toward it.
  */
 @media (prefers-reduced-motion: reduce) {
   .graph-node-label {
+    transition: none;
+  }
+
+  .system-masthead__subline {
     transition: none;
   }
 }

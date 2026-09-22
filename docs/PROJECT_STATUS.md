@@ -243,7 +243,7 @@ This slice rebuilds the presentation layer — hero Core, routing flowfield, dom
 - WebGL2 (via shadowing `navigator.gpu` before document start): 10 files, 28 console messages — info 24, warning 4, **error 0, fatal 0**.
 - Reduced motion is measured, not asserted. Sampling the same scene twice ~3 s apart inside one session: normal mode **1.82% of pixels (37,772 px) changed**; reduced motion **0.00% (0 px) changed**, mean luminance identical to three decimals. Evidence: `artifacts/stage352-motionprobe-{normal,reduced}-{a,b}.png`.
 - Quality profiles change structure, not just counts. SAFE vs ULTRA differ by 16.60% (overview) and 17.08% (hover); ULTRA reaches p99.9 215 / peak 255 against SAFE's 147 / 231. The SAFE overview still reads as the Hero, its spine, all five domain silhouettes and the main routes.
-- All pre-existing work-tree changes were preserved: `vitest.config.ts`, `START_STAGE351_REVIEW.cmd`, `scripts/`, `tests/stage351-review-launcher.test.mjs` are untouched. No dependency, `package.json` entry or machine-local file was added.
+- All pre-existing work-tree changes were preserved: `vitest.config.ts`, `scripts/`, and the capture/test sources remain in the tree. The current canonical local launcher is `START_POLNAREFF.cmd`; no dependency, `package.json` entry or machine-local file was added.
 
 ### Stage 3.5.2 known gap, not fixed
 

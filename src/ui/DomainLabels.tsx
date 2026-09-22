@@ -33,11 +33,14 @@ export type DomainLabelHandle = {
 export type DomainLabelsProps = {
   /** Assigned on mount and cleared on unmount; the frame loop calls `update` through it. */
   readonly handleRef: { current: DomainLabelHandle | null };
+  readonly onHover: (domainId: DomainLabelEntry['id']) => void;
+  readonly onLeave: (domainId: DomainLabelEntry['id']) => void;
+  readonly onSelect: (domainId: DomainLabelEntry['id']) => void;
 };
 
-export function DomainLabels({ handleRef }: DomainLabelsProps) {
+export function DomainLabels({ handleRef, onHover, onLeave, onSelect }: DomainLabelsProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const nodeRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
   useEffect(() => {
     const container = containerRef.current;
@@ -47,8 +50,8 @@ export function DomainLabels({ handleRef }: DomainLabelsProps) {
 
     // Look the nodes up once. A per-frame `querySelector` per label would be five selector
     // matches sixty times a second for a set of elements that never changes.
-    const nodes = new Map<string, HTMLDivElement>();
-    for (const element of container.querySelectorAll<HTMLDivElement>('.graph-node-label')) {
+    const nodes = new Map<string, HTMLButtonElement>();
+    for (const element of container.querySelectorAll<HTMLButtonElement>('.graph-node-label')) {
       const id = element.dataset.domainId;
       if (id !== undefined) nodes.set(id, element);
     }
@@ -91,19 +94,27 @@ export function DomainLabels({ handleRef }: DomainLabelsProps) {
   return (
     <div className="domain-labels" ref={containerRef} aria-label="Compute regions">
       {DOMAIN_LABEL_ORDER.map((domain) => (
-        <div
+        <button
+          type="button"
           className="graph-node-label"
           key={domain.id}
           data-domain-id={domain.id}
-          // A `div` rather than a `button`: nothing here is clickable in the keyboard sense
-          // yet — the focus path runs through the command bus — and a focusable control that
-          // does nothing is worse for a screen reader than a label that says what it is.
-          role="note"
           aria-label={`${domain.label} region`}
+          onPointerEnter={() => onHover(domain.id)}
+          onPointerLeave={() => onLeave(domain.id)}
+          onFocus={() => onHover(domain.id)}
+          onBlur={() => onLeave(domain.id)}
+          onClick={() => onSelect(domain.id)}
         >
-          <span className="graph-node-label__name">{domain.label}</span>
-        </div>
+          <span className="graph-node-label__name">{displayLabel(domain.label)}</span>
+        </button>
       ))}
     </div>
   );
+}
+
+function displayLabel(label: string): string {
+  if (label === 'AI') return label;
+  const lower = label.toLocaleLowerCase();
+  return lower.charAt(0).toLocaleUpperCase() + lower.slice(1);
 }

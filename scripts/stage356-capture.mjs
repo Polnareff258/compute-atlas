@@ -54,11 +54,17 @@
  *             `buttons: 1`), after (button released, pointer parked again).
  *             Plus a mask: the absolute per-pixel luminance difference between
  *             before and during, decoded and re-encoded in this process with
- *             `node:zlib` and the five PNG row filters. No image library. The
- *             run then prints the percentage of pixels that changed and the
- *             mean delta inside that region, and fails with `drag-not-visible`
- *             when the changed area is below 0.3% — a drag frame that shows
- *             nothing is worse than no frame.
+ *             `node:zlib` and the five PNG row filters. No image library.
+ *
+ *             The three frames are not captured the same way, and that is the
+ *             point of the triple. `before` and `after` are *states*, so both
+ *             wait for consecutive frames to stop changing; `during` is the
+ *             gesture itself, so it is taken as found and judged as a moving
+ *             frame instead — see `evaluateDynamicFrame`. Waiting on the held
+ *             frame does not produce a better drag frame, it produces a frame of
+ *             a drag that has already been released, which is the state the third
+ *             capture exists for. `--changed-min` (default 0.3%) still applies to
+ *             it unchanged.
  *
  * Exit codes
  *   0  all captures written and no fatal console output
@@ -72,6 +78,9 @@
  *
  *   # WebGL2 fallback, reduced motion, thumbs, drag evidence
  *   node scripts/stage356-capture.mjs --backend webgl2 --reduced-motion --drag
+ *
+ *   # The *other* fallback: WebGPU is advertised, its renderer fails to build
+ *   node scripts/stage356-capture.mjs --backend webgl2 --fail-webgpu-init
  *
  *   # Validate the resolved matrix without launching a browser
  *   node scripts/stage356-capture.mjs --dry-run --scroll-steps 0,50,100 --reverse --drag
@@ -98,10 +107,23 @@ const DEFAULT_BACKEND = 'webgpu';
 const DEFAULT_QUALITY = 'ultra';
 const DEFAULT_SIZES = '1920x1080,2560x1440';
 const DEFAULT_SCROLL_STEPS = '0,25,50,75,100';
+/** The region the interaction stages drive. GRAPHICS is the one with a river. */
+const DEFAULT_DOMAIN = 'graphics';
 const DEFAULT_THUMB = '480x270';
 const DEFAULT_NAME_PREFIX = 'stage356';
 const DEFAULT_PARK = '50%,94%';
 const DEFAULT_DRAG_STEPS = 12;
+/**
+ * Wall-clock gap between the pointer moves of a drag, in milliseconds.
+ *
+ * The drag is a *path* rather than a hold, because a brush in this scene releases
+ * when the pointer stops travelling — a stationary press is a mark that fades
+ * rather than a hole that deepens — so a sustained drag has to keep moving to be
+ * a sustained drag at all. `--drag-duration-ms` spreads the same path over a
+ * requested duration by scaling this gap, which is how a five-second gesture is
+ * captured: twelve moves 416 ms apart, held through all of them.
+ */
+const DEFAULT_DRAG_STEP_DELAY_MS = 24;
 const DEFAULT_SETTLE_MS = 350;
 const DEFAULT_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
@@ -113,7 +135,45 @@ const DEFAULT_MIN_MEAN = 4;
 const DEFAULT_GRID = 16;
 const DEFAULT_CHANGED_THRESHOLD = 8;
 const DEFAULT_CHANGED_MIN_PERCENT = 0.3;
+/**
+ * The clip level and the two dynamic-frame ceilings.
+ *
+ * `DEFAULT_CLIP_LEVEL` is 250 rather than 255 because the frame is written
+ * through a display transform: a value that has saturated arrives at 255 or one
+ * below it depending on rounding, and a blown-out frame is recognisable at either.
+ *
+ * `DEFAULT_DRAG_MAX_COVERAGE` is 0.85 and is deliberately loose. A drag in this
+ * composition genuinely disturbs a wide area — the pigment it pushes is carried
+ * downstream by the flow, and the wake follows the meander rather than the
+ * pointer's path — so a tight box would fail a correct gesture. What it still
+ * catches is the frame-wide change: a camera move, a resize, or a scene rebuilt
+ * between two captures, all of which change essentially every pixel and none of
+ * which is direct manipulation.
+ *
+ * `DEFAULT_DRAG_MIN_DENSITY` is the other half of the same question, and it is
+ * what stops the box test from being satisfied by a scattering of noise across
+ * the whole frame.
+ */
+const DEFAULT_CLIP_LEVEL = 250;
+const DEFAULT_DRAG_MAX_COVERAGE = 0.85;
+const DEFAULT_DRAG_MIN_DENSITY = 0.02;
+const DEFAULT_DRAG_CLIP_CEILING = 0.05;
+const DEFAULT_DRAG_CLIP_TOLERANCE = 0.02;
 const DEFAULT_SCROLL_TOLERANCE = 0.02;
+
+/**
+ * How much of the frame the reduced-motion toggle is allowed to change.
+ *
+ * The preference can be turned on while the page is open, and the failure this
+ * measures is a specific one: a rig rebuilt on the preference change has no pose,
+ * so the entry is re-armed and the camera flies back out to the approach pose —
+ * which about half the frame notices. A correct toggle leaves the camera where it
+ * already is and freezes what is moving, so the two frames differ by the water's
+ * own drift over a second or two. Twenty-five percent is a wide margin between
+ * those two answers, and it is stated as a percentage of the frame rather than as
+ * "% different enough" so a failure says how far out it was.
+ */
+const DEFAULT_REENTRY_MAX_PERCENT = 25;
 
 /**
  * How long a single frame is allowed to keep moving before the capture is
@@ -251,11 +311,15 @@ const BOOLEAN_FLAGS = new Set([
   'dry-run',
   'verbose',
   'reduced-motion',
+  'reduced-motion-toggle',
   'text-hidden',
   'reverse',
   'drag',
   'keep-profile',
   'lenient',
+  'fail-webgpu-init',
+  'measure-startup',
+  'interactions',
 ]);
 
 const REPEATABLE_FLAGS = new Set(['chrome-arg', 'allow-console-error']);
@@ -276,8 +340,16 @@ const VALUE_FLAGS = new Set([
   'port',
   'park',
   'drag-steps',
+  'drag-duration-ms',
   'changed-threshold',
   'changed-min',
+  'reentry-max',
+  'domain',
+  'clip-level',
+  'drag-max-coverage',
+  'drag-min-density',
+  'drag-clip-ceiling',
+  'drag-clip-tolerance',
   'stable-frames',
   'stability-threshold',
   'min-spread',
@@ -470,6 +542,15 @@ export function parseArgs(argv) {
         max: 120,
         fallback: DEFAULT_DRAG_STEPS,
       }),
+      // Zero means "use the per-step delay"; anything else spreads the same path
+      // over a requested wall-clock duration, which is what a sustained-drag run
+      // is asking for. See `DEFAULT_DRAG_STEP_DELAY_MS`.
+      dragDurationMs: parseInteger(raw['drag-duration-ms'], {
+        name: 'drag-duration-ms',
+        min: 0,
+        max: 120_000,
+        fallback: 0,
+      }),
       changedThreshold: parseInteger(raw['changed-threshold'], {
         name: 'changed-threshold',
         min: 0,
@@ -481,6 +562,36 @@ export function parseArgs(argv) {
         min: 0,
         max: 100,
         fallback: DEFAULT_CHANGED_MIN_PERCENT,
+      }),
+      clipLevel: parseInteger(raw['clip-level'], {
+        name: 'clip-level',
+        min: 1,
+        max: 255,
+        fallback: DEFAULT_CLIP_LEVEL,
+      }),
+      dragMaxCoverage: parseNumber(raw['drag-max-coverage'], {
+        name: 'drag-max-coverage',
+        min: 0,
+        max: 1,
+        fallback: DEFAULT_DRAG_MAX_COVERAGE,
+      }),
+      dragMinDensity: parseNumber(raw['drag-min-density'], {
+        name: 'drag-min-density',
+        min: 0,
+        max: 1,
+        fallback: DEFAULT_DRAG_MIN_DENSITY,
+      }),
+      dragClipCeiling: parseNumber(raw['drag-clip-ceiling'], {
+        name: 'drag-clip-ceiling',
+        min: 0,
+        max: 1,
+        fallback: DEFAULT_DRAG_CLIP_CEILING,
+      }),
+      dragClipTolerance: parseNumber(raw['drag-clip-tolerance'], {
+        name: 'drag-clip-tolerance',
+        min: 0,
+        max: 1,
+        fallback: DEFAULT_DRAG_CLIP_TOLERANCE,
       }),
       settleMs: parseInteger(raw['settle-ms'], {
         name: 'settle-ms',
@@ -537,6 +648,17 @@ export function parseArgs(argv) {
       allowConsoleErrorPatterns: repeatable['allow-console-error'],
       textHidden: raw['text-hidden'] === true,
       reducedMotion: raw['reduced-motion'] === true,
+      reducedMotionToggle: raw['reduced-motion-toggle'] === true,
+      reentryMaxPercent: parseNumber(raw['reentry-max'], {
+        name: 'reentry-max',
+        min: 0,
+        max: 100,
+        fallback: DEFAULT_REENTRY_MAX_PERCENT,
+      }),
+      failWebGpuInit: raw['fail-webgpu-init'] === true,
+      measureStartup: raw['measure-startup'] === true,
+      interactions: raw.interactions === true,
+      domain: sanitizeSegment(raw.domain ?? DEFAULT_DOMAIN),
       lenient: raw.lenient === true,
       keepProfile: raw['keep-profile'] === true,
       dryRun: raw['dry-run'] === true,
@@ -699,6 +821,15 @@ export function resolvePlan(options) {
         `${options.thumb.label} downscale of the idle frame via clip.scale`,
         `-thumb-${options.thumb.label}`,
       );
+    }
+    if (options.reducedMotionToggle) {
+      push(size, 'reduced-on', 'motion', 'prefers-reduced-motion applied after load');
+      push(size, 'reduced-off', 'motion', 'preference withdrawn again, motion resumed');
+    }
+    if (options.interactions) {
+      push(size, `hover-${options.domain}`, 'interaction', `hover on the ${options.domain} region label`);
+      push(size, `focus-${options.domain}`, 'interaction', `focus on the ${options.domain} region`);
+      push(size, 'escape', 'interaction', 'Escape, pointer parked: focus and hover cleared');
     }
     for (const step of scrollSteps) {
       push(size, `scroll-${padScrollStep(step)}`, 'scroll', `page scroll at ${step}%`);
@@ -1327,7 +1458,11 @@ export function signatureDelta(a, b) {
  * individual samples by a count or two between captures. At a threshold of 8
  * out of 255 those are noise; a real drag moves whole regions by tens.
  */
-export function diffLuminance(before, after, { threshold = DEFAULT_CHANGED_THRESHOLD } = {}) {
+export function diffLuminance(
+  before,
+  after,
+  { threshold = DEFAULT_CHANGED_THRESHOLD, clipLevel = DEFAULT_CLIP_LEVEL } = {},
+) {
   if (before.width !== after.width || before.height !== after.height) {
     throw new Error(
       `Cannot diff frames of different sizes: ${before.width}x${before.height} vs ${after.width}x${after.height}`,
@@ -1340,18 +1475,46 @@ export function diffLuminance(before, after, { threshold = DEFAULT_CHANGED_THRES
   let changed = 0;
   let sum = 0;
   let max = 0;
+  /*
+   * Where the change is, and how much of the frame is blown out on either side.
+   *
+   * Both are collected in the same pass, and both exist for the drag's dynamic
+   * frame, where "how much changed" is not enough on its own: a camera move and
+   * a shove in the water can change the same percentage of pixels, and the two
+   * are told apart by the *shape* of the changed set and by whether the picture
+   * got brighter overall. See `evaluateDynamicFrame`.
+   */
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  let beforeClipped = 0;
+  let afterClipped = 0;
 
   for (let index = 0; index < total; index += 1) {
     const left = Math.round(luminanceAt(before.data, index * before.channels, before.channels));
     const right = Math.round(luminanceAt(after.data, index * after.channels, after.channels));
+    if (left >= clipLevel) beforeClipped += 1;
+    if (right >= clipLevel) afterClipped += 1;
     const delta = Math.min(255, Math.abs(left - right));
     mask[index] = delta;
     if (delta > threshold) {
       changed += 1;
       sum += delta;
       if (delta > max) max = delta;
+      const x = index % width;
+      const y = (index - x) / width;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
     }
   }
+
+  const bounds =
+    changed > 0
+      ? { minX, minY, maxX, maxY, width: maxX - minX + 1, height: maxY - minY + 1 }
+      : null;
 
   return {
     width,
@@ -1364,8 +1527,105 @@ export function diffLuminance(before, after, { threshold = DEFAULT_CHANGED_THRES
     changedPercent: total > 0 ? (changed / total) * 100 : 0,
     meanDelta: changed > 0 ? sum / changed : 0,
     maxDelta: max,
+    bounds,
+    /** How much of the frame the changed set's own box covers. */
+    coverageFraction: bounds === null ? 0 : (bounds.width * bounds.height) / total,
+    /** Changed pixels as a share of that box: 1 is solid, near 0 is scattered noise. */
+    densityInsideBounds: bounds === null ? 0 : changed / (bounds.width * bounds.height),
+    clipLevel,
+    clippedFraction: {
+      before: total > 0 ? beforeClipped / total : 0,
+      after: total > 0 ? afterClipped / total : 0,
+    },
   };
 }
+
+/**
+ * What a frame that is *expected* to be moving has to satisfy.
+ *
+ * **Why the during-drag frame cannot be judged by the resting-frame rule.** Every
+ * other capture in this harness waits for consecutive frames to stop moving,
+ * because a frame is evidence of a *state* and a frame taken mid-transition is
+ * evidence of nothing in particular. A drag with the button held is the one
+ * exception, and it is not a relaxed version of that rule: the state it is
+ * evidence of is precisely "something is being manipulated, and it is still
+ * responding". Waiting for it to stop does not produce a better drag frame, it
+ * produces a frame of a drag that has already been released — which is exactly
+ * the state the triple's third capture exists for. So the wait is dropped here
+ * and replaced by three questions that *are* answerable while it moves:
+ *
+ *  1. **Did enough change to be a drag at all?** The existing `--changed-min`
+ *     floor, kept exactly as it was, because the failure it catches — two
+ *     identical frames filed as before-and-after — has not changed.
+ *  2. **Is the change in one place?** A drag pushes water where the pointer is;
+ *     a whole-frame change is a camera move, an exposure shift or a scene that
+ *     was re-created between the two captures, and none of those is direct
+ *     manipulation. Measured as the changed set's bounding box against the frame.
+ *  3. **Did the picture blow out?** The failure a runaway injection produces is
+ *     not "nothing changed", it is "everything changed, to white". Measured as
+ *     the share of the frame at or above the clip level, before versus during.
+ *
+ * A frame that fails none of them is evidence that the drag happened. It is not
+ * evidence that the drag *settled*, and it is not asked to be: that is what the
+ * release capture is for.
+ */
+export function evaluateDynamicFrame({ diff, options }) {
+  const findings = [];
+
+  if (diff.changedPercent < options.changedMinPercent) {
+    findings.push({
+      code: 'too-little-change',
+      text: `the drag moved ${diff.changedPercent.toFixed(3)}% of pixels (${diff.changed.toLocaleString('en-US')} px), below the ${options.changedMinPercent}% floor — the two frames are the same picture`,
+    });
+  }
+
+  if (diff.bounds === null || diff.coverageFraction > options.maxCoverage) {
+    const covered = diff.bounds === null ? 'all of it' : `${(diff.coverageFraction * 100).toFixed(1)}% of it`;
+    findings.push({
+      code: 'diffuse-coverage',
+      text: `the changed pixels span ${covered}, past the ${(options.maxCoverage * 100).toFixed(0)}% ceiling — a drag disturbs the water where the pointer is, so a frame-wide change is a camera move or a re-created scene rather than direct manipulation`,
+    });
+  } else if (diff.densityInsideBounds < options.minDensity) {
+    findings.push({
+      code: 'diffuse-coverage',
+      text: `the changed pixels fill only ${(diff.densityInsideBounds * 100).toFixed(2)}% of their own bounding box, below the ${(options.minDensity * 100).toFixed(2)}% floor — scattered single-pixel differences are noise, not a gesture`,
+    });
+  }
+
+  const clipRise = diff.clippedFraction.after - diff.clippedFraction.before;
+  if (
+    diff.clippedFraction.after > options.clipCeiling &&
+    clipRise > options.clipTolerance
+  ) {
+    findings.push({
+      code: 'overexposed',
+      text: `${(diff.clippedFraction.after * 100).toFixed(2)}% of the during frame is at or above ${diff.clipLevel}/255 against ${(diff.clippedFraction.before * 100).toFixed(2)}% before, a rise of ${(clipRise * 100).toFixed(2)} points past the ${(options.clipTolerance * 100).toFixed(2)} allowed — a drag that has blown the frame out is not a drag`,
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * How each frame of the drag triple has to be captured.
+ *
+ * A table rather than three call sites, because the distinction is the point of
+ * the triple and a table is the only form in which it can be asserted. `stable`
+ * means the frame is waited for; `dynamic` means it is taken as found and judged
+ * by `evaluateDynamicFrame`. The `drag-mask` stage is absent deliberately: it is
+ * computed from the other two rather than captured, and giving it a mode would
+ * invite a future edit to treat it as a frame.
+ */
+export const DRAG_CAPTURE_MODES = Object.freeze({
+  'drag-before': 'stable',
+  'drag-during': 'dynamic',
+  'drag-after': 'stable',
+});
+
+export function dragCaptureMode(stage) {
+  return DRAG_CAPTURE_MODES[stage] ?? null;
+}
+
 
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
@@ -1793,6 +2053,131 @@ async function hideWebGpu(client, sessionId) {
   );
 }
 
+/**
+ * Forces a WebGPU *initialization* failure, after the capability probe passed.
+ *
+ * `hideWebGpu` answers "what does a machine without WebGPU do", and it is the
+ * right injection for a `--backend webgl2` run: the probe reports no adapter, the
+ * runtime goes straight to WebGL2, and the canvas is never in question.
+ *
+ * It is the wrong injection for the other half of the fallback, which is the one
+ * that has to be verified separately: a WebGPU attempt that *gets as far as
+ * building a renderer* and then fails. That path is different in kind, because
+ * the failed attempt may already have fixed the canvas to the `webgpu` context
+ * type — so the fallback that follows has to be handed a canvas it can actually
+ * have, and a run where `requestAdapter` simply returns null never exercises it.
+ *
+ * So this stub gives the probe an adapter it will accept — `info` set, so the
+ * adapter name is reported — and a `requestDevice()` that rejects, which is
+ * exactly where `WebGPUBackend.init` gives up. The failure is a real one produced
+ * by the app's own renderer, not a fake error thrown into its path.
+ */
+async function failWebGpuInitialization(client, sessionId) {
+  await client.send(
+    'Page.addScriptToEvaluateOnNewDocument',
+    {
+      source: [
+        'try {',
+        '  const adapter = {',
+        "    info: { description: 'capture harness: forced device failure' },",
+        '    features: new Set(),',
+        '    limits: {},',
+        "    requestDevice: () => Promise.reject(new Error('capture harness: forced WebGPU device failure')),",
+        '  };',
+        "  Object.defineProperty(navigator, 'gpu', {",
+        '    value: { requestAdapter: () => Promise.resolve(adapter) },',
+        '    configurable: true,',
+        '  });',
+        '} catch (error) {',
+        '  void error;',
+        '}',
+      ].join('\n'),
+    },
+    sessionId,
+  );
+}
+
+/**
+ * Watches for main-thread tasks that block long enough to be felt.
+ *
+ * The number this exists for is the ink field's settlement, which is a burst of
+ * simulation passes issued inside one `useFrame` callback: it is not a "loading"
+ * state anybody can see in a screenshot, and it is not in any telemetry the page
+ * publishes, because the telemetry sampler only starts once the frame loop is
+ * already running. What it *is* is a long task, and the browser measures long
+ * tasks for us — a task over 50 ms is reported with its start time and duration.
+ *
+ * Registered before any page script runs, so nothing is missed, and `buffered` is
+ * not needed here because there is no earlier task to miss. The observer itself
+ * is cheap and cannot change what it measures.
+ */
+async function observeStartup(client, sessionId) {
+  await client.send(
+    'Page.addScriptToEvaluateOnNewDocument',
+    {
+      source: [
+        'try {',
+        '  const startup = { longTasks: [], error: null };',
+        '  window.__stage356Startup = startup;',
+        '  const observer = new PerformanceObserver((list) => {',
+        '    for (const entry of list.getEntries()) {',
+        '      startup.longTasks.push({',
+        '        start: Math.round(entry.startTime),',
+        '        duration: Math.round(entry.duration),',
+        '      });',
+        '    }',
+        '  });',
+        "  observer.observe({ entryTypes: ['longtask'] });",
+        '} catch (error) {',
+        "  window.__stage356Startup = { longTasks: [], error: String(error) };",
+        '}',
+      ].join('\n'),
+    },
+    sessionId,
+  );
+}
+
+const STARTUP_EXPRESSION = `(() => {
+  const data = window.__stage356Startup;
+  if (!data) return { available: false, reason: 'the long-task observer did not run' };
+  const tasks = data.longTasks.slice().sort((a, b) => b.duration - a.duration);
+  let total = 0;
+  for (const task of data.longTasks) total += task.duration;
+  return {
+    available: true,
+    error: data.error,
+    count: data.longTasks.length,
+    totalMs: Math.round(total),
+    worst: tasks.slice(0, 6),
+  };
+})()`;
+
+/**
+ * Prints what the main thread was blocked on while the page started.
+ *
+ * Reported as a list rather than as one number, because the interesting question
+ * is not "how long did it take" but "was any single task long enough to be seen".
+ * A startup made of twelve 60-ms tasks and one made of a single 700-ms task add
+ * up the same and feel nothing alike.
+ */
+function reportStartup(measurement) {
+  if (!measurement?.available) {
+    console.log(`  startup  : not measured (${measurement?.reason ?? 'no response'})`);
+    return;
+  }
+
+  const worst = measurement.worst[0];
+  console.log(
+    `  startup  : ${measurement.count} long task(s), ${measurement.totalMs} ms blocked in total, worst ${worst ? `${worst.duration} ms at ${worst.start} ms` : 'none'}`,
+  );
+  for (const task of measurement.worst.slice(0, 4)) {
+    console.log(`             ${String(task.duration).padStart(5)} ms  starting at ${task.start} ms`);
+  }
+  if (measurement.error) {
+    console.log(`             observer error: ${measurement.error}`);
+  }
+}
+
 async function navigate(client, sessionId, url, timeoutMs) {
   const load = new Promise((resolve) => {
     const off = client.on('Page.loadEventFired', (params, incoming) => {
@@ -1857,6 +2242,270 @@ async function dispatchMouse(client, sessionId, type, point, button = 'none', bu
     },
     sessionId,
   );
+}
+
+/**
+ * The five region labels, as the page actually exposes them.
+ *
+ * `.domain-labels` → `.graph-node-label[data-domain-id]` → `.graph-node-label__name`,
+ * with `is-hovered` / `is-focused` as the state modifiers. Those names are a
+ * stated contract in `DomainLabels.tsx` — kept deliberately because the harnesses
+ * resolve their targets from them, and a harness that cannot find its element
+ * refuses to guess and skips the capture.
+ *
+ * Read as computed style rather than from the class list alone. A region behind
+ * the camera is still in the DOM: `update()` sets its opacity to zero,
+ * `pointer-events` to `none` and `aria-hidden` on it, so "is this label
+ * something a pointer can reach" is a question about what is actually painted,
+ * and a harness that clicked a hidden label would be testing nothing.
+ */
+const LABEL_STATE_EXPRESSION = `(() => {
+  const container = document.querySelector('.domain-labels');
+  if (!container) return { found: false, labels: [] };
+  const labels = Array.from(container.querySelectorAll('.graph-node-label')).map((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    const name = element.querySelector('.graph-node-label__name');
+    const opacity = Number.parseFloat(style.opacity);
+    return {
+      id: element.dataset.domainId || null,
+      text: name ? name.textContent : null,
+      hovered: element.classList.contains('is-hovered'),
+      focused: element.classList.contains('is-focused'),
+      hidden: element.getAttribute('aria-hidden') === 'true',
+      interactive:
+        style.pointerEvents !== 'none' &&
+        Number.isFinite(opacity) &&
+        opacity > 0.05 &&
+        rect.width > 1 &&
+        rect.height > 1,
+      centre: { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) },
+    };
+  });
+  return { found: true, labels };
+})()`;
+
+/**
+ * What the labels are doing, in the shape the expectations below are written
+ * against.
+ *
+ * Pure, and exported, because the three expectations are the parts of this that
+ * can be wrong in a way a screenshot will not show: a hover that never arrived
+ * and a hover that arrived and was never cleared produce the same picture as a
+ * hover that worked.
+ */
+export function readInteractionState(labels, domain) {
+  const hoveredIds = labels.filter((label) => label.hovered).map((label) => label.id);
+  const focusedIds = labels.filter((label) => label.focused).map((label) => label.id);
+  const match = labels.find((label) => label.id === domain) ?? null;
+
+  return {
+    found: labels.length > 0,
+    count: labels.length,
+    domain: match,
+    hoveredIds,
+    focusedIds,
+    observed: labels.map(
+      (label) => `${label.id}:${label.hovered ? 'hovered' : label.focused ? 'focused' : 'idle'}`,
+    ),
+  };
+}
+
+/**
+ * Whether a state is the state that was asked for.
+ *
+ * The three expectations are the brief's three camera-relevant inputs, and each
+ * one has a failure that a frame cannot distinguish from success:
+ *
+ *  - `hover` must be *felt*: the label carries `is-hovered`, and it is a label
+ *    the pointer could actually reach. A hover on a region behind the camera is
+ *    a hover on nothing.
+ *  - `focus` must be exclusive: the target is focused *and* the hover flags have
+ *    cleared. A focus that left the pointer's own hover standing is two inputs
+ *    at once, and the routing field would answer both.
+ *  - `escape` must clear both. Checking only the focus flag is the classic
+ *    near-miss — the pointer is still resting on a label, so the composition is
+ *    still bent toward it even though nothing is "focused".
+ */
+export function evaluateInteraction(state, expectation, domain) {
+  if (!state.found) {
+    return { ok: false, reason: 'no `.domain-labels` container in the document' };
+  }
+
+  const target = state.domain;
+
+  if (expectation === 'hover') {
+    if (target === null) {
+      return { ok: false, reason: `no label with data-domain-id="${domain}" (saw ${state.observed.join(', ') || 'none'})` };
+    }
+    if (!target.interactive) {
+      return { ok: false, reason: `the ${domain} label is not reachable: hidden=${target.hidden}, and the pointer was sent to it anyway` };
+    }
+    if (!target.hovered) {
+      return { ok: false, reason: `${domain} is ${target.focused ? 'focused' : 'idle'}, not hovered` };
+    }
+    if (state.focusedIds.length > 0) {
+      return { ok: false, reason: `hover left ${state.focusedIds.join(', ')} focused` };
+    }
+    return { ok: true, reason: `${domain} is hovered (${state.observed.join(', ')})` };
+  }
+
+  if (expectation === 'focus') {
+    if (target === null) {
+      return { ok: false, reason: `no label with data-domain-id="${domain}" after the click` };
+    }
+    if (!target.focused) {
+      return { ok: false, reason: `${domain} is ${target.hovered ? 'hovered' : 'idle'}, not focused` };
+    }
+    if (state.focusedIds.length !== 1) {
+      return { ok: false, reason: `${state.focusedIds.length} labels are focused at once: ${state.focusedIds.join(', ')}` };
+    }
+    if (state.hoveredIds.length > 0) {
+      return { ok: false, reason: `focus left ${state.hoveredIds.join(', ')} hovered as well` };
+    }
+    return { ok: true, reason: `${domain} is focused and nothing else is held` };
+  }
+
+  if (expectation === 'escape') {
+    if (state.focusedIds.length > 0) {
+      return { ok: false, reason: `Escape left ${state.focusedIds.join(', ')} focused` };
+    }
+    if (state.hoveredIds.length > 0) {
+      return {
+        ok: false,
+        reason: `Escape left ${state.hoveredIds.join(', ')} hovered; the pointer never left the scene (${state.observed.join(', ')})`,
+      };
+    }
+    return { ok: true, reason: `Escape cleared focus and hover (${state.observed.join(', ')})` };
+  }
+
+  return { ok: true, reason: `${state.observed.join(', ')}` };
+}
+
+async function readLabels(client, sessionId, domain) {
+  const probe = await evaluate(client, sessionId, LABEL_STATE_EXPRESSION);
+  return readInteractionState(probe?.labels ?? [], domain);
+}
+
+async function dispatchEscape(client, sessionId) {
+  const base = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 };
+  await client.send('Input.dispatchKeyEvent', { type: 'keyDown', ...base }, sessionId);
+  await client.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, sessionId);
+}
+
+/**
+ * Hover, focus and Escape, as three states that have to be *proved*.
+ *
+ * The camera and the routing field answer all three, and every one of them can
+ * fail in a way the frame cannot show: a hover that never arrived, a click that
+ * focused but left the hover standing, an Escape that released the focus but
+ * left the pointer resting on a label. So each state is read back out of the DOM
+ * and judged by `evaluateInteraction` before its frame is written — the picture
+ * is evidence of what the scene looked like, and the readback is evidence of
+ * what the scene was told.
+ *
+ * The pointer is parked away before Escape, and that is not tidiness: Escape is
+ * a claim that the composition returned to rest, and a pointer still on a label
+ * keeps it bent toward that region however clear the focus is.
+ */
+async function runInteractionSequence(client, sessionId, options, context, size) {
+  const domain = options.domain;
+  const park = resolvePoint(options.park, size);
+
+  console.log(`  graph   : hover -> focus -> Escape on "${domain}"`);
+
+  // (1) hover — the pointer onto the label, at wherever the label currently is.
+  await scrollToProgress(client, sessionId, 0);
+  await dispatchMouse(client, sessionId, 'mouseMoved', park);
+  await delay(options.settleMs);
+
+  const beforeHover = await readLabels(client, sessionId, domain);
+  const label = beforeHover.domain;
+  if (label === null || !label.interactive) {
+    context.failures.push({
+      kind: 'interaction',
+      text: `${size.label} hover: the "${domain}" label is not reachable (${label === null ? 'absent' : `hidden=${label.hidden}`}); saw ${beforeHover.observed.join(', ') || 'no labels'}`,
+    });
+    return;
+  }
+
+  await dispatchMouse(client, sessionId, 'mouseMoved', label.centre);
+  await delay(options.settleMs);
+  const hovered = await readLabels(client, sessionId, domain);
+  const hoverVerdict = evaluateInteraction(hovered, 'hover', domain);
+  const hoverFrame = await captureEvidence(client, sessionId, options, context, {
+    size,
+    stage: `hover-${domain}`,
+    input: `pointer on the ${domain} label at ${label.centre.x},${label.centre.y}`,
+  });
+  if (!hoverVerdict.ok) {
+    context.failures.push({
+      kind: 'interaction',
+      text: `${size.label} hover: ${hoverVerdict.reason}`,
+    });
+  } else {
+    console.log(`  graph   : hover ok — ${hoverVerdict.reason}`);
+  }
+  void hoverFrame;
+
+  // (2) focus — a click on the same label, which is what the layer's `onSelect`
+  // is wired to. Press and release rather than `element.click()`, because the
+  // point of this stage is that the real input path works.
+  await dispatchMouse(client, sessionId, 'mousePressed', label.centre, 'left', 1);
+  await delay(60);
+  await dispatchMouse(client, sessionId, 'mouseReleased', label.centre, 'left', 0);
+  await delay(options.settleMs);
+  const focused = await readLabels(client, sessionId, domain);
+  const focusVerdict = evaluateInteraction(focused, 'focus', domain);
+  const focusFrame = await captureEvidence(client, sessionId, options, context, {
+    size,
+    stage: `focus-${domain}`,
+    input: `left click on the ${domain} label`,
+  });
+  if (!focusVerdict.ok) {
+    context.failures.push({
+      kind: 'interaction',
+      text: `${size.label} focus: ${focusVerdict.reason}`,
+    });
+  } else {
+    console.log(`  graph   : focus ok — ${focusVerdict.reason}`);
+  }
+  void focusFrame;
+
+  // (3) escape — pointer parked first, so the claim being tested is the whole
+  // claim: focus *and* hover gone.
+  await dispatchMouse(client, sessionId, 'mouseMoved', park);
+  await delay(options.settleMs);
+  await dispatchEscape(client, sessionId);
+  await delay(options.settleMs);
+  const escaped = await readLabels(client, sessionId, domain);
+  const escapeVerdict = evaluateInteraction(escaped, 'escape', domain);
+  const escapeFrame = await captureEvidence(client, sessionId, options, context, {
+    size,
+    stage: 'escape',
+    input: `key Escape, pointer parked at ${park.x},${park.y}`,
+  });
+  if (!escapeVerdict.ok) {
+    context.failures.push({
+      kind: 'interaction',
+      text: `${size.label} escape: ${escapeVerdict.reason}`,
+    });
+  } else {
+    console.log(`  graph   : escape ok — ${escapeVerdict.reason}`);
+  }
+  void escapeFrame;
+
+  context.interactions.push({
+    size: size.label,
+    domain,
+    hover: hoverVerdict,
+    focus: focusVerdict,
+    escape: escapeVerdict,
+    hoverFrame: hoverFrame.ok ? hoverFrame.record.name : null,
+    focusFrame: focusFrame.ok ? focusFrame.record.name : null,
+    escapeFrame: escapeFrame.ok ? escapeFrame.record.name : null,
+    observed: escaped.observed,
+  });
 }
 
 /** Injects (or clears) the capture-only stylesheet used by `--text-hidden`. */
@@ -2097,6 +2746,169 @@ async function captureEvidence(client, sessionId, options, context, { size, stag
 }
 
 /**
+ * Capture a frame that is expected to be moving, and judge it as one.
+ *
+ * The counterpart to `captureEvidence`, and the only place in this harness that
+ * does not wait for consecutive frames to stop changing. See
+ * `evaluateDynamicFrame` for why the drag's mid-gesture frame is the exception
+ * and for what it is asked instead — and `DRAG_CAPTURE_MODES` for the rule that
+ * decides which stages take this path.
+ *
+ * It still requires the frame to be *a picture*: `frameAcceptable` is checked
+ * here exactly as it is for a resting frame, because "the scene has not started
+ * yet" is not a state a drag can be in.
+ */
+async function captureDynamicEvidence(client, sessionId, options, context, { size, stage, input }) {
+  const sample = await sampleFrame(client, sessionId);
+
+  const name = formatCaptureName({
+    prefix: options.namePrefix,
+    backend: context.backendLabel(),
+    quality: options.quality,
+    sizeLabel: size.label,
+    stage,
+  });
+  const filePath = path.join(options.outDir, name);
+  await writeFile(filePath, sample.png);
+
+  const record = {
+    name,
+    filePath,
+    size: `${sample.image.width}x${sample.image.height}`,
+    stage,
+    input,
+    spread: sample.stats.spread,
+    mean: sample.stats.mean,
+    litFraction: sample.stats.litFraction,
+    attempts: 1,
+    bytes: sample.png.length,
+  };
+  context.captures.push(record);
+
+  if (!frameAcceptable(sample.stats, options)) {
+    context.failures.push({
+      kind: 'flat-frame',
+      text: `${name} looks flat (mean ${sample.stats.mean.toFixed(1)}, spread ${sample.stats.spread.toFixed(1)}, lit ${formatPercent(sample.stats.litFraction)})`,
+    });
+  }
+
+  console.log(
+    `  ${name}  ${record.size}  mean ${record.mean.toFixed(1)}  spread ${record.spread.toFixed(1)}  lit ${formatPercent(record.litFraction)}  ${(record.bytes / 1024).toFixed(0)} KiB  [dynamic: ${input}]`,
+  );
+
+  return { ok: true, record, png: sample.png, image: sample.image, stats: sample.stats };
+}
+
+/**
+ * Turning the preference on and off while the page is open.
+ *
+ * Three claims, and only the first is about a picture.
+ *
+ *  1. **It can be turned on at runtime at all.** The media query is subscribed to,
+ *     not read once, so a visitor who changes the setting in their OS while the
+ *     page is open gets the setting.
+ *  2. **It actually stops the scene.** Under the emulated media the frame is
+ *     waited for with byte equality, exactly as a `--reduced-motion` run is, and
+ *     then sampled twice more and compared as bytes. A preference that makes the
+ *     picture smaller rather than still fails here.
+ *  3. **It does not replay the entry.** This is the repair this measure exists
+ *     for. The rig used to be replaced when the preference changed; a replacement
+ *     rig has no pose, so the boot snap ran again and the camera flew back out to
+ *     the entry approach — a whole arrival replayed at somebody who had already
+ *     arrived. The check is the distance between the frame before the toggle and
+ *     the frame after it: a replayed entry moves most of the frame, a correct
+ *     toggle moves only what the water was doing anyway.
+ *
+ * The preference is withdrawn at the end, and a frame is taken to prove the scene
+ * starts again rather than staying stopped.
+ */
+async function runReducedMotionProbe(client, sessionId, options, context, { size, idle }) {
+  console.log(`  motion  : toggling prefers-reduced-motion at runtime`);
+
+  await applyReducedMotion(client, sessionId, true);
+  await delay(options.settleMs);
+
+  const on = await captureEvidence(client, sessionId, options, context, {
+    size,
+    stage: 'reduced-on',
+    input: 'prefers-reduced-motion: reduce, applied after load',
+  });
+
+  if (on.ok && on.image) {
+    // The hold, measured. Two more samples with the preference on; the second is
+    // compared to the first as raw bytes, which is the strongest form of "nothing
+    // is moving" this harness can state.
+    const first = await sampleFrame(client, sessionId);
+    await delay(options.settleMs);
+    const second = await sampleFrame(client, sessionId);
+
+    if (!buffersEqual(first.image.data, second.image.data)) {
+      context.failures.push({
+        kind: 'reduced-motion-hold',
+        text: `with the preference applied after load, two frames ${options.settleMs} ms apart differ; reduced motion claims the scene has stopped, and a scene that drifts by less than a signature cell is still drifting`,
+      });
+    } else {
+      console.log(`  motion  : reduced motion holds — two samples are byte-identical`);
+    }
+  }
+
+  await applyReducedMotion(client, sessionId, false);
+  await delay(options.settleMs);
+
+  const off = await captureEvidence(client, sessionId, options, context, {
+    size,
+    stage: 'reduced-off',
+    input: 'preference withdrawn, scene running again',
+  });
+
+  if (on.ok && on.image && off.ok && off.image) {
+    /*
+     * Two comparisons, because one of them on its own cannot be read.
+     *
+     * `idle -> reduced-on` is the frame before the toggle against the frame after
+     * it, and it is the number the entry-replay failure is called on.
+     * `idle -> reduced-off` is the same measurement over a longer interval with no
+     * toggle in it at all, and it is the *control*: it is how much this scene
+     * changes on its own over the length of the probe. A toggle that moved roughly
+     * what the drift moved is a toggle that moved nothing.
+     */
+    const reentry = diffLuminance(idle.image, on.image, {
+      threshold: options.changedThreshold,
+      clipLevel: options.clipLevel,
+    });
+    const drift = diffLuminance(idle.image, off.image, {
+      threshold: options.changedThreshold,
+      clipLevel: options.clipLevel,
+    });
+
+    console.log(
+      `  motion  : the toggle changed ${reentry.changedPercent.toFixed(3)}% of the frame (${reentry.changed.toLocaleString('en-US')} px); the scene's own drift over the same probe changed ${drift.changedPercent.toFixed(3)}%`,
+    );
+
+    if (reentry.changedPercent > options.reentryMaxPercent) {
+      context.failures.push({
+        kind: 'reduced-motion-entry-replay',
+        text: `applying the preference after load changed ${reentry.changedPercent.toFixed(2)}% of the frame against ${drift.changedPercent.toFixed(2)}% of ordinary drift, past the ${options.reentryMaxPercent}% ceiling. A preference is a change of mode, not a new arrival: this is what re-running the entry looks like.`,
+      });
+    }
+
+    const resumed = diffLuminance(on.image, off.image, {
+      threshold: options.changedThreshold,
+      clipLevel: options.clipLevel,
+    });
+    console.log(
+      `  motion  : withdrawing it moved ${resumed.changedPercent.toFixed(3)}% of the frame`,
+    );
+    if (resumed.changedPercent < options.changedMinPercent) {
+      context.failures.push({
+        kind: 'reduced-motion-resume',
+        text: `withdrawing the preference changed ${resumed.changedPercent.toFixed(3)}% of pixels (${resumed.changed} px), below the ${options.changedMinPercent}% floor — the scene did not start moving again`,
+      });
+    }
+  }
+}
+
+/**
  * Scrolls, proves the scroll landed, then captures.
  *
  * The requested and achieved progress are both reported. When the document has
@@ -2215,6 +3027,21 @@ async function runDragSequence(client, sessionId, options, context, size) {
 
   let lastPoint = start;
   const arc = size.height * 0.06;
+  /*
+   * How long the gesture takes, and why it is a flag rather than a constant.
+   *
+   * A drag that lasts five seconds is a different claim from a drag that lasts a
+   * third of one: the brush's own attack and release are exponential over about
+   * 90 ms and 2.6 s, and the field it has pushed has been advecting for the whole
+   * of it, so a sustained hold is the only way to see what the simulation does
+   * with continuous input. The path is the same either way; only the gap between
+   * its moves changes.
+   */
+  const stepDelayMs =
+    options.dragDurationMs > 0
+      ? Math.max(1, Math.round(options.dragDurationMs / options.dragSteps))
+      : DEFAULT_DRAG_STEP_DELAY_MS;
+  const gestureMs = stepDelayMs * options.dragSteps;
   for (let index = 1; index <= options.dragSteps; index += 1) {
     const t = index / options.dragSteps;
     lastPoint = {
@@ -2222,14 +3049,14 @@ async function runDragSequence(client, sessionId, options, context, size) {
       y: Math.round(start.y + (end.y - start.y) * t + Math.sin(t * Math.PI) * arc),
     };
     await dispatchMouse(client, sessionId, 'mouseMoved', lastPoint, 'none', 1);
-    await delay(24);
+    await delay(stepDelayMs);
   }
   await delay(options.settleMs);
 
-  const during = await captureEvidence(client, sessionId, options, context, {
+  const during = await captureDynamicEvidence(client, sessionId, options, context, {
     size,
     stage: 'drag-during',
-    input: `left button held, ${options.dragSteps} moves ${start.x},${start.y} -> ${lastPoint.x},${lastPoint.y}`,
+    input: `left button held ${gestureMs} ms over ${options.dragSteps} moves ${start.x},${start.y} -> ${lastPoint.x},${lastPoint.y}`,
   });
 
   // (3) release, then park again.
@@ -2238,6 +3065,10 @@ async function runDragSequence(client, sessionId, options, context, size) {
   await dispatchMouse(client, sessionId, 'mouseMoved', park);
   await delay(options.settleMs);
 
+  // The release frame is a *state*, and it is waited for exactly like every
+  // other state in this harness — including under reduced motion, where the wait
+  // is byte equality. A drag whose aftermath never stops moving is a finding,
+  // and this is the only capture in the triple that can report it.
   const after = await captureEvidence(client, sessionId, options, context, {
     size,
     stage: 'drag-after',
@@ -2255,7 +3086,10 @@ async function runDragSequence(client, sessionId, options, context, size) {
   // (4) the mask, computed here rather than in the browser.
   let diff;
   try {
-    diff = diffLuminance(before.image, during.image, { threshold: options.changedThreshold });
+    diff = diffLuminance(before.image, during.image, {
+      threshold: options.changedThreshold,
+      clipLevel: options.clipLevel,
+    });
   } catch (error) {
     context.failures.push({
       kind: 'drag-mask',
@@ -2296,6 +3130,10 @@ async function runDragSequence(client, sessionId, options, context, size) {
     meanDelta: diff.meanDelta,
     maxDelta: diff.maxDelta,
     threshold: diff.threshold,
+    coveragePercent: diff.coverageFraction * 100,
+    densityPercent: diff.densityInsideBounds * 100,
+    clippedPercent: diff.clippedFraction.after * 100,
+    clipsLevel: diff.clipLevel,
   };
   context.dragReports.push(report);
 
@@ -2305,11 +3143,28 @@ async function runDragSequence(client, sessionId, options, context, size) {
   console.log(
     `  drag delta ${size.label}: ${diff.changedPercent.toFixed(3)}% of pixels changed (${diff.changed.toLocaleString('en-US')} px above ${diff.threshold}/255), mean delta ${diff.meanDelta.toFixed(2)} inside the changed region, max ${diff.maxDelta}/255`,
   );
+  console.log(
+    `  drag bounds ${size.label}: changed pixels span ${(diff.coverageFraction * 100).toFixed(1)}% of the frame at ${(diff.densityInsideBounds * 100).toFixed(2)}% density; clipped ${(diff.clippedFraction.before * 100).toFixed(3)}% before -> ${(diff.clippedFraction.after * 100).toFixed(3)}% during at >= ${diff.clipLevel}/255`,
+  );
 
-  if (diff.changedPercent < options.changedMinPercent) {
+  // The dynamic frame's own verdict. `too-little-change` is the existing
+  // `changed-min` gate under its own failure kind, so a run that fails it reads
+  // the same way it always did.
+  const dynamicFindings = evaluateDynamicFrame({
+    diff,
+    options: {
+      changedMinPercent: options.changedMinPercent,
+      maxCoverage: options.dragMaxCoverage,
+      minDensity: options.dragMinDensity,
+      clipCeiling: options.dragClipCeiling,
+      clipTolerance: options.dragClipTolerance,
+    },
+  });
+
+  for (const finding of dynamicFindings) {
     context.failures.push({
-      kind: 'drag-not-visible',
-      text: `${size.label}: the drag moved ${diff.changedPercent.toFixed(3)}% of pixels (${diff.changed} px), below the ${options.changedMinPercent}% floor. ${before.record.name} and ${during.record.name} are the same picture, so neither is evidence of a drag.`,
+      kind: finding.code === 'too-little-change' ? 'drag-not-visible' : `drag-${finding.code}`,
+      text: `${size.label}: ${finding.text}. ${before.record.name} and ${during.record.name} are the pair this was measured from.`,
     });
   }
 }
@@ -2381,14 +3236,47 @@ function printHelp() {
     '  --drag                  Run the drag sequence per size and write four files:',
     '                          drag-before, drag-during (button held), drag-after, and',
     '                          drag-mask (absolute luminance difference, before vs during).',
-    '                          Fails with drag-not-visible below --changed-min percent.',
+    '                          before/after are waited for as resting states; during is',
+    '                          judged as a moving frame. Fails with drag-not-visible below',
+    '                          --changed-min percent.',
     '  --drag-steps <n>        mouseMoved events along the drag path. Default 12',
+    '  --drag-duration-ms <ms>  Spread the drag path over this wall-clock duration, so a',
+    '                          sustained gesture can be captured (e.g. 5000 for a five',
+    '                          second drag). Default 0 = 24 ms between moves',
     '  --park <x,y>            Where the pointer is parked. Percentages allowed. Default 50%,94%',
     '  --changed-threshold <n> Delta above which a pixel counts as changed. Default 8 (of 255)',
     '  --changed-min <pct>     Minimum changed-pixel percentage for a visible drag. Default 0.3',
+    '  --clip-level <n>        Luminance at or above which a pixel counts as clipped. Default 250',
+    '  --drag-max-coverage <0..1>  Largest share of the frame the drag frame may change,',
+    '                          measured as its changed pixels\' bounding box. Default 0.85',
+    '  --drag-min-density <0..1>   Smallest share of that box the changed pixels must fill.',
+    '                          Default 0.02. Catches noise scattered over the whole frame',
+    '  --drag-clip-ceiling <0..1>  Share of the during frame allowed at the clip level.',
+    '                          Default 0.05',
+    '  --drag-clip-tolerance <0..1>  How far the clipped share may rise during the drag.',
+    '                          Default 0.02',
     '',
     'Capture flags:',
     '  --reduced-motion        Emulate prefers-reduced-motion: reduce before navigation',
+    '  --reduced-motion-toggle Capture the preference applied *after* load, then withdrawn',
+    '                          again: it must stop the scene, restart it, and must not',
+    '                          replay the entry (fails with reduced-motion-entry-replay)',
+    '  --reentry-max <pct>     How much of the frame the preference toggle may change.',
+    '                          Default 25',
+    '  --fail-webgpu-init      Advertise WebGPU to the capability probe but make the',
+    '                          device request reject, so the renderer itself fails and',
+    '                          the WebGL2 fallback has to rebuild the canvas. The other',
+    '                          fallback (no WebGPU at all) is what --backend webgl2 does',
+    '  --measure-startup       Report the main thread\'s long tasks from navigation to',
+    '                          readiness: how long the page blocked, and on what',
+    '  --interactions          Drive hover, focus and Escape on a region label, in that',
+    '                          order, and write hover-<domain>, focus-<domain> and escape',
+    '                          frames. Each state is read back out of the DOM before its',
+    '                          frame is written, and a state that did not arrive is a',
+    '                          failure — a hover that never landed and a hover that worked',
+    '                          are the same picture',
+    '  --domain <id>           Region the interaction stages drive: ai, graphics,',
+    '                          game-analysis, systems or research. Default graphics',
     '  --text-hidden           Hide the masthead, status caption and boot overlay so the',
     '                          frame can be judged as an image. Applied to every capture.',
     '',
@@ -2449,10 +3337,13 @@ function printPlan(plan, options, browserPath) {
   console.log(
     `  reverse       : ${options.reverse ? `${plan.reverseSteps.map((step) => `${step}%`).join(', ')} (walking back to 0)` : 'off'}`,
   );
-  console.log(`  drag          : ${options.drag ? `on, ${options.dragSteps} moves, floor ${options.changedMinPercent}% changed pixels` : 'off'}`);
+  console.log(`  drag          : ${options.drag ? `on, ${options.dragSteps} moves${options.dragDurationMs > 0 ? ` over ${options.dragDurationMs} ms` : ''}, floor ${options.changedMinPercent}% changed pixels, coverage <= ${options.dragMaxCoverage}, density >= ${options.dragMinDensity}, clip <= ${options.dragClipCeiling} at >= ${options.clipLevel}/255` : 'off'}`);
   console.log(`  thumbnail     : ${options.thumb ? options.thumb.label : 'none'}`);
   console.log(`  text hidden   : ${options.textHidden ? 'yes (masthead, status, boot overlay)' : 'no'}`);
   console.log(`  reduced motion: ${options.reducedMotion ? 'yes (prefers-reduced-motion: reduce)' : 'no'}`);
+  console.log(`  motion toggle : ${options.reducedMotionToggle ? `on after idle, ceiling ${options.reentryMaxPercent}% frame change` : 'off'}`);
+  console.log(`  interactions  : ${options.interactions ? `hover -> focus -> Escape on "${options.domain}"` : 'off'}`);
+  console.log(`  webgpu forced failure: ${options.failWebGpuInit ? 'yes (adapter advertised, device request rejected)' : 'no'}`);
   console.log(`  settle        : ${options.settleMs} ms, stable frames ${options.stableFrames}, threshold ${options.stabilityThreshold}`);
   console.log(`  readiness     : ${options.readyTimeoutMs} ms, stability ${options.stabilityTimeoutMs} ms, min mean ${options.minMean}`);
   console.log('');
@@ -2620,6 +3511,7 @@ async function runCapture(options) {
     failures: [],
     scrollReports: [],
     dragReports: [],
+    interactions: [],
     backendLabel: () => reportedBackend ?? options.backend,
   };
   const { captures, failures } = context;
@@ -2644,6 +3536,17 @@ async function runCapture(options) {
     // A WebGL2 run has to actually reach the fallback, not merely request it.
     if (options.backend === 'webgl2') {
       await hideWebGpu(browser.client, sessionId);
+    }
+
+    // And the *other* fallback — a WebGPU attempt that built a renderer and then
+    // failed — is injected on top of that, so it is the probe that says "WebGPU
+    // is available" and the app's own renderer that then refuses.
+    if (options.failWebGpuInit) {
+      await failWebGpuInitialization(browser.client, sessionId);
+    }
+
+    if (options.measureStartup) {
+      await observeStartup(browser.client, sessionId);
     }
 
     await applyViewport(browser.client, sessionId, plan.sizes[0]);
@@ -2727,6 +3630,15 @@ async function runCapture(options) {
       await delay(options.settleMs);
     }
 
+    if (options.measureStartup) {
+      const measurement = await evaluate(
+        browser.client,
+        sessionId,
+        STARTUP_EXPRESSION,
+      ).catch((error) => ({ available: false, reason: error.message }));
+      reportStartup(measurement);
+    }
+
     for (const size of plan.sizes) {
       console.log('');
       console.log(`--- ${size.label} ---`);
@@ -2778,6 +3690,17 @@ async function runCapture(options) {
         }
       } else if (!idle.ok) {
         console.log(`  SKIPPED thumbnail for ${size.label}: the idle frame was not captured`);
+      }
+
+      if (options.reducedMotionToggle && idle.ok && idle.image) {
+        await runReducedMotionProbe(browser.client, sessionId, options, context, {
+          size,
+          idle,
+        });
+      }
+
+      if (options.interactions) {
+        await runInteractionSequence(browser.client, sessionId, options, context, size);
       }
 
       // (2) scroll keyframes.

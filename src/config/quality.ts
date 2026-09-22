@@ -1,15 +1,33 @@
 import type { QualityProfile, QualitySettings } from '@/renderer/types';
 
 /**
- * The four tiers, from the reconstruction spec's degradation table.
+ * The four tiers.
  *
- * ULTRA is the art target and the only tier with the full route: volumetric fog,
- * temporal trails and screen-space distortion all cost a pass each, and the brief
- * is explicit that WebGPU is the target rather than a ceiling to design under. So
- * the decision of what ULTRA may spend is made on the picture, and the *other*
- * tiers are derived by removing whole effects rather than by turning everything
- * down — which is what keeps SAFE an art-directed simplification instead of a
- * dimmer copy of the same frame.
+ * ## What a tier may change, after the audit
+ *
+ * Every number below drives something. That was not true before this pass, and
+ * the table carried five settings whose per-tier values were fiction:
+ * `graphDensity`, `membraneRegions`, `allowVolumetricFog`, `allowTrails` and
+ * `allowBloom`. None of them had a reader anywhere in `src`, `scripts` or
+ * `tests` — no volumetric pass, no trail pass, no bloom pass, no membrane
+ * region count and no graph-density multiplier exists in this composition. They
+ * were removed rather than kept pending, because a switch that reads as live and
+ * is not is a standing invitation to change a picture that has been approved;
+ * `allowBloom` in particular was the sole reason the frame counters' meaning
+ * depended on the tier, and that is the telemetry defect this pass fixed.
+ * `QualitySettings` carries the audit.
+ *
+ * What is left is a resolution-and-detail ladder: `pixelRatioScale` and `maxDpr`
+ * (one reader, `deriveEffectiveDpr`), `terrainDetail` (the descriptor, and
+ * through it the ink density and the world surface) and `particleBudget` (read
+ * once, as the telemetry's *configured* budget, never as a measured count).
+ *
+ * ## Why the ladder is shaped the way it is
+ *
+ * ULTRA is the art target and the only tier at full detail. The *other* tiers are
+ * derived by removing whole counts rather than by turning everything down — which
+ * is what keeps SAFE an art-directed simplification instead of a dimmer copy of
+ * the same frame.
  *
  * SAFE must still show the silhouette, the basin, at least one river and the
  * region transformation. It must not degrade into boxes and points: `terrainDetail`
@@ -21,46 +39,26 @@ export const QUALITY_PROFILES: Readonly<Record<QualityProfile, QualitySettings>>
   ultra: {
     particleBudget: 320_000,
     maxDpr: 2,
-    allowBloom: true,
-    graphDensity: 1,
     pixelRatioScale: 1,
     terrainDetail: 1,
-    membraneRegions: 5,
-    allowVolumetricFog: true,
-    allowTrails: true,
   },
   high: {
     particleBudget: 180_000,
     maxDpr: 1.75,
-    allowBloom: true,
-    graphDensity: 0.85,
     pixelRatioScale: 0.9,
     terrainDetail: 0.8,
-    membraneRegions: 5,
-    allowVolumetricFog: false,
-    allowTrails: false,
   },
   medium: {
     particleBudget: 64_000,
     maxDpr: 1.5,
-    allowBloom: false,
-    graphDensity: 0.65,
     pixelRatioScale: 0.78,
     terrainDetail: 0.55,
-    membraneRegions: 1,
-    allowVolumetricFog: false,
-    allowTrails: false,
   },
   safe: {
     particleBudget: 14_000,
     maxDpr: 1,
-    allowBloom: false,
-    graphDensity: 0.4,
     pixelRatioScale: 0.62,
     terrainDetail: 0.28,
-    membraneRegions: 0,
-    allowVolumetricFog: false,
-    allowTrails: false,
   },
 };
 

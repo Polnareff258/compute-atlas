@@ -9,11 +9,12 @@ import { createInitialBootState } from '../boot/bootMachine';
 import type { BootState } from '../boot/types';
 import type { CommandBus } from '../commands/bus';
 import { deriveEffectiveDpr, getQualityProfile } from '../config/quality';
-import { createBrowserCapabilityProbe } from './capability';
+import { createBrowserCapabilityProbe, resolveInkTargetFormat } from './capability';
 import {
   createCanvasRendererAdapters,
   type CanvasRenderer,
 } from './canvasAdapters';
+import { createCanvasSurface } from './canvasSurface';
 import {
   createRendererRuntime,
   type RendererRuntimeState,
@@ -56,15 +57,15 @@ export function RendererHost() {
   const coordinatorRef = useRef<ReturnType<typeof createBootCoordinator> | null>(
     null,
   );
-const commandBusRef = useRef<CommandBus | null>(null);
-/**
- * The label layer's imperative handle.
- *
- * A ref holding an object with an `update` method rather than a ref to the layer's DOM,
- * so the frame loop cannot reach into the overlay's structure. The scene publishes
- * positions; only the layer knows what its nodes are called.
- */
-const domainLabelRef = useRef<DomainLabelHandle | null>(null);
+  const commandBusRef = useRef<CommandBus | null>(null);
+  /**
+   * The label layer's imperative handle.
+   *
+   * A ref holding an object with an `update` method rather than a ref to the layer's DOM,
+   * so the frame loop cannot reach into the overlay's structure. The scene publishes
+   * positions; only the layer knows what its nodes are called.
+   */
+  const domainLabelRef = useRef<DomainLabelHandle | null>(null);
   const latestTelemetryRef = useRef<RendererTelemetrySnapshot | null>(null);
   const lastTelemetryLogRef = useRef(0);
   const [runtimeState, setRuntimeState] = useState(INITIAL_RUNTIME_STATE);
@@ -97,10 +98,18 @@ const domainLabelRef = useRef<DomainLabelHandle | null>(null);
       return undefined;
     }
 
+    // The canvas is not assumed to survive startup.
+    //
+    // A failed WebGPU attempt can leave the element it was handed fixed to the
+    // `webgpu` context type, and a WebGL2 fallback cannot then have it — so the
+    // adapters may replace it, in place, before anything is rendered into it.
+    // Everything downstream that needs an element therefore asks this surface
+    // rather than holding the one React rendered. See `canvasSurface`.
+    const surface = createCanvasSurface(canvas);
     const rendererRef: { current: CanvasRenderer | null } = { current: null };
     const runtime = createRendererRuntime({
       capabilityProbe: createBrowserCapabilityProbe(),
-      adapters: createCanvasRendererAdapters(canvas, rendererRef),
+      adapters: createCanvasRendererAdapters(surface, rendererRef),
       initialQuality: 'ultra',
     });
     let root: ReconcilerRoot<HTMLCanvasElement> | null = null;
@@ -117,6 +126,20 @@ const domainLabelRef = useRef<DomainLabelHandle | null>(null);
           quality={nextState.quality}
           backend={nextState.backend}
           reducedMotion={prefersReducedMotionRef.current}
+          /*
+           * The render target the ink field may allocate, decided from the
+           * capability probe rather than from the backend's name. WebGPU always
+           * has renderable half float; WebGL2 has it only when the context
+           * proved an `RGBA16F` framebuffer complete, and on a context that
+           * could not, the field allocates `RGBA8` instead of drawing a black
+           * canvas nobody can explain. `rgba8` is also the answer when there is
+           * no report at all, which is the safe direction to be wrong in.
+           */
+          inkTargetFormat={
+            nextState.capability === null
+              ? 'rgba8'
+              : resolveInkTargetFormat(nextState.backend, nextState.capability)
+          }
           onTelemetry={handleTelemetry}
           onDomainLabels={(entries) => {
             domainLabelRef.current?.update(entries);
@@ -170,7 +193,9 @@ const domainLabelRef = useRef<DomainLabelHandle | null>(null);
     let containerObserver: ResizeObserver | null = null;
 
     const observeContainerSize = (): void => {
-      const host = canvas.parentElement;
+      // The live canvas, not the one captured above: if the fallback rebuilt the
+      // element, the captured one is detached and has no parent to observe.
+      const host = surface.canvas.parentElement;
       if (host === null || typeof ResizeObserver === 'undefined') {
         return;
       }
@@ -213,7 +238,34 @@ const domainLabelRef = useRef<DomainLabelHandle | null>(null);
           throw new Error('Renderer initialized without a canvas handle');
         }
 
-        root = createRoot(canvas);
+        /*
+         * `surface.canvas`, not the element captured above. If the WebGPU
+         * attempt claimed the original, the fallback built a replacement and put
+         * it where the original was; a root created on the captured element
+         * would mount the scene into a canvas that is no longer in the document,
+         * which renders perfectly and shows nothing.
+         *
+         * ## Why `THREE.Clock` is not replaced with `THREE.Timer` here
+         *
+         * Three r183 deprecated `Clock` (`three.core.js` warns
+         * `Clock: This module has been deprecated. Please use THREE.Timer instead.`)
+         * and this app's console carries that line on every load. It cannot be
+         * fixed from this repository. The only `Clock` the app constructs is the
+         * one inside React Three Fiber's own store factory
+         * (`@react-three/fiber` → `clock: new THREE.Clock()` in `createStore`),
+         * built as part of `createRoot(canvas).configure(...)` below — the line
+         * right after this comment. R3F exposes no seam for it: no `clock` root
+         * option, and the store writes `state.clock.oldTime` in
+         * `frameloop: 'never'` mode, a field `Timer` does not have. So a swap
+         * would mean either a vendored patch of the dependency or a
+         * monkey-patch of `THREE.Clock` before the store is built, and both
+         * change a contract this app does not own in exchange for one warning.
+         *
+         * Recorded rather than silenced. Filtering it through `setConsoleFunction`
+         * would work and is the wrong trade: a global console hook that drops
+         * recognisable three warnings also drops the next one worth reading.
+         */
+        root = createRoot(surface.canvas);
         await root.configure({
           // R3F otherwise installs ACES filmic tone mapping, whose shadow toe
           // returns about an eighth of its input below mid-grey. The machine
@@ -312,6 +364,15 @@ const domainLabelRef = useRef<DomainLabelHandle | null>(null);
       sceneStore = null;
       renderSceneRef.current = null;
       root?.unmount();
+      // React still holds the element it rendered, and `root.unmount()` above
+      // detaches that one. When the fallback rebuilt the canvas, the element in
+      // the document is a different node that React has never seen, so nothing
+      // in its unmount path removes it — and a canvas left behind is a
+      // drawing-context and its buffers left behind with it.
+      const liveCanvas = surface.canvas;
+      if (liveCanvas !== canvas) {
+        liveCanvas.parentNode?.removeChild(liveCanvas);
+      }
       runtime.stop();
     };
   }, [handleTelemetry]);
@@ -333,7 +394,18 @@ const domainLabelRef = useRef<DomainLabelHandle | null>(null);
         read, below the masthead so a region passing under the product name does not fight it
         for the same pixels.
       */}
-      <DomainLabels handleRef={domainLabelRef} />
+      <DomainLabels
+        handleRef={domainLabelRef}
+        onHover={(nodeId) => {
+          commandBusRef.current?.dispatch({ type: 'HOVER_NODE', source: 'pointer', nodeId });
+        }}
+        onLeave={(nodeId) => {
+          commandBusRef.current?.dispatch({ type: 'CLEAR_HOVER', source: 'pointer', nodeId });
+        }}
+        onSelect={(nodeId) => {
+          commandBusRef.current?.dispatch({ type: 'FOCUS_NODE', source: 'pointer', nodeId });
+        }}
+      />
       <SystemMasthead />
       <RendererStatus state={runtimeState} />
       <BootExperience

@@ -1,4 +1,4 @@
-import { MeshBasicNodeMaterial } from 'three/webgpu';
+import { AdditiveBlending, DoubleSide, MeshBasicNodeMaterial } from 'three/webgpu';
 import {
   cameraPosition,
   clamp,
@@ -15,6 +15,7 @@ import {
 
 import type { FieldUniforms } from '../field/fieldUniforms';
 import type { InkField } from './inkField';
+import { RIPPLE_PROFILE } from './rippleProfile';
 
 /**
  * The hero material: an advected ink-density field, shaded.
@@ -76,8 +77,8 @@ import type { InkField } from './inkField';
  * beside it is high, and a world where they were equal would be a world of ripples
  * with no course.
  */
-const SCOUR_DEPTH = 26;
-const SETTLE_HEIGHT = 17;
+const SCOUR_DEPTH = 5.2;
+const SETTLE_HEIGHT = 3.4;
 
 /**
  * The relief that rides on the body itself.
@@ -88,7 +89,7 @@ const SETTLE_HEIGHT = 17;
  * largest area is its flattest, which is the exact failure the previous stage's
  * own review brief named as its main remaining risk.
  */
-const BODY_RELIEF = 9.5;
+const BODY_RELIEF = 1.6;
 
 /**
  * The primary-core band.
@@ -109,9 +110,9 @@ const PRIMARY_CORE_INNER = 0.84;
 const PRIMARY_CORE_OUTER = 0.95;
 
 /** The bedding: how many layers along the course, and how fast they travel. */
-const BEDDING_COUNT = 46;
-const BEDDING_SHEAR = 9.0;
-const BEDDING_RATE = 0.062;
+const BEDDING_COUNT = 19;
+const BEDDING_SHEAR = 5.4;
+const BEDDING_RATE = 0.038;
 
 /**
  * How strongly the bedding shows, and how much of it is colour versus shading.
@@ -124,8 +125,8 @@ const BEDDING_RATE = 0.062;
  * corrugation. The brief's "directional bedding expressed through slow shear,
  * width variation and layer displacement" is both at once.
  */
-const BEDDING_COLOUR = 0.34;
-const BEDDING_SHADE = 0.30;
+const BEDDING_COLOUR = 0.30;
+const BEDDING_SHADE = 0.28;
 
 /**
  * The pale-pink deposition and the violet cut, as gains on the settle and scour
@@ -139,9 +140,6 @@ const BEDDING_SHADE = 0.30;
  */
 const SETTLE_GAIN = 1.25;
 const SCOUR_GAIN = 0.95;
-
-/** How far the surface is pushed by the pointer's pressure channel, in world units. */
-const PRESSURE_LIFT = 7.5;
 
 /**
  * Distance over which the surface gives up its detail, and how much survives.
@@ -187,14 +185,24 @@ export function createInkMaterial(
   const material = new MeshBasicNodeMaterial();
 
   material.vertexColors = false;
-  // Opaque. The negative space in this composition is *black surface* rather than
-  // absence of surface, and that is a decision worth stating: a transparent corridor
-  // would have to be sorted against the bed and the basin every frame, and the
-  // sorting is what produces a visible seam where two alpha-tested sheets cross.
-  // A surface whose colour goes to ink at the edges has no seam because there is
-  // nothing to blend.
-  material.transparent = false;
-  material.depthWrite = true;
+  /*
+   * This used to be opaque because the scene contained several independently generated
+   * corridor and basin meshes. That topology is gone: there is now one hero surface and one
+   * atmospheric veil, with explicit render order. Keeping the obsolete opaque treatment made
+   * the grid's rectangular extent the largest shape in every frame, regardless of what the
+   * density field was doing.
+   *
+   * The surface now blends out through a field-derived coverage below. Depth writing is off so
+   * fragments whose ink has dispersed cannot occlude the veil or the background. There is no
+   * transparent-surface intersection to sort any more, so the old seam risk no longer exists.
+   */
+  material.transparent = true;
+  material.depthWrite = false;
+  // Direct manipulation can briefly fold the density sheet past a grazing view.
+  // It is a membrane, not solid terrain: culling its reverse face creates a black
+  // portal-shaped hole exactly where the visitor expects a continuous ripple.
+  material.side = DoubleSide;
+  material.toneMapped = false;
 
   // The world UV. `inkSurface` writes the world XZ normalised to the field's extent
   // into the mesh's uv attribute, so every sample below is a world sample and no
@@ -214,6 +222,103 @@ export function createInkMaterial(
   const fluvial = texture(ink.fluvialTexture, coord);
   const speed = fluvial.z;
   const seedNoise = fluvial.w;
+  const flowTangent = fluvial.xy;
+  const flowNormal = vec2(flowTangent.y.negate(), flowTangent.x);
+  const routePresence = smoothstep(float(0.025), float(0.72), speed);
+
+  /*
+   * Optical density, not decorative grain. These folds are evaluated before the
+   * colour ramps because they decide where suspended pigment actually exists. A
+   * uniform high-density corridor is a ribbon regardless of how softly it is
+   * shaded; multiplying the density by two coherent scales creates transparent
+   * pockets, heavy blooms and torn margins inside that same course.
+   */
+  const inkFold = mx_fractal_noise_float(
+    vec3(positionLocal.x, positionLocal.z, u.uFlowPhase.mul(0.045)).mul(0.0052),
+    3,
+    2.0,
+    0.52,
+  )
+    .mul(0.5)
+    .add(0.5);
+  const edgeNoise = mx_fractal_noise_float(
+    vec3(positionLocal.x, positionLocal.z, u.uFlowPhase.mul(0.018)).mul(0.013),
+    4,
+    2.08,
+    0.54,
+  )
+    .mul(0.5)
+    .add(0.5);
+
+  /*
+   * The optical body is intentionally wider than the simulation body.
+   *
+   * A river advects along a narrow numerical corridor so the state stays stable. Rendering that
+   * exact sample made the computation look like a ribbon mesh. These four broad taps are the
+   * suspended pigment around that corridor: the simulation remains precise, while its visible
+   * medium diffuses laterally like ink in water. The centre sample keeps the shape coherent and
+   * the neighbours soften it without inventing a second route.
+   */
+  const innerTap = float(0.018);
+  const outerTap = float(0.058);
+  const tangentTap = float(0.022);
+  /*
+   * The wash must not be a Gaussian blur of the route. Symmetric taps preserve the
+   * corridor's silhouette exactly, so even a very soft result still reads as a tube.
+   * This slowly varying bias gives each reach a windward and a lee side. The taps
+   * remain samples of the same advected field, but their reach and contribution are
+   * deliberately unequal: pigment blooms into shelves and then thins back into the
+   * course instead of producing two parallel banks.
+   */
+  const plumeBias = along
+    .mul(8.5)
+    .add(seedNoise.mul(5.8))
+    .sub(u.uFlowPhase.mul(0.035))
+    .sin()
+    .mul(0.5)
+    .add(0.5);
+  const bodyInner = body
+    .mul(0.44)
+    .add(texture(ink.sampleTexture, coord.add(flowNormal.mul(innerTap))).x.mul(0.20))
+    .add(texture(ink.sampleTexture, coord.sub(flowNormal.mul(innerTap))).x.mul(0.20))
+    .add(texture(ink.sampleTexture, coord.add(flowTangent.mul(tangentTap))).x.mul(0.08))
+    .add(texture(ink.sampleTexture, coord.sub(flowTangent.mul(tangentTap))).x.mul(0.08));
+  const leftReach = outerTap.mul(plumeBias.mul(0.82).add(0.74));
+  const rightReach = outerTap.mul(plumeBias.oneMinus().mul(0.82).add(0.74));
+  const leftOuter = texture(
+    ink.sampleTexture,
+    coord.add(flowNormal.mul(leftReach)).add(flowTangent.mul(outerTap.mul(0.26))),
+  ).x;
+  const rightOuter = texture(
+    ink.sampleTexture,
+    coord.sub(flowNormal.mul(rightReach)).sub(flowTangent.mul(outerTap.mul(0.18))),
+  ).x;
+  const leftPlume = texture(
+    ink.sampleTexture,
+    coord
+      .add(flowNormal.mul(outerTap.mul(1.72)))
+      .sub(flowTangent.mul(outerTap.mul(0.34))),
+  ).x;
+  const rightPlume = texture(
+    ink.sampleTexture,
+    coord
+      .sub(flowNormal.mul(outerTap.mul(1.54)))
+      .add(flowTangent.mul(outerTap.mul(0.42))),
+  ).x;
+  const bodyMist = bodyInner
+    .mul(0.36)
+    .add(leftOuter.mul(plumeBias.mul(0.13).add(0.14)))
+    .add(rightOuter.mul(plumeBias.oneMinus().mul(0.13).add(0.14)))
+    .add(leftPlume.mul(plumeBias.mul(0.09).add(0.035)))
+    .add(rightPlume.mul(plumeBias.oneMinus().mul(0.09).add(0.035)))
+    .add(texture(ink.sampleTexture, coord.add(flowTangent.mul(outerTap.mul(0.78)))).x.mul(0.05))
+    .add(texture(ink.sampleTexture, coord.sub(flowTangent.mul(outerTap.mul(0.64)))).x.mul(0.04));
+  const opticalFold = inkFold
+    .mul(0.58)
+    .add(edgeNoise.mul(0.28))
+    .add(plumeBias.mul(0.14));
+  const opticalBody = bodyInner.mul(opticalFold.mul(0.92).add(0.12));
+  const opticalMist = bodyMist.mul(opticalFold.mul(1.08).add(0.06));
 
   /*
    * The primary river core, as a `0..1` mask.
@@ -237,6 +342,48 @@ export function createInkMaterial(
     float(PRIMARY_CORE_OUTER),
     speed,
   );
+
+  /*
+   * A soft support around the primary core.
+   *
+   * The static speed field is intentionally narrow enough to identify the primary route, but
+   * drawing that one sample directly produced a bright raster-width tube. Four neighbouring
+   * samples turn the same semantic route into an optical density: the centre remains precise,
+   * while its energy can disperse into the surrounding medium. Secondary routes stay excluded
+   * because every tap still uses the primary-only speed threshold.
+   */
+  const coreTap = float(0.012);
+  const primaryHalo = primaryCore
+    .add(
+      smoothstep(
+        float(PRIMARY_CORE_INNER),
+        float(PRIMARY_CORE_OUTER),
+        texture(ink.fluvialTexture, coord.add(vec2(coreTap, 0))).z,
+      ),
+    )
+    .add(
+      smoothstep(
+        float(PRIMARY_CORE_INNER),
+        float(PRIMARY_CORE_OUTER),
+        texture(ink.fluvialTexture, coord.sub(vec2(coreTap, 0))).z,
+      ),
+    )
+    .add(
+      smoothstep(
+        float(PRIMARY_CORE_INNER),
+        float(PRIMARY_CORE_OUTER),
+        texture(ink.fluvialTexture, coord.add(vec2(0, coreTap))).z,
+      ),
+    )
+    .add(
+      smoothstep(
+        float(PRIMARY_CORE_INNER),
+        float(PRIMARY_CORE_OUTER),
+        texture(ink.fluvialTexture, coord.sub(vec2(0, coreTap))).z,
+      ),
+    )
+    .div(5);
+  const primaryRim = primaryHalo.sub(primaryCore.mul(0.58)).clamp(0, 1);
 
   /**
    * The lateral coordinate.
@@ -285,6 +432,13 @@ export function createInkMaterial(
   const gradX = texture(ink.sampleTexture, coord.add(vec2(offset, 0))).x;
   const gradZ = texture(ink.sampleTexture, coord.add(vec2(0, offset))).x;
   const slopeRaw = vec2(gradX.sub(body), gradZ.sub(body)).div(offset);
+  const pressureGradX = texture(ink.sampleTexture, coord.add(vec2(offset, 0))).w;
+  const pressureGradZ = texture(ink.sampleTexture, coord.add(vec2(0, offset))).w;
+  const pressureEdge = smoothstep(
+    float(0.003),
+    float(0.07),
+    vec2(pressureGradX.sub(pressure), pressureGradZ.sub(pressure)).length(),
+  );
 
   /*
    * The gradient, normalised to a unit direction.
@@ -319,7 +473,7 @@ export function createInkMaterial(
   // which is below where most of the world now sits, so the pigment term was saturated over
   // the majority of the frame and contributed nothing but a wash. Full pigment is now
   // reached only near the top of the range, which leaves the term somewhere to *do*.
-  const pigment = smoothstep(float(0.06), float(0.92), body).mul(scrollPigment);
+  const pigment = smoothstep(float(0.035), float(0.84), opticalBody).mul(scrollPigment);
   /*
    * The wide layer *widens* with its weight rather than only brightening.
    *
@@ -331,7 +485,7 @@ export function createInkMaterial(
    * measured failure of the baseline.
    */
   const pigmentWideEdge = float(0.3).add(scrollPigment.mul(0.22));
-  const pigmentWide = smoothstep(float(0.0), pigmentWideEdge, body)
+  const pigmentWide = smoothstep(float(0.006), pigmentWideEdge, opticalMist)
     .mul(0.55)
     .mul(scrollPigment.mul(0.45).add(0.55));
 
@@ -353,16 +507,25 @@ export function createInkMaterial(
    * is spent only on the thalweg and the bedding's lit faces — a small area, which is
    * the only way a neutral reads as substance rather than as a photograph of metal.
    */
-  const baseColour = mix(
+  const pigmentColour = mix(
     mix(
-      mix(mix(u.uInk, u.uMidnight, pigmentWide), u.uGreyViolet, pigment.mul(0.35)),
-      u.uCobalt,
-      pigment.mul(0.5).add(pigmentWide.mul(0.35)).min(1),
+      mix(u.uInk, u.uHaze, pigmentWide.pow(0.72).mul(0.82)),
+      u.uDeep,
+      pigment.mul(0.48),
     ),
-    u.uBone,
-    smoothstep(float(0.82), float(1.0), pigment).mul(0.45),
+    u.uCobalt,
+    pigment.pow(1.38).mul(0.50).add(pigmentWide.mul(0.22)).min(1),
   );
-  const ambient = mix(u.uCobalt, u.uGreyViolet, pigment.mul(0.35));
+  // The primary course is a cut through luminous suspension, not a coloured road.
+  // Darkening its centre and reserving light for the displaced rims gives it depth
+  // without returning to a tube or a white spline.
+  const coreChannel = primaryCore.mul(pigment).pow(0.82);
+  const baseColour = mix(
+    mix(pigmentColour, u.uSpectral, routePresence.mul(0.055)),
+    u.uInk,
+    coreChannel.mul(0.18),
+  );
+  const ambient = mix(u.uDeep, u.uHaze, pigment.mul(0.64));
 
   // --- The 20% layer: bedding ------------------------------------------------
   //
@@ -383,6 +546,9 @@ export function createInkMaterial(
   // avoid.
   const beddingMask = smoothstep(float(0.10), float(0.52), body).mul(options.gain);
   const beddingTerm = bedding.mul(beddingMask).mul(scrollBedding);
+  const flowFilament = smoothstep(float(0.70), float(0.96), bedding)
+    .mul(beddingMask.pow(1.15))
+    .mul(scrollBedding);
 
   /*
    * Two hues alternating across the layers.
@@ -392,7 +558,7 @@ export function createInkMaterial(
    * gives the frame its `near-grey` share — the baseline measured 0.04%, which is a
    * picture with no neutral material anywhere in it.
    */
-  const bedColour = mix(u.uGreyViolet, u.uBone, bedding.pow(1.6));
+  const bedColour = mix(u.uGreyViolet, u.uSpectral, bedding.pow(1.8).mul(0.72));
   const withBedding = mix(
     baseColour,
     bedColour,
@@ -406,7 +572,7 @@ export function createInkMaterial(
   // spent, pink on the inside and violet-dark on the outside.
   const settleTerm = smoothstep(float(0.05), float(0.55), settle.mul(SETTLE_GAIN));
   const scourTerm = smoothstep(float(0.05), float(0.70), scour.mul(SCOUR_GAIN));
-  const coloured = mix(withBedding, u.uPalePink, settleTerm.mul(0.30).mul(options.gain)).mul(
+  const coloured = mix(withBedding, u.uPalePink, settleTerm.mul(0.14).mul(options.gain)).mul(
     float(1).sub(scourTerm.mul(0.34).mul(options.gain)),
   );
 
@@ -456,7 +622,10 @@ export function createInkMaterial(
     .mul(scrollGranules)
     .mul(0.55);
 
-  const pressureTerm = pressure.mul(0.85).mul(options.gain);
+  const pressureTerm = pressure
+    .mul(pressureEdge.pow(0.45))
+    .mul(0.58)
+    .mul(options.gain);
   // The crest keeps a floor rather than scaling to zero: a scroll that removed it
   // entirely would leave the decomposition with no subject, because the thalweg is the
   // only thing in the frame that says which way the water runs.
@@ -484,7 +653,33 @@ export function createInkMaterial(
   // floor keeps a surface turned fully away from the key readable as a shape rather
   // than as a hole, which is the same trade the previous composition's baked
   // orientation luminance made.
-  const shade = clamp(response.mul(0.5).add(0.75), 0.25, 1.25);
+  const shade = clamp(response.mul(0.10).add(0.86), 0.72, 0.98);
+
+  /*
+   * Low-frequency folds, evaluated on the GPU in world space.
+   *
+   * These are not decorative noise laid over the frame. They only modulate density that is
+   * already present and therefore travel with the same river, deposits and region bodies as the
+   * rest of the material. Their scale is deliberately much larger than a simulation texel: the
+   * result is the slow clouding and feathering of suspended ink, not grain.
+   */
+  const basinDistance = vec2(positionLocal.x, positionLocal.z)
+    .sub(vec2(u.uBasinCentre.x, u.uBasinCentre.z))
+    .length();
+  const basinAura = smoothstep(float(55), float(360), basinDistance)
+    .oneMinus()
+    .mul(body.pow(0.62));
+  const basinPhase = inkFold
+    .mul(0.72)
+    .add(edgeNoise.mul(0.28))
+    .add(seedNoise.mul(0.16));
+  const basinInterference = smoothstep(
+    float(0.63),
+    float(0.91),
+    basinPhase,
+  )
+    .mul(basinAura.pow(1.28))
+    .mul(scrollBedding.mul(0.6).add(0.4));
 
   /*
    * The bedding's shading contribution.
@@ -510,7 +705,7 @@ export function createInkMaterial(
   const pigmentGlow = pigment.pow(1.25).mul(u.uActivity.mul(0.35).add(0.30));
 
   /*
-   * The emission, as three named terms and their sum.
+   * The emission, as four named terms and their sum.
    *
    * **These are split out for the diagnostic, and the split has to be the only place the
    * formulas live.** The first version of the debug views re-typed the expressions instead of
@@ -525,22 +720,129 @@ export function createInkMaterial(
    * every view references them. A view may scale, mask or reinterpret a term; it may not restate
    * one.
    */
-  const pigmentEmission = pigmentGlow.mul(ambient).mul(0.3);
-  const sharpnessEmission = u.uBone.mul(sharpness.pow(1.35));
+  const pigmentEmission = pigmentGlow
+    .mul(ambient)
+    .mul(0.64)
+    .add(
+      mix(u.uDeep, u.uCobalt, inkFold.mul(0.46))
+        .mul(pigmentWide.pow(0.78))
+        .mul(inkFold.mul(0.24).add(0.18)),
+    )
+    .add(
+      mix(u.uDeep, u.uSpectral, bedding.pow(1.7))
+        .mul(beddingTerm.pow(1.35))
+        .mul(0.16),
+    )
+    .add(
+      mix(u.uCobalt, u.uSpectral, bedding)
+        .mul(flowFilament.pow(1.5))
+        .mul(routePresence.pow(0.72))
+        .mul(0.15),
+    )
+    .add(mix(u.uDeep, u.uHaze, inkFold).mul(basinAura).mul(0.16))
+    .add(
+      mix(u.uSpectral, u.uPalePink, inkFold.mul(0.18))
+        .mul(basinInterference)
+        .mul(0.26),
+    );
+
+  /*
+   * The primary route is a flow inside ink, not a self-luminous pipe.
+   *
+   * `coreDrift` never turns the route off; it only moves a restrained intensity envelope down
+   * its length. The wider halo carries cobalt/spectral energy continuously, while a much smaller
+   * inner response is allowed to approach bone for a moment. This keeps direction legible without
+   * breaking the route into beads or spending the frame's brightest value along its entire span.
+   */
+  const coreDrift = along
+    .mul(17)
+    .sub(u.uFlowPhase.mul(0.12))
+    .add(seedNoise.sub(0.5).mul(1.8))
+    .sin()
+    .mul(0.5)
+    .add(0.5);
+  const coreBreath = coreDrift.mul(0.24).add(0.76);
+  const coreGlint = smoothstep(float(0.72), float(0.98), coreDrift)
+    .mul(primaryCore.pow(1.8))
+    .mul(sharpness);
+  const sharpnessEmission = mix(u.uSpectral, u.uFlow, coreBreath.mul(0.58))
+    .mul(primaryRim.pow(0.72))
+    .mul(coreBreath)
+    .mul(0.14)
+    .add(mix(u.uFlow, u.uBone, float(0.12)).mul(coreGlint).mul(0.18));
   const settleEmission = u.uPalePink
-    .mul(settleTerm.mul(1.15))
+    .mul(settleTerm.mul(0.26))
     .mul(u.uActivity.mul(0.4).add(0.5));
+  const pressureWave = pressure
+    .mul(RIPPLE_PROFILE.phaseFrequency)
+    .sub(u.uFlowPhase.mul(RIPPLE_PROFILE.phaseRate))
+    .sin()
+    .mul(0.5)
+    .add(0.5);
+  const pressureEnvelope = smoothstep(float(0.008), float(0.34), pressure).pow(0.52);
+  // Break the pressure wave against the same granular tissue that shapes the river.
+  // A perfectly closed contour reads as a synthetic ring; this uneven mask leaves a
+  // calligraphic compression front with gaps, forks and softer trailing fragments.
+  const rippleTexture = edgeNoise.pow(1.7).mul(0.64).add(0.18);
+  const rippleCrest = smoothstep(
+    float(RIPPLE_PROFILE.crestStart),
+    float(RIPPLE_PROFILE.crestEnd),
+    pressureWave,
+  )
+    .mul(pressureEnvelope)
+    .mul(opticalFold.pow(1.35).mul(0.68).add(0.12))
+    .mul(rippleTexture);
+  const rippleRebound = smoothstep(
+    float(RIPPLE_PROFILE.reboundStart),
+    float(RIPPLE_PROFILE.reboundEnd),
+    pressureWave.oneMinus(),
+  )
+    .mul(pressureEnvelope.pow(1.18))
+    .mul(pressureEdge.mul(0.28).oneMinus())
+    .mul(opticalFold.mul(0.52).add(0.30))
+    .mul(rippleTexture.mul(0.72));
+  const leadingColour = mix(u.uFlow, u.uSpectral, float(RIPPLE_PROFILE.leadingHueMix));
+  const trailingColour = mix(
+    u.uCobalt,
+    u.uPalePink,
+    float(RIPPLE_PROFILE.trailingHueMix),
+  );
+  const interactionEmission = mix(u.uFlow, leadingColour, pressureEdge.mul(0.72))
+    .mul(pressure.pow(0.58))
+    .mul(pressureEdge.pow(0.65))
+    .mul(RIPPLE_PROFILE.edgeEmissionGain)
+    .add(leadingColour.mul(rippleCrest).mul(RIPPLE_PROFILE.chromaticGain))
+    .add(trailingColour.mul(rippleRebound).mul(RIPPLE_PROFILE.chromaticGain * 0.38))
+    .add(
+      mix(u.uDeep, leadingColour, float(RIPPLE_PROFILE.interiorHueMix))
+        .mul(pressure.pow(0.88))
+        .mul(opticalFold.mul(0.30).add(0.70))
+        .mul(RIPPLE_PROFILE.interiorGain),
+    );
 
-  const emission = pigmentEmission.add(sharpnessEmission).add(settleEmission);
+  const emission = pigmentEmission
+    .add(sharpnessEmission)
+    .add(settleEmission)
+    .add(interactionEmission);
 
-  const surface = coloured
+  const shadedSurface = coloured
     .mul(lit)
     // Granules *cut* as well as light: a deposit is broken material, so it should read as
     // interruption in the surface rather than as more brightness on top of it.
     .mul(float(1).sub(granuleTerm.mul(0.45)))
     .mul(options.gain)
+    .mul(2.28)
     .add(emission.mul(options.gain))
     .add(u.uBone.mul(granuleTerm).mul(0.18));
+  const surface = shadedSurface.add(
+    mix(u.uCobalt, leadingColour, float(0.72))
+      .mul(pressureEnvelope.pow(0.84))
+      // The broad membrane fill must remain continuous. Granular modulation is
+      // reserved for the wave crests; cutting the fill with it turns the dense
+      // brush centre into a black capsule against a bright rim.
+      .mul(opticalFold.mul(0.24).add(0.76))
+      .mul(RIPPLE_PROFILE.surfaceTintGain),
+  );
 
   // --- Depth -------------------------------------------------------------------
   //
@@ -558,6 +860,57 @@ export function createInkMaterial(
     // edges is what removes the negative space the whole composition is built on.
     .mul(0.86)
 .add(0.14);
+
+  /*
+   * Field coverage: the geometry remains one watertight grid, but only the part of that grid
+   * carrying computation is optically present. This is the missing distinction between a
+   * continuous simulation domain and a visible rectangular plate.
+   *
+   * The primary halo contributes enough coverage to keep the hero route continuous even where
+   * advection has made `body` temporarily thin. Everything else must earn opacity from body,
+   * erosion, deposition or live pressure. A UV feather is a final guard against exposing the
+   * finite simulation boundary when the camera sees the world's corners.
+   */
+  const fieldPresence = routePresence
+    .mul(0.055)
+    .add(opticalMist.mul(0.62))
+    .add(opticalBody.mul(0.035))
+    .add(settle.mul(0.045))
+    .add(scour.mul(0.035))
+    .add(primaryHalo.mul(0.025))
+    .add(basinAura.mul(0.065));
+  const erodedPresence = fieldPresence.add(edgeNoise.sub(0.5).mul(0.16));
+  const densityCoverage = smoothstep(float(0.018), float(0.86), erodedPresence).pow(1.08);
+  const cloudGate = smoothstep(
+    float(0.24),
+    float(0.78),
+    opticalFold.add(opticalMist.mul(0.12)),
+  );
+  const edgeDistance = coord.x
+    .min(coord.y)
+    .min(float(1).sub(coord.x))
+    .min(float(1).sub(coord.y));
+  const worldFeather = smoothstep(float(0), float(0.055), edgeDistance);
+  const ambientCoverage = densityCoverage
+    .mul(worldFeather)
+    .mul(depthFade.pow(0.35))
+    .mul(opticalFold.mul(0.82).add(0.16))
+    .mul(cloudGate.mul(0.78).add(0.22))
+    .mul(pigment.mul(0.12).add(0.78))
+    .clamp(0, 0.54);
+  /*
+   * Direct manipulation has its own optical presence. Previously pressure was
+   * added before the idle cloud gate and then multiplied by that gate, so a drag
+   * over dark water was simulated correctly but made optically invisible. The
+   * visitor's disturbance is allowed to reveal dormant field: it still comes from
+   * the same pressure channel, diffusion and decay, but it does not need authored
+   * pigment underneath it to exist on screen.
+   */
+  // Pressure never changes the base sheet's opacity. Ordinary alpha blending
+  // made its soft edge brighter than its centre and therefore drew a dark oval
+  // even when every pressure colour term was blue. The additive ripple material
+  // below owns the visitor response; this surface remains the river underneath.
+  const coverage = ambientCoverage;
 
   /*
    * The diagnostic views.
@@ -599,7 +952,15 @@ export function createInkMaterial(
   resolved = mix(resolved, vec3(depthFade), modeIs(9));
   // Referenced, never restated: see the note on the emission terms for what happened the first
   // time this was written out by hand.
-  resolved = mix(resolved, pigmentEmission.add(sharpnessEmission).mul(options.gain).mul(depthFade), modeIs(10));
+  resolved = mix(
+    resolved,
+    pigmentEmission
+      .add(sharpnessEmission)
+      .add(interactionEmission)
+      .mul(options.gain)
+      .mul(depthFade),
+    modeIs(10),
+  );
   resolved = mix(resolved, pigmentEmission.mul(options.gain).mul(depthFade), modeIs(11));
   resolved = mix(resolved, sharpnessEmission.mul(options.gain).mul(depthFade), modeIs(12));
 
@@ -615,6 +976,10 @@ export function createInkMaterial(
   resolved = mix(resolved, vec3(primaryCore).mul(depthFade), modeIs(13));
 
   material.colorNode = resolved;
+  // Diagnostic modes describe scalar fields over the complete simulation domain. They bypass
+  // the shipping coverage so an empty channel cannot become indistinguishable from no geometry.
+  const diagnostic = smoothstep(float(0.5), float(1), u.uDebugMode);
+  material.opacityNode = mix(coverage, float(1), diagnostic);
 
   // --- Displacement -------------------------------------------------------------
   //
@@ -623,6 +988,17 @@ export function createInkMaterial(
   // and the shading agree about the shape by construction — there is no second
   // height function for them to disagree about.
   const vertexAdvected = texture(ink.sampleTexture, coord);
+  const vertexPressure = vertexAdvected.w.min(1);
+  const vertexPressureEnvelope = smoothstep(float(0.008), float(0.34), vertexPressure).pow(0.62);
+  // Only the moving front displaces the sheet. Raising the complete pressure
+  // body makes a convex oval which occludes the river and reads as a portal.
+  const vertexPressureFront = vertexPressureEnvelope.mul(pressureEdge.pow(0.72));
+  const vertexElasticWave = vertexPressure
+    .mul(RIPPLE_PROFILE.phaseFrequency)
+    .sub(u.uFlowPhase.mul(RIPPLE_PROFILE.phaseRate))
+    .sin()
+    .mul(vertexPressureFront)
+    .mul(RIPPLE_PROFILE.reboundAmplitude);
   const vertexHeight = vertexAdvected.z
     .mul(SETTLE_HEIGHT)
     .sub(vertexAdvected.y.mul(SCOUR_DEPTH))
@@ -630,8 +1006,129 @@ export function createInkMaterial(
     // Capped at one, independently of the channel ceiling. The lift is the term that
     // produced visible spikes, and a spike is the kind of failure the eye finds instantly
     // while a merely-too-large value is one nobody notices until it is drawn.
-    .add(vertexAdvected.w.min(1).mul(PRESSURE_LIFT));
+    .add(vertexPressureFront.mul(RIPPLE_PROFILE.pressureLift))
+    .add(vertexElasticWave);
   material.positionNode = positionLocal.add(vec3(0, vertexHeight, 0));
+
+  return {
+    material,
+    dispose() {
+      material.dispose();
+    },
+  };
+}
+
+/**
+ * The direct-manipulation crest, separated from the river's alpha.
+ *
+ * Additive blending is a structural choice here: a pressure response may add a
+ * blue-violet compression front, but it can never write a black centre into the
+ * river. The main material still receives the advected body/scour/settle changes;
+ * this pass contributes only the thin optical event on top of that physical wake.
+ */
+export function createRippleMaterial(
+  uniforms: FieldUniforms,
+  ink: InkField,
+): InkMaterial {
+  const u = uniforms.uniforms;
+  const material = new MeshBasicNodeMaterial();
+  material.name = 'ink-ripple-front';
+  material.transparent = true;
+  material.depthWrite = false;
+  material.blending = AdditiveBlending;
+  material.side = DoubleSide;
+  material.toneMapped = false;
+
+  const coord = uv();
+  const advected = texture(ink.sampleTexture, coord);
+  const pressure = advected.w.min(1);
+  const offset = float(GRADIENT_EPSILON);
+  const pressureDx = texture(ink.sampleTexture, coord.add(vec2(offset, 0))).w.sub(pressure);
+  const pressureDz = texture(ink.sampleTexture, coord.add(vec2(0, offset))).w.sub(pressure);
+  const pressureGradient = vec2(pressureDx, pressureDz);
+  const pressureEdge = smoothstep(float(0.003), float(0.07), pressureGradient.length());
+  const envelope = smoothstep(float(0.008), float(0.34), pressure).pow(0.58);
+
+  const fluvial = texture(ink.fluvialTexture, coord);
+  const tangent = fluvial.xy;
+  const signedFront = pressureGradient.x.mul(tangent.x).add(pressureGradient.y.mul(tangent.y));
+  const leading = smoothstep(float(-0.018), float(0.045), signedFront)
+    .mul(0.78)
+    .add(0.22);
+  const torn = mx_fractal_noise_float(
+    vec3(positionLocal.x, positionLocal.z, u.uFlowPhase.mul(0.025)).mul(0.021),
+    3,
+    2.05,
+    0.52,
+  )
+    .mul(0.5)
+    .add(0.5)
+    .pow(1.35)
+    .mul(0.82)
+    .add(0.08);
+  const wave = pressure
+    .mul(RIPPLE_PROFILE.phaseFrequency)
+    .sub(u.uFlowPhase.mul(RIPPLE_PROFILE.phaseRate))
+    .sin()
+    .mul(0.5)
+    .add(0.5);
+  // The crest changes hue slowly along its length, like thin-film colour in a
+  // moving sheet. This is intentionally not another outline: it modulates one
+  // pressure front, so the gesture keeps a single calligraphic silhouette.
+  const spectralDrift = positionLocal.x
+    .mul(0.0105)
+    .sub(positionLocal.z.mul(0.0075))
+    .add(fluvial.w.mul(4.2))
+    .sub(u.uFlowPhase.mul(0.07))
+    .sin()
+    .mul(0.5)
+    .add(0.5);
+  const crest = smoothstep(
+    float(RIPPLE_PROFILE.crestStart),
+    float(RIPPLE_PROFILE.crestEnd),
+    wave,
+  )
+    .mul(envelope)
+    .mul(pressureEdge.pow(0.52))
+    .mul(leading)
+    .mul(torn);
+  const rebound = smoothstep(
+    float(RIPPLE_PROFILE.reboundStart),
+    float(RIPPLE_PROFILE.reboundEnd),
+    wave.oneMinus(),
+  )
+    .mul(envelope.pow(1.12))
+    .mul(pressureEdge.pow(0.72))
+    .mul(leading.oneMinus().mul(0.52).add(0.08))
+    .mul(torn);
+
+  const leadingHue = float(RIPPLE_PROFILE.leadingHueMix).add(
+    spectralDrift
+      .sub(0.5)
+      .mul(RIPPLE_PROFILE.spectralVariation),
+  );
+  const leadingColour = mix(u.uFlow, u.uSpectral, leadingHue);
+  const trailingColour = mix(
+    u.uCobalt,
+    u.uPalePink,
+    float(RIPPLE_PROFILE.trailingHueMix),
+  );
+  material.colorNode = leadingColour
+    .mul(crest)
+    .mul(1.15)
+    .add(trailingColour.mul(rebound).mul(RIPPLE_PROFILE.reboundGain));
+  material.opacityNode = crest
+    .mul(RIPPLE_PROFILE.coverageGain)
+    .add(rebound.mul(RIPPLE_PROFILE.coverageGain * RIPPLE_PROFILE.reboundGain))
+    .clamp(0, 0.32);
+
+  const height = advected.z
+    .mul(SETTLE_HEIGHT)
+    .sub(advected.y.mul(SCOUR_DEPTH))
+    .add(advected.x.pow(2).mul(BODY_RELIEF))
+    .add(crest.mul(0.12))
+    .add(0.32);
+  material.positionNode = positionLocal.add(vec3(0, height, 0));
 
   return {
     material,
@@ -681,17 +1178,31 @@ export function createVeilMaterial(
   const advected = texture(ink.sampleTexture, coord);
   const body = advected.x;
 
+  const veilTap = float(0.035);
+  const bodyMist = body
+    .mul(0.40)
+    .add(texture(ink.sampleTexture, coord.add(vec2(veilTap, 0))).x.mul(0.15))
+    .add(texture(ink.sampleTexture, coord.sub(vec2(veilTap, 0))).x.mul(0.15))
+    .add(texture(ink.sampleTexture, coord.add(vec2(0, veilTap))).x.mul(0.15))
+    .add(texture(ink.sampleTexture, coord.sub(vec2(0, veilTap))).x.mul(0.15));
+
   // The veil's own copy of the pigment ramp, narrower than the ground's and squared,
   // because the veil's whole risk is flooding the frame: at a wide ramp its opacity
   // floor reached everywhere the field was even slightly non-zero, which is most of
   // the picture, and the negative space the composition depends on disappeared under
   // a uniform wash.
-  const wash = smoothstep(float(0.10), float(0.92), body).pow(1.6);
+  const wash = smoothstep(float(0.035), float(0.72), bodyMist).pow(1.38);
   const colour = mix(
-    mix(u.uInk, u.uGreyViolet, wash.mul(0.40)),
-    u.uBone,
-    wash.mul(0.14),
+    mix(u.uDeep, u.uGreyViolet, wash.mul(0.22)),
+    u.uCobalt,
+    wash.mul(0.28),
   );
+
+  const edgeDistance = coord.x
+    .min(coord.y)
+    .min(float(1).sub(coord.x))
+    .min(float(1).sub(coord.y));
+  const worldFeather = smoothstep(float(0), float(0.075), edgeDistance);
 
   material.colorNode = colour.mul(options.gain);
   // Opacity is the wash itself, squared, so the veil is invisible over black ground
@@ -702,8 +1213,17 @@ export function createVeilMaterial(
   // Halved. The veil covers the entire world extent, so its gain is a statement about how
   // bright the *whole frame* is, not about a feature in it. At 0.42 it was doing what the
   // brief forbids by name: a uniform wash over everything.
-  material.opacityNode = wash.pow(1.7).mul(options.gain).mul(0.2);
-  material.positionNode = positionLocal.add(vec3(0, options.height, 0));
+  material.opacityNode = wash
+    .pow(1.9)
+    .mul(worldFeather)
+    .mul(options.gain)
+    .mul(0.10);
+  // A density-shaped height offset turns the veil into a suspended membrane rather than a
+  // parallel copy of the ground. It remains one expression of the same field and introduces no
+  // independent animation or geometry system.
+  material.positionNode = positionLocal.add(
+    vec3(0, bodyMist.pow(1.25).mul(18).add(options.height), 0),
+  );
 
   return {
     material,

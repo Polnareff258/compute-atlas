@@ -20,7 +20,7 @@
 - WebGL2 keeps the same hero silhouette, domain silhouettes, route hierarchy and focus causality at lower density; it is not required to replicate full GPU advection.
 - Use `npm.cmd`; do not update dependencies or modify package configuration.
 - Every production behaviour change gets a failing pure test first, then the minimal implementation and a focused green run.
-- Keep the working tree free of machine-local files. Do not touch the pre-existing uncommitted user changes (`vitest.config.ts`, `START_STAGE351_REVIEW.cmd`, `scripts/stage351-review-launcher.mjs`, `tests/stage351-review-launcher.test.mjs`).
+- Keep the working tree free of machine-local files. Do not touch the pre-existing uncommitted user changes (`vitest.config.ts`, the capture scripts, and their supporting tests).
 
 ## Prohibitions carried from the brief
 

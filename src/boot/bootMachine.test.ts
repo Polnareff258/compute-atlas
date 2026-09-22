@@ -14,6 +14,7 @@ const capability = {
   webgl2: true,
   preferredBackend: 'webgpu' as const,
   adapterName: 'Test Adapter',
+  webgl2HalfFloatTarget: true,
 };
 
 const renderer: BootRendererSnapshot = {

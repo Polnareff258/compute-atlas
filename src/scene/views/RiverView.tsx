@@ -5,7 +5,7 @@ import { BufferAttribute, BufferGeometry } from 'three';
 
 import type { FieldUniforms } from '../field/fieldUniforms';
 import type { InkField } from '../ink/inkField';
-import { createInkMaterial } from '../ink/inkMaterial';
+import { createInkMaterial, createRippleMaterial } from '../ink/inkMaterial';
 import { buildInkSurface } from '../ink/inkSurface';
 import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
 
@@ -50,7 +50,7 @@ export type RiverViewProps = {
  * The floor in `inkSurface` keeps the SAFE tier from dropping below the field's own spacing, so
  * the lowest tier is the same world through a coarser grid rather than a different construction.
  */
-const SURFACE_RESOLUTION = 768;
+const SURFACE_RESOLUTION = 1024;
 
 export function RiverView({ descriptor, uniforms, ink, detail }: RiverViewProps) {
   const geometry = useMemo(() => {
@@ -71,18 +71,27 @@ export function RiverView({ descriptor, uniforms, ink, detail }: RiverViewProps)
     return result;
   }, [descriptor, detail]);
 
-  const { material, dispose } = useMemo(
-    () => createInkMaterial(uniforms, ink, { gain: 1, hero: true }),
+  const materials = useMemo(
+    () => ({
+      surface: createInkMaterial(uniforms, ink, { gain: 1, hero: true }),
+      ripple: createRippleMaterial(uniforms, ink),
+    }),
     [uniforms, ink],
   );
 
   useEffect(
     () => () => {
       geometry.dispose();
-      dispose();
+      materials.surface.dispose();
+      materials.ripple.dispose();
     },
-    [geometry, dispose],
+    [geometry, materials],
   );
 
-  return <mesh geometry={geometry} material={material} />;
+  return (
+    <>
+      <mesh geometry={geometry} material={materials.surface.material} renderOrder={1} />
+      <mesh geometry={geometry} material={materials.ripple.material} renderOrder={3} />
+    </>
+  );
 }

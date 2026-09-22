@@ -12,6 +12,8 @@ import {
   vec4,
 } from 'three/tsl';
 
+import type { InkTargetFormat } from '../../renderer/capability';
+import { BRUSH_SHAPE } from './brushProfile';
 import type { InkDensity } from './inkDensity';
 
 /**
@@ -114,11 +116,98 @@ export type InkQuality = {
 export const INK_QUALITY: Readonly<
   Record<'ultra' | 'high' | 'medium' | 'safe', InkQuality>
 > = {
-  ultra: { simulationResolution: 512, diffusionScale: 1, carryErosion: true },
-  high: { simulationResolution: 384, diffusionScale: 1, carryErosion: true },
+  ultra: { simulationResolution: 1024, diffusionScale: 1, carryErosion: true },
+  high: { simulationResolution: 640, diffusionScale: 1, carryErosion: true },
   medium: { simulationResolution: 256, diffusionScale: 0.8, carryErosion: true },
   safe: { simulationResolution: 192, diffusionScale: 0.5, carryErosion: false },
 };
+
+/**
+ * How much simulated time the field is advanced through before its first
+ * displayed frame, and how big each of those steps is.
+ *
+ * ## The defect this closes
+ *
+ * The seed pass writes the authored bake into the simulation target — *writes*
+ * it, as the texture it is. Everything that makes the field a field rather than
+ * a texture happens on the steps after that: the semi-Lagrangian backtrace
+ * displaces the pigment along the world's own flow, the five-tap cross diffuses
+ * it, and the decay pulls it toward the river the descriptor authored. One seed
+ * pass produces the raw bake, and the raw bake has edges — the region membranes
+ * the density terms are built from and the polygon boundaries where one region's
+ * influence stops — that the simulation is what softens.
+ *
+ * That was survivable while the field was always running: a frame taken at any
+ * moment after the first few seconds showed the settled field, and the raw seed
+ * existed for one frame. It stopped being survivable when reduced motion arrived,
+ * because a frozen field *is* the first frame for ever. `SceneHost` passes a zero
+ * ambient delta, the advection step's `dt` becomes zero, and every term in the
+ * shader degenerates to an identity read: the diffusion mix weight is
+ * `diffusion · dt = 0`, so nothing spreads; the decay factor is `exp(0) = 1`, so
+ * nothing is pulled anywhere; and the backtrace offset is zero, so nothing moves.
+ * The preference therefore did not freeze the composition at a stable point, it
+ * froze the *seed* — the one state in the field's whole life that is a texture
+ * rather than a photograph of water, with the bake's own hard edges still in it.
+ *
+ * ## Why this is a pre-computation and not a longer fade
+ *
+ * The honest repair is to land on the state the field actually settles into,
+ * which is the fixed point of the integrator under a frozen clock — the same
+ * numbers the frozen frame will keep evaluating, run forward until they stop
+ * changing. So the steps below use the field's *own* pass, its own decay rates
+ * and its own velocity field, with the autonomous clock held at zero, which is
+ * exactly what the reduced-motion frame inherits afterwards. Nothing is
+ * recoloured and no rate is retuned; what changes is when the first frame is
+ * taken.
+ *
+ * ## The two figures
+ *
+ * `INK_SETTLE_SECONDS` is chosen against the decay, which is the slowest thing
+ * in the system: the body channel's rate is `BODY_DECAY` per second, so the
+ * field forgets where it started with a time constant of about 3.3 seconds and
+ * eight seconds is roughly two and a half of them. That leaves the seed's own
+ * contribution down in the low single-digit percent, which is below what a
+ * capture can see, while keeping the transport to something the flow field can
+ * carry coherently.
+ *
+ * `INK_SETTLE_STEP_SECONDS` is the largest step the shader's own clamp admits.
+ * Larger steps mean fewer of them, and the per-step cost is a fullscreen pass at
+ * the tier's simulation resolution, so this is the figure that decides what the
+ * pre-computation costs: at ULTRA that is 160 steps and 320 passes over a
+ * 1024-wide target, paid once per load, before the first frame. Going beyond the
+ * clamp would be a change to the simulation's stability envelope rather than to
+ * its schedule, and the sweep's explicit diffusion is only conditionally stable —
+ * a step the shader clamps anyway buys nothing but a lie about what was run.
+ *
+ * The same figures serve every tier, which is what keeps a tier a resolution
+ * ladder rather than a different physics: SAFE settles through the same 160
+ * steps of the same simulated time and simply pays a twentieth of the pixels for
+ * them.
+ */
+export const INK_SETTLE_SECONDS = 8;
+export const INK_SETTLE_STEP_SECONDS = 1 / 20;
+
+export type InkSettlementPlan = {
+  /** Fullscreen simulation steps run before the first displayed frame. */
+  readonly steps: number;
+  /** Seconds of simulated time each of them advances. */
+  readonly stepSeconds: number;
+  /** Total simulated seconds, so a caller can state the cost without arithmetic. */
+  readonly seconds: number;
+};
+
+/**
+ * The settlement schedule, as a value rather than as a loop bound.
+ *
+ * Pure and exported so that "how much simulated time does a load pay for" is
+ * assertable without a GPU, and so the frame-loop call site cannot quietly
+ * invent its own step size.
+ */
+export function planInkSettlement(): InkSettlementPlan {
+  const stepSeconds = INK_SETTLE_STEP_SECONDS;
+  const steps = Math.max(1, Math.round(INK_SETTLE_SECONDS / stepSeconds));
+  return { steps, stepSeconds, seconds: steps * stepSeconds };
+}
 
 /**
  * How fast the field is carried, in world units per second, at full river rate.
@@ -162,7 +251,7 @@ const PRESSURE_DECAY = 1.45;
 /** How hard pressure spreads laterally per second. This is the drag's soft boundary. */
 const PRESSURE_DIFFUSION = 5.2;
 /** How hard the density spreads. Much lower: ink keeps its shape. */
-const BODY_DIFFUSION = 0.9;
+const BODY_DIFFUSION = 3.2;
 
 /**
  * The brush's imprint shape: how long the ridge is along the drag relative to its
@@ -187,7 +276,7 @@ const BODY_DIFFUSION = 0.9;
 const BODY_INJECT_RATE = 0.24;
 const EROSION_INJECT_RATE = 0.05;
 const SETTLE_INJECT_RATE = 0.04;
-const PRESSURE_INJECT_RATE = 1.3;
+const PRESSURE_INJECT_RATE = 4.8;
 
 /**
  * The ceilings the simulated channels may reach.
@@ -200,9 +289,6 @@ const PRESSURE_INJECT_RATE = 1.3;
 const CHANNEL_MAX_BODY = 1.2;
 const CHANNEL_MAX_EROSION = 1.8;
 const CHANNEL_MAX_PRESSURE = 1;
-
-const BRUSH_DEPTH = 0.34;
-const BRUSH_BREADTH = 1.0;
 
 export type InkBrush = {
   /** World XZ of the pointer. */
@@ -220,6 +306,15 @@ export type InkFieldOptions = {
   readonly quality: InkQuality;
   /** World units the brush's imprint reaches. */
   readonly brushRadius: number;
+  /**
+   * What the two simulation targets are allocated in.
+   *
+   * Decided by the capability probe, not here, because whether an `RGBA16F`
+   * framebuffer is renderable is a property of the context — see
+   * `probeHalfFloatRenderTarget`. Defaults to half float, which is what WebGPU
+   * always gives and what every WebGL2 context in the capture matrix gave.
+   */
+  readonly targetFormat?: InkTargetFormat;
 };
 
 export type InkField = {
@@ -240,8 +335,15 @@ export type InkField = {
   readonly fluvialTexture: THREE.Texture;
   /** The world rectangle the field covers, for world-XZ to UV conversion. */
   readonly extent: InkDensity['extent'];
+  /** What the simulation targets are allocated in. A readout, not a knob. */
+  readonly targetFormat: InkTargetFormat;
   /** Advances one frame. Called from the frame loop, never from React. */
-  step(renderer: InkFieldRenderer, deltaSeconds: number, elapsedSeconds: number): void;
+  step(
+    renderer: InkFieldRenderer,
+    ambientDeltaSeconds: number,
+    elapsedSeconds: number,
+    interactionDeltaSeconds?: number,
+  ): void;
   /** Arms the brush. `null` releases it, which starts its own decay. */
   setBrush(brush: InkBrush | null): void;
   dispose(): void;
@@ -287,13 +389,28 @@ export function createInkField(options: InkFieldOptions): InkField {
   // `const`, because the field is immutable per tier: a quality change reconstructs
   // the whole field rather than resizing this one. See the module note.
   const quality = options.quality;
+  const targetFormat: InkTargetFormat = options.targetFormat ?? 'rgba16f';
   const makeTarget = (width: number, height: number) => {
     const target = new THREE.RenderTarget(width, height, {
-      // Half float rather than full: `RGBA32F` is renderable only with
+      // Half float rather than full by default: `RGBA32F` is renderable only with
       // `EXT_color_buffer_float`, whereas half float is renderable far more widely,
       // and three decimal digits against a `0`..`1` field is a thousand times the
       // resolution the decay rates above can express.
-      type: THREE.HalfFloatType,
+      //
+      // `rgba8` is the fallback the capability probe sends here when the context
+      // could not give a complete `RGBA16F` framebuffer, and it is chosen over
+      // the alternative of not simulating at all because the pressure channel is
+      // the *drag*, and a fallback that loses the page's only input is a worse
+      // picture than one with a coarser one. What it costs is stated rather than
+      // hidden: eight bits per channel, linear filtering, and a hard clamp at 1
+      // where the half-float target's channel ceilings run to 1.2 and 1.8 — so
+      // the eroded and deposited channels lose their overshoot and the field
+      // bands where the half-float one would not. It is still a rendered,
+      // diffusing, advecting field, which is the point: a target the context
+      // cannot produce would draw nothing at all, and nothing at all is
+      // indistinguishable from a broken page.
+      type:
+        targetFormat === 'rgba8' ? THREE.UnsignedByteType : THREE.HalfFloatType,
       format: THREE.RGBAFormat,
       colorSpace: THREE.NoColorSpace,
       minFilter: THREE.LinearFilter,
@@ -315,6 +432,7 @@ export function createInkField(options: InkFieldOptions): InkField {
   const uniforms = {
     uTime: uniform(0),
     uDelta: uniform(1 / 60),
+    uInteractionDelta: uniform(1 / 60),
     uSpanX: uniform(spanX),
     uSpanZ: uniform(spanZ),
     uMinX: uniform(density.extent.minX),
@@ -437,7 +555,7 @@ export function createInkField(options: InkFieldOptions): InkField {
        */
       const alongPhase = coord.y.mul(6.283).add(uniforms.uTime.mul(0.21));
       const swell = alongPhase.sin().mul(0.24).add(1);
-      const lateral = alongPhase.mul(1.7).add(float(1.9)).sin().mul(0.16);
+      const lateral = alongPhase.mul(1.7).add(float(1.9)).sin().mul(0.24);
 
       /*
        * A cross-channel component, which is what stops the advection being a pure
@@ -461,6 +579,7 @@ export function createInkField(options: InkFieldOptions): InkField {
        * world units at every extent and every simulation resolution.
        */
       const dt = uniforms.uDelta;
+      const interactionDt = uniforms.uInteractionDelta;
       const back = vec2(
         velocity.x.mul(dt).div(uniforms.uSpanX),
         velocity.y.mul(dt).div(uniforms.uSpanZ),
@@ -500,9 +619,19 @@ export function createInkField(options: InkFieldOptions): InkField {
         .negate()
         .add(offset.y.mul(uniforms.uBrushDir.x));
       const radius = uniforms.uBrushParams.z.max(float(1));
-      const depthTerm = depth.div(radius.mul(BRUSH_DEPTH)).pow(2).negate();
-      const breadthTerm = breadth.div(radius.mul(BRUSH_BREADTH)).pow(2).negate();
-      const ridge = exp(depthTerm.add(breadthTerm));
+      const normalisedBreadth = breadth.div(radius);
+      // Bow the stamp in the drag frame. A pure separable Gaussian is an ellipse,
+      // and an ellipse viewed at grazing angle becomes the black capsule that made
+      // the interaction read as a cursor decal. This quadratic offset turns the
+      // same continuous pressure into an open, direction-bearing crescent.
+      const bowedDepth = depth
+        .add(normalisedBreadth.pow(2).mul(radius).mul(BRUSH_SHAPE.bow))
+        .sub(normalisedBreadth.mul(radius).mul(BRUSH_SHAPE.skew));
+      const depthTerm = bowedDepth.div(radius.mul(BRUSH_SHAPE.depth)).pow(2).negate();
+      const breadthTerm = normalisedBreadth.div(BRUSH_SHAPE.breadth).pow(2).negate();
+      const ridge = exp(depthTerm.add(breadthTerm)).mul(
+        normalisedBreadth.mul(0.18).add(0.92).clamp(0.68, 1),
+      );
       const brush = ridge.mul(uniforms.uBrushParams.x);
 
       // --- Diffusion -----------------------------------------------------------
@@ -526,12 +655,15 @@ export function createInkField(options: InkFieldOptions): InkField {
       const pressureSpread = mix(
         carried.w,
         neighbourAverage.w,
-        spread.mul(PRESSURE_DIFFUSION).min(1),
+        uniforms.uDiffusion
+          .mul(interactionDt)
+          .mul(PRESSURE_DIFFUSION)
+          .min(1),
       );
 
       const decayBody = exp(dt.mul(BODY_DECAY).negate());
       const decayErosion = exp(dt.mul(EROSION_DECAY).negate());
-      const decayPressure = exp(dt.mul(PRESSURE_DECAY).negate());
+      const decayPressure = exp(interactionDt.mul(PRESSURE_DECAY).negate());
 
       /*
        * The brush cuts on its leading edge and deposits behind it, which is what makes
@@ -539,7 +671,7 @@ export function createInkField(options: InkFieldOptions): InkField {
        * behind the direction of travel and falls to zero ahead of it.
        */
       const leading = depth
-        .div(radius.mul(BRUSH_DEPTH))
+        .div(radius.mul(BRUSH_SHAPE.depth))
         .clamp(-1, 1)
         .oneMinus()
         .mul(0.5)
@@ -555,19 +687,21 @@ export function createInkField(options: InkFieldOptions): InkField {
 
       const body = bodySpread
         .mul(decayBody)
-        .add(authored.x.mul(float(1).sub(decayBody)).mul(0.55))
+        .add(authored.x.mul(float(1).sub(decayBody)).mul(0.60))
       // Injection is a *rate*, scaled by the timestep. See the channel ceilings below for
       // what the per-frame form used to settle at.
-      .add(brush.mul(dt).mul(BODY_INJECT_RATE));
+      .add(brush.mul(interactionDt).mul(BODY_INJECT_RATE));
       const scour = erosionBase
         .mul(decayErosion)
-        .add(authored.y.mul(float(1).sub(decayErosion)).mul(0.4))
-      .add(brush.mul(leading).mul(dt).mul(EROSION_INJECT_RATE));
+        .add(authored.y.mul(float(1).sub(decayErosion)).mul(0.52))
+      .add(brush.mul(leading).mul(interactionDt).mul(EROSION_INJECT_RATE));
       const settle = settleBase
         .mul(decayErosion)
-        .add(authored.z.mul(float(1).sub(decayErosion)).mul(0.4))
-      .add(brush.mul(dt).mul(SETTLE_INJECT_RATE));
-      const pressure = pressureSpread.mul(decayPressure).add(brush.mul(dt).mul(PRESSURE_INJECT_RATE));
+        .add(authored.z.mul(float(1).sub(decayErosion)).mul(0.52))
+      .add(brush.mul(interactionDt).mul(SETTLE_INJECT_RATE));
+      const pressure = pressureSpread
+        .mul(decayPressure)
+        .add(brush.mul(interactionDt).mul(PRESSURE_INJECT_RATE));
 
       /*
        * The ceilings.
@@ -592,13 +726,65 @@ export function createInkField(options: InkFieldOptions): InkField {
 
   buildMaterials();
 
-  let seeded = false;
+  /** True once the field has been seeded *and* settled. See `INK_SETTLE_SECONDS`. */
+  let settled = false;
 
   let brushState: InkBrush | null = null;
   let liveStrength = 0;
   /** Release over about 2.6 seconds, attack over about 90ms. */
   const ATTACK_RATE = 1 / 0.09;
   const RELEASE_RATE = 1 / 2.6;
+
+  /**
+   * One simulation step, against a given pair of deltas.
+   *
+   * Split out of `step` because the settlement pass and the frame loop have to
+   * run *the same integrator*: a pre-computation that used its own pass would be
+   * a claim about where the field settles rather than a measurement of it, and
+   * the two would separate the first time either was retuned.
+   *
+   * The brush is written here rather than by the caller so that a settlement step
+   * — which passes an interaction delta of zero — cannot inject anything: the
+   * ridge term is multiplied by `uInteractionDelta`, and a zero there means the
+   * visitor's own channel starts where the world does, empty.
+   */
+  function advance(
+    renderer: InkFieldRenderer,
+    deltaSeconds: number,
+    interactionDeltaSeconds: number,
+    elapsedSeconds: number,
+  ): void {
+    uniforms.uDelta.value = deltaSeconds;
+    uniforms.uInteractionDelta.value = interactionDeltaSeconds;
+    uniforms.uTime.value = elapsedSeconds;
+
+    // Attack far faster than it releases, which is what makes a drag feel
+    // immediate and its aftermath feel slow: the brief's whole character in one
+    // pair of rates. Exponential rather than timer-based, because a drag that
+    // ended on a switch would leave a visible edge in the water at the instant
+    // the button came up.
+    const target = brushState === null ? 0 : brushState.speed;
+    const rate = target > liveStrength ? ATTACK_RATE : RELEASE_RATE;
+    liveStrength += (target - liveStrength) * (1 - Math.exp(-rate * interactionDeltaSeconds));
+    if (brushState !== null) {
+      uniforms.uBrushPos.value.set(brushState.x, brushState.z);
+    }
+    uniforms.uBrushParams.value.set(liveStrength, brushState?.speed ?? 0, options.brushRadius, 0);
+
+    quad.material = advectMaterial;
+    renderer.setRenderTarget(write);
+    renderer.render(scene, camera);
+
+    quad.material = copyMaterial;
+    renderer.setRenderTarget(read);
+    renderer.render(scene, camera);
+  }
+
+  function seed(renderer: InkFieldRenderer): void {
+    quad.material = seedMaterial;
+    renderer.setRenderTarget(read);
+    renderer.render(scene, camera);
+  }
 
   const field: InkField = {
     get sampleTexture() {
@@ -611,14 +797,40 @@ export function createInkField(options: InkFieldOptions): InkField {
       return fluvialTextureSource;
     },
     extent: density.extent,
-    step(renderer, deltaSeconds, elapsedSeconds) {
+    targetFormat,
+    step(renderer, ambientDeltaSeconds, elapsedSeconds, interactionDeltaSeconds) {
+      /*
+       * Seed, then settle, exactly once — before the first frame that is shown.
+       *
+       * The seeding pass and the settlement pass both need a renderer, and the
+       * frame loop is the only place one is available, so both happen lazily at
+       * the top of the first call rather than in the constructor. What is *not*
+       * lazy is the order: the seed writes one texture, and the frame that
+       * follows the settlement is the first frame anyone sees. See
+       * `INK_SETTLE_SECONDS` for what a seed alone looks like under reduced
+       * motion, which is where this was found.
+       */
+      if (!settled) {
+        settled = true;
+        seed(renderer);
+        const plan = planInkSettlement();
+        // Autonomous time only, and the clock is held at zero: the velocity field
+        // the settlement integrates against has to be the field the frozen frame
+        // will keep integrating against, or the fixed point is of some other
+        // system. See `INK_SETTLE_SECONDS`.
+        for (let index = 0; index < plan.steps; index += 1) {
+          advance(renderer, plan.stepSeconds, 0, 0);
+        }
+      }
+
+      const interactionDelta = interactionDeltaSeconds ?? ambientDeltaSeconds;
+
       /*
        * A zero delta means "hold".
        *
-       * This is how reduced motion is honoured, and it is the whole of it: the field is
-       * seeded from the authored river if it has never been, and then nothing advances. The
-       * frame is still the composition — the meander is where the descriptor put it, the
-       * pigment is where the bake put it — and no two consecutive frames differ.
+       * This is how reduced motion is honoured, and it is the whole of it after
+       * the settlement above: nothing advances, and the frame is the state the
+       * field settled into. No two consecutive frames differ.
        *
        * It began as an exception. The field kept drifting under the preference, on the
        * reasoning that a still river is a photograph rather than a river at rest. That is a
@@ -628,51 +840,19 @@ export function createInkField(options: InkFieldOptions): InkField {
        * capture harness made the cost concrete — the reduced-motion frame never passed the
        * readiness probe, so the preference could not be evidenced at all.
        */
-      if (!(deltaSeconds > 0)) {
-        if (!seeded) {
-          seeded = true;
-          quad.material = seedMaterial;
-          renderer.setRenderTarget(read);
-          renderer.render(scene, camera);
-          renderer.setRenderTarget(null);
-        }
+      if (!(ambientDeltaSeconds > 0) && !(interactionDelta > 0)) {
+        renderer.setRenderTarget(null);
         return;
       }
 
-      const dt = Math.min(Math.max(deltaSeconds, 1 / 240), 1 / 20);
-      uniforms.uDelta.value = dt;
-      uniforms.uTime.value = elapsedSeconds;
+      const dt = ambientDeltaSeconds > 0
+        ? Math.min(Math.max(ambientDeltaSeconds, 1 / 240), 1 / 20)
+        : 0;
+      const interactionDt = interactionDelta > 0
+        ? Math.min(Math.max(interactionDelta, 1 / 240), 1 / 20)
+        : 0;
 
-      // Attack far faster than it releases, which is what makes a drag feel
-      // immediate and its aftermath feel slow: the brief's whole character in one
-      // pair of rates. Exponential rather than timer-based, because a drag that
-      // ended on a switch would leave a visible edge in the water at the instant
-      // the button came up.
-      const target = brushState === null ? 0 : brushState.speed;
-      const rate = target > liveStrength ? ATTACK_RATE : RELEASE_RATE;
-      liveStrength += (target - liveStrength) * (1 - Math.exp(-rate * dt));
-      if (brushState !== null) {
-        uniforms.uBrushPos.value.set(brushState.x, brushState.z);
-      }
-      uniforms.uBrushParams.value.set(liveStrength, brushState?.speed ?? 0, options.brushRadius, 0);
-
-      // Seed once, lazily, because the seeding pass needs a renderer and the frame
-      // loop is the only place one is available.
-      if (!seeded) {
-        seeded = true;
-        quad.material = seedMaterial;
-        renderer.setRenderTarget(read);
-        renderer.render(scene, camera);
-      }
-
-      quad.material = advectMaterial;
-      renderer.setRenderTarget(write);
-      renderer.render(scene, camera);
-
-      quad.material = copyMaterial;
-      renderer.setRenderTarget(read);
-      renderer.render(scene, camera);
-
+      advance(renderer, dt, interactionDt, elapsedSeconds);
       renderer.setRenderTarget(null);
     },
     setBrush(brush) {

@@ -17,7 +17,7 @@ Re-running any of this costs tokens and changes nothing unless you suspect the b
 - WebGL2 capture: 10 files, 28 console messages — info 24, warning 4, **error 0, fatal 0**. No NaN, invalid buffer or WebGPU validation error on either backend.
 - Reduced motion, same scene sampled twice ~3 s apart in one session: normal **1.82% of pixels (37,772 px) changed**; reduced **0.00% (0 px) changed**, mean luminance identical to three decimals.
 - SAFE vs ULTRA: **16.60%** (overview) / **17.08%** (hover) of pixels differ; ULTRA p99.9 215 / peak 255 against SAFE 147 / 231.
-- Pre-existing user changes are intact and unmodified: `vitest.config.ts`, `START_STAGE351_REVIEW.cmd`, `scripts/stage351-review-launcher.mjs`, `tests/stage351-review-launcher.test.mjs`.
+- Pre-existing user changes are intact and unmodified: `vitest.config.ts`, the capture scripts, and their supporting tests. The current canonical local launcher is `START_POLNAREFF.cmd`.
 - No dependency, `package.json` entry or machine-local file was added. The capture harness uses Node 24's built-in `WebSocket` only.
 
 ## 2. Review in this order

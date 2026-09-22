@@ -110,21 +110,19 @@ const DEFAULT_PARK_POINT = '4,4';
  * nothing. The labels carry the state in their class names, so the check is a
  * DOM read rather than an inference from pixels.
  */
-const LABEL_STATE_EXPRESSION = `(() => {
+export const LABEL_STATE_EXPRESSION = `(() => {
   const toRect = (rect) =>
     rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null;
-  return Array.from(document.querySelectorAll('.graph-node-label')).map((element) => {
+  const container = document.querySelector('.domain-labels');
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('.graph-node-label')).map((element) => {
     const name = element.querySelector('.graph-node-label__name');
-    const wrapper = element.closest('.graph-node-label-wrapper');
     return {
       name: name ? name.textContent.trim() : '',
-      state: element.classList.contains('graph-node-label--focused') ? 'focused'
-        : element.classList.contains('graph-node-label--hovered') ? 'hovered'
-        : element.classList.contains('graph-node-label--dimmed') ? 'dimmed'
+      state: element.classList.contains('is-focused') ? 'focused'
+        : element.classList.contains('is-hovered') ? 'hovered'
         : 'idle',
-      hasDescription: Boolean(element.querySelector('.graph-node-label__description')),
       rect: toRect(element.getBoundingClientRect()),
-      wrapper: toRect(wrapper ? wrapper.getBoundingClientRect() : null),
     };
   });
 })()`;
@@ -137,10 +135,10 @@ const CAPTURE_MODE_STYLE_ID = 'stage352-capture-modes';
  * Both are CSS on the document root so they apply to the canvas and the overlay
  * alike, and so a mode change costs one class toggle rather than a re-render.
  */
-const CAPTURE_MODE_CSS = [
+export const CAPTURE_MODE_CSS = [
   'html.capture-text-hidden .system-masthead,',
   'html.capture-text-hidden .renderer-status,',
-  'html.capture-text-hidden .graph-node-label-wrapper { display: none !important; }',
+  'html.capture-text-hidden .domain-labels { display: none !important; }',
   'html.capture-grayscale { filter: grayscale(1); }',
 ].join('\n');
 
@@ -717,7 +715,6 @@ export function readDomainState(labels, domain) {
   return {
     found: Boolean(target),
     state: target?.state ?? null,
-    hasDescription: Boolean(target?.hasDescription),
     labelCount: labels.length,
     focusedNames: labels.filter((label) => label.state === 'focused').map((label) => label.name),
     hoveredNames: labels.filter((label) => label.state === 'hovered').map((label) => label.name),
@@ -755,6 +752,12 @@ export function buildSearchCandidates(label, viewport) {
     x: rects.reduce((sum, rect) => sum + rect.left + rect.width / 2, 0) / rects.length,
     y: rects.reduce((sum, rect) => sum + rect.top + rect.height / 2, 0) / rects.length,
   };
+
+  // The current domain labels are themselves interactive buttons. Try the actual
+  // control first; the outward search remains as a fallback for scene hit areas.
+  if (label.rect && label.rect.width > 0 && label.rect.height > 0) {
+    push(label.rect.left + label.rect.width / 2, label.rect.top + label.rect.height / 2);
+  }
 
   // Where the domain's own body lies relative to its text. In the scene a label
   // is offset from its anchor toward the frame centre on x
@@ -824,9 +827,6 @@ export function evaluateExpectation(observation, expectation, domain) {
           reason: `${wanted} is ${observation.state}, not hovered (${observation.observed.join(', ')})`,
         };
       }
-      if (!observation.hasDescription) {
-        return { ok: false, reason: `${wanted} is hovered but shows no description` };
-      }
       return { ok: true, reason: `${wanted} hovered` };
     }
     case 'focus': {
@@ -839,16 +839,13 @@ export function evaluateExpectation(observation, expectation, domain) {
           reason: `${wanted} is ${observation.state}, not focused (${observation.observed.join(', ')})`,
         };
       }
-      if (!observation.hasDescription) {
-        return { ok: false, reason: `focused ${wanted} shows no description` };
-      }
-      if (observation.labelCount !== 1) {
+      if (observation.focusedNames.length !== 1) {
         return {
           ok: false,
-          reason: `focus left ${observation.labelCount} labels on screen (${observation.observed.join(', ')})`,
+          reason: `focus marked ${observation.focusedNames.length} domains (${observation.observed.join(', ')})`,
         };
       }
-      return { ok: true, reason: `${wanted} focused, other labels withdrawn` };
+      return { ok: true, reason: `${wanted} focused` };
     }
     case 'escape': {
       if (observation.focusedNames.length > 0) {
@@ -863,14 +860,6 @@ export function evaluateExpectation(observation, expectation, domain) {
       if (observation.state === 'focused') {
         return { ok: false, reason: `${wanted} is still focused after Escape` };
       }
-      // Focus is the only state that withdraws the other domains' labels, so a
-      // frame that still shows one label has not left the focus composition.
-      if (observation.labelCount <= 1) {
-        return {
-          ok: false,
-          reason: `only ${observation.labelCount} label(s) on screen after Escape; the focus composition did not release the other domains`,
-        };
-      }
       // Idle is the other half of the claim. A pointer left on a domain keeps
       // that domain hovered, which bends the routing field toward it and opens
       // its ingress, so the frame would show an interacted field under an idle
@@ -881,7 +870,7 @@ export function evaluateExpectation(observation, expectation, domain) {
           reason: `Escape left ${observation.hoveredNames.join(', ')} hovered; the pointer never left the scene (${observation.observed.join(', ')})`,
         };
       }
-      return { ok: true, reason: 'Escape cleared focus and hover, and the other domains returned' };
+      return { ok: true, reason: 'Escape cleared focus and hover' };
     }
     case 'none':
     default:

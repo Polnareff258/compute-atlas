@@ -179,10 +179,11 @@ export function deriveScrollChoreography(progressInput: number): ScrollChoreogra
   /*
    * The type leaves during the descent, and it leaves early in it.
    *
-   * From `0.232` to `0.344` of the whole story — about a third of the way down the page the
-   * picture is alone. The brief's constraint is that the hero is text-poor and the world is
-   * text-free, and leaving the type until the decomposition would mean the frame's most
-   * interesting passage is still competing with a title.
+   * From `0.11` to `0.24` of the whole story. The camera's new lateral descent brings the
+   * convergence across the title's screen space sooner than the old straight-ahead track;
+   * completing the exit first lets that overlap read as a hand-off instead of a collision.
+   * The brief's constraint remains that the hero is text-poor and the travelled world is
+   * text-free.
    *
    * Computed from *absolute* progress rather than from the act's own progress, and that is the
    * reversibility requirement rather than a stylistic choice: an act-relative fade is a
@@ -190,7 +191,7 @@ export function deriveScrollChoreography(progressInput: number): ScrollChoreogra
    * one scroll position — which is a frame that differs depending on which direction the
    * visitor arrived from.
    */
-  const textOpacity = 1 - smoothstep(HERO_END + 0.032, HERO_END + 0.144, progress);
+  const textOpacity = 1 - smoothstep(0.11, 0.24, progress);
 
   /*
    * Authority over the camera: it rises over the first two hundredths and then stays.
