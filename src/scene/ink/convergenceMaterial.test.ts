@@ -11,6 +11,7 @@ describe('createConvergenceMaterial', () => {
       kind: 'filament',
       phase: 1,
       gain: 0.7,
+      currentGain: 0.36,
       displacement: 30,
     });
 

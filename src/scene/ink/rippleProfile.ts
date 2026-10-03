@@ -28,6 +28,23 @@ export const RIPPLE_PROFILE = Object.freeze({
 });
 
 /**
+ * An anisotropic pressure kernel: a dragged mark stretches with the river while
+ * its banks diffuse more quietly. The weights sum to one, so smoothing changes
+ * the silhouette without manufacturing pressure or brightness.
+ */
+const RIPPLE_KERNEL = Object.freeze({
+  centreWeight: 0.38,
+  tangentWeight: 0.18,
+  normalWeight: 0.13,
+  tangentReach: 1.85,
+  normalReach: 0.95,
+});
+
+export function resolveRippleKernel() {
+  return RIPPLE_KERNEL;
+}
+
+/**
  * Reference form of the vertex response used by the material.
  *
  * Pressure is an area, but displacement belongs to its moving front. Lifting the

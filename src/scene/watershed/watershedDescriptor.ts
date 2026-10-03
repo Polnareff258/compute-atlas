@@ -446,6 +446,8 @@ export const WATERSHED_PALETTE = Object.freeze({
   bone: '#efe3d2',
   greyViolet: '#6d6288',
   palePink: '#d9a2ab',
+  /** A mineral-yellow glint carried by the water, distinct from status amber. */
+  riverGold: '#e6db64',
 });
 
 // --- Per-behaviour terrain ---------------------------------------------------

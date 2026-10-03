@@ -6,6 +6,7 @@ import { BufferAttribute, BufferGeometry } from 'three';
 import type { FieldUniforms } from '../field/fieldUniforms';
 import type { InkField } from '../ink/inkField';
 import { createInkMaterial, createRippleMaterial } from '../ink/inkMaterial';
+import { createInkReliefMaterial } from '../ink/inkReliefMaterial';
 import { buildInkSurface } from '../ink/inkSurface';
 import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
 
@@ -37,6 +38,7 @@ export type RiverViewProps = {
   readonly ink: InkField;
   /** `0`..`1`. Scales the grid's resolution; never its extent. */
   readonly detail: number;
+  readonly visualMode?: 'relief' | 'ink';
 };
 
 /**
@@ -52,7 +54,7 @@ export type RiverViewProps = {
  */
 const SURFACE_RESOLUTION = 1024;
 
-export function RiverView({ descriptor, uniforms, ink, detail }: RiverViewProps) {
+export function RiverView({ descriptor, uniforms, ink, detail, visualMode = 'relief' }: RiverViewProps) {
   const geometry = useMemo(() => {
     const built = buildInkSurface({
       extent: descriptor.field.extent,
@@ -73,19 +75,26 @@ export function RiverView({ descriptor, uniforms, ink, detail }: RiverViewProps)
 
   const materials = useMemo(
     () => ({
-      surface: createInkMaterial(uniforms, ink, { gain: 1, hero: true }),
+      surface: visualMode === 'relief'
+        ? createInkReliefMaterial(uniforms, ink)
+        : createInkMaterial(uniforms, ink, { gain: 1, hero: true }),
       ripple: createRippleMaterial(uniforms, ink),
     }),
-    [uniforms, ink],
+    [uniforms, ink, visualMode],
   );
 
   useEffect(
     () => () => {
       geometry.dispose();
+    },
+    [geometry],
+  );
+  useEffect(
+    () => () => {
       materials.surface.dispose();
       materials.ripple.dispose();
     },
-    [geometry, materials],
+    [materials],
   );
 
   return (

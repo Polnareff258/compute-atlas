@@ -7,6 +7,7 @@ import type { FieldUniforms } from '../field/fieldUniforms';
 import type { InkField } from '../ink/inkField';
 import { createVeilMaterial } from '../ink/inkMaterial';
 import { buildInkVeil } from '../ink/inkSurface';
+import { INK_VEIL_LAYERS } from '../ink/inkVisualProfile';
 import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
 
 /**
@@ -17,15 +18,17 @@ import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
  * the ground. The composition no longer has a horizon: the camera looks down at the
  * river from an oblique height, and what a near-top-down frame lacks is not detail
  * but *depth*, which is the one thing a single surface at one height cannot supply.
- * So this mount now carries the veil — one large sheet above the ground, reading the
- * same field at the same UV, drifting at a slightly different rate.
+ * So this mount now carries two sparse veils above the ground, both reading the same
+ * field but at unequal heights and offsets. Their disagreement is parallax, not a
+ * second subject: one catches the near foreground while the other stays behind the
+ * hero and neither owns a silhouette by itself.
  *
  * **Why that is not a second effect.** The veil has no terms of its own beyond a
  * gain and a height; it cannot see anything the ground cannot. The brief permits
  * membranes that are a derived expression of the density field and forbids the
  * alternative, and that is kept here by construction rather than by intention:
  * `createVeilMaterial` takes the same `InkField` and the same uniforms, and there is
- * nothing else for it to read.
+ * nothing else for it to read. Their phase only changes how that field is sampled.
  *
  * It is mounted *after* the ground, because it is translucent and sits above it. A
  * veil drawn first would composite behind the surface it is meant to hang over.
@@ -42,16 +45,13 @@ export type TerrainViewProps = {
 };
 
 /*
- * One high, faint dispersion sheet.
+ * Two faint dispersion sheets, deliberately unequal.
  *
- * Three copies of the same contour did not become volume; they became three visible bands and
- * made the entire system read as stacked ribbons. The hero surface now owns the structure. This
- * sheet only supplies a delayed atmospheric echo at a different depth.
+ * Three copies of the same contour did not become volume; they became visible bands and made
+ * the system read as stacked ribbons. Two is the upper bound here: a lower displaced echo gives
+ * the foreground weight, and a thinner high echo gives the river air. The hero surface still
+ * owns the structure.
  */
-const VEIL_LAYERS = [
-  { height: 1.18, gain: 0.20 },
-] as const;
-
 export function TerrainView({
   descriptor,
   uniforms,
@@ -79,10 +79,12 @@ export function TerrainView({
 
   const layers = useMemo(
     () =>
-      VEIL_LAYERS.map((layer) =>
+      INK_VEIL_LAYERS.map((layer) =>
         createVeilMaterial(uniforms, ink, {
-          height: height * layer.height,
+          height: height * layer.heightScale,
           gain: presence * layer.gain,
+          phase: layer.phase,
+          reach: layer.reach,
         }),
       ),
     [uniforms, ink, height, presence],
@@ -91,9 +93,14 @@ export function TerrainView({
   useEffect(
     () => () => {
       geometry.dispose();
+    },
+    [geometry],
+  );
+  useEffect(
+    () => () => {
       for (const layer of layers) layer.dispose();
     },
-    [geometry, layers],
+    [layers],
   );
 
   // Not mounted at all at a tier where the veil does not exist, rather than mounted
@@ -109,7 +116,16 @@ export function TerrainView({
           key={index}
           geometry={geometry}
           material={layer.material}
-          renderOrder={2 + index}
+          position={[
+            INK_VEIL_LAYERS[index]!.worldOffset[0],
+            0,
+            INK_VEIL_LAYERS[index]!.worldOffset[1],
+          ]}
+          // The two offsets exchange front/back order as the scroll camera turns.
+          // Keeping them in one render-order band lets Three sort their centres by
+          // camera depth; an index-based order produced a false violet halo whenever
+          // the nominal "upper" sheet was actually farther away.
+          renderOrder={2}
         />
       ))}
     </>

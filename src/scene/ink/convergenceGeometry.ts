@@ -2,6 +2,84 @@ import { PlaneGeometry } from 'three';
 
 import type { ConvergenceLayerKind, ConvergenceSegments } from './convergenceProfile';
 
+export type ConvergencePoint = {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+};
+
+/**
+ * Samples the low-frequency silhouette independently of tessellation.
+ *
+ * The surface is a low, torsioned sheet. It has enough normal relief to separate
+ * the layered ink at an oblique angle, but no high central arch that could read
+ * as a mountain range when projected against the far field.
+ */
+export function sampleConvergencePoint(
+  radius: number,
+  kind: ConvergenceLayerKind,
+  u: number,
+  v: number,
+  mode: 'relief' | 'ink' = 'ink',
+): ConvergencePoint {
+  const filament = kind === 'filament';
+  const width = radius * (filament ? 3.65 : 4.40);
+  const depth = radius * (filament ? 0.62 : 1.86);
+  const sourceX = u * width * 0.5;
+  const sourceY = v * depth * 0.5;
+  const longitudinal = Math.max(0, 1 - u * u);
+  // Squared envelopes have no central cusp. An absolute-value taper produced
+  // a visible straight crease even though the surrounding ink was soft.
+  const lateral = Math.max(0, mode === 'relief' ? 1 - v * v : 1 - Math.abs(v));
+  const taper = filament ? 0.30 + Math.pow(longitudinal, 0.62) * 0.70 : 1;
+
+  const arch =
+    radius *
+    (mode === 'relief' ? (filament ? 0.17 : 0.24) : 0.075) *
+    longitudinal *
+    (0.78 + Math.cos(v * Math.PI) * 0.22);
+  const torsion =
+    radius *
+    (mode === 'relief' ? (filament ? 0.12 : 0.17) : (filament ? 0.08 : 0.075)) *
+    v *
+    Math.sin(u * Math.PI * 1.15);
+  const organicFold =
+    radius *
+    (filament ? 0.012 : 0.016) *
+    (Math.sin(u * Math.PI * 0.82 + v * 1.15 + 0.4) * 0.68 +
+      Math.sin(u * Math.PI * 1.37 - v * 0.63 - 0.25) * 0.32) *
+    lateral *
+    longitudinal;
+  const xSweep =
+    radius *
+    (filament ? 0.055 : 0.12) *
+    Math.sin(v * Math.PI * 0.75) *
+    (mode === 'relief' ? longitudinal : 1 - Math.abs(u));
+  const ySweep =
+    radius *
+    (filament ? 0.025 : 0.075) *
+    Math.sin(u * Math.PI * 0.85) *
+    (1 - v * v);
+  const calligraphicDrift = filament
+    ? radius * 0.04 * Math.sin(u * Math.PI * 0.95 + 0.6) * (0.25 + longitudinal * 0.75)
+    : 0;
+  const authoredMeander = filament
+    ? radius *
+      0.15 *
+      (Math.sin(u * Math.PI * 0.72 + 0.2) * 0.72 +
+        Math.sin(u * Math.PI * 1.7 - 0.35) * 0.28) *
+      (0.34 + longitudinal * 0.66)
+    : 0;
+
+  return {
+    x: sourceX + xSweep,
+    y: sourceY * taper + ySweep + calligraphicDrift + authoredMeander,
+    z: arch + torsion + organicFold + (mode === 'relief'
+      ? radius * 0.065 * Math.sin(u * 3.1 + v * 1.6 + 0.8) * longitudinal * lateral
+      : 0) - radius * (filament ? 0.035 : 0.045),
+  };
+}
+
 /**
  * Builds the authored low-frequency silhouette of the convergence volume.
  *
@@ -27,10 +105,11 @@ export function createConvergenceGeometry(
   radius: number,
   kind: ConvergenceLayerKind,
   segments: ConvergenceSegments,
+  mode: 'relief' | 'ink' = 'ink',
 ) {
   const filament = kind === 'filament';
   const width = radius * (filament ? 3.65 : 4.40);
-  const depth = radius * (filament ? 0.44 : 1.86);
+  const depth = radius * (filament ? 0.62 : 1.86);
   const [across, along] = segments;
   const geometry = new PlaneGeometry(width, depth, across, along);
   const position = geometry.attributes.position!;
@@ -40,53 +119,9 @@ export function createConvergenceGeometry(
     const sourceY = position.getY(index);
     const u = sourceX / (width * 0.5);
     const v = sourceY / (depth * 0.5);
-    const longitudinal = Math.max(0, 1 - u * u);
-    const lateral = Math.max(0, 1 - Math.abs(v));
-    const taper = filament ? 0.22 + Math.pow(longitudinal, 0.55) * 0.78 : 1;
+    const point = sampleConvergencePoint(radius, kind, u, v, mode);
 
-    const arch =
-      radius *
-      (filament ? 0.12 : 0.20) *
-      longitudinal *
-      (0.78 + Math.cos(v * Math.PI) * 0.22);
-    const torsion =
-      radius *
-      (filament ? 0.13 : 0.21) *
-      v *
-      Math.sin(u * Math.PI * 1.15);
-    const foldedEdge =
-      radius *
-      (filament ? 0.018 : 0.032) *
-      Math.sin((u * 2.8 + v * 1.7) * Math.PI) *
-      lateral *
-      longitudinal;
-    const xSweep =
-      radius *
-      (filament ? 0.055 : 0.12) *
-      Math.sin(v * Math.PI * 0.75) *
-      (1 - Math.abs(u));
-    const ySweep =
-      radius *
-      (filament ? 0.025 : 0.075) *
-      Math.sin(u * Math.PI * 0.85) *
-      (1 - v * v);
-    const calligraphicDrift = filament
-      ? radius * 0.04 * Math.sin(u * Math.PI * 0.95 + 0.6) * (0.25 + longitudinal * 0.75)
-      : 0;
-    const authoredMeander = filament
-      ? radius *
-        0.15 *
-        (Math.sin(u * Math.PI * 0.72 + 0.2) * 0.72 +
-          Math.sin(u * Math.PI * 1.7 - 0.35) * 0.28) *
-        (0.34 + longitudinal * 0.66)
-      : 0;
-
-    position.setXYZ(
-      index,
-      sourceX + xSweep,
-      sourceY * taper + ySweep + calligraphicDrift + authoredMeander,
-      arch + torsion + foldedEdge - radius * (filament ? 0.07 : 0.10),
-    );
+    position.setXYZ(index, point.x, point.y, point.z);
   }
 
   position.needsUpdate = true;

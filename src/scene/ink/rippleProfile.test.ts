@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { RIPPLE_PROFILE, resolveRippleDisplacement } from './rippleProfile';
+import {
+  RIPPLE_PROFILE,
+  resolveRippleDisplacement,
+  resolveRippleKernel,
+} from './rippleProfile';
 
 describe('RIPPLE_PROFILE', () => {
   it('keeps chromatic separation restrained and asymmetric', () => {
@@ -42,5 +46,18 @@ describe('RIPPLE_PROFILE', () => {
     expect(resolveRippleDisplacement(0.8, 0.85, 0.5)).toBeLessThan(0.4);
     expect(resolveRippleDisplacement(0.8, 0.85, -1)).toBeGreaterThanOrEqual(0);
     expect(resolveRippleDisplacement(0, 1, 1)).toBe(0);
+  });
+
+  it('softens the brush into a conserved flow-aligned ink wash', () => {
+    const kernel = resolveRippleKernel();
+    const total =
+      kernel.centreWeight +
+      kernel.tangentWeight * 2 +
+      kernel.normalWeight * 2;
+
+    expect(total).toBeCloseTo(1, 8);
+    expect(kernel.tangentReach).toBeGreaterThan(kernel.normalReach);
+    expect(kernel.centreWeight).toBeLessThan(0.5);
+    expect(kernel.tangentWeight).toBeGreaterThan(kernel.normalWeight);
   });
 });

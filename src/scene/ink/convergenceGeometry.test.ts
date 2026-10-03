@@ -1,12 +1,58 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 
-import { createConvergenceGeometry } from './convergenceGeometry';
+import { createConvergenceGeometry, sampleConvergencePoint } from './convergenceGeometry';
 import { CONVERGENCE_TIERS } from './convergenceProfile';
 
 const TIERS = ['ultra', 'high', 'medium', 'safe'] as const;
 
 describe('createConvergenceGeometry', () => {
+  it('keeps relief tangents continuous across both central axes', () => {
+    const step = 0.0001;
+    for (const kind of ['membrane', 'filament'] as const) {
+      for (const axis of ['u', 'v'] as const) {
+        const sample = (offset: number) => sampleConvergencePoint(
+          100, kind, axis === 'u' ? offset : 0.3, axis === 'v' ? offset : 0.42, 'relief',
+        );
+        const left = sample(-step);
+        const centre = sample(0);
+        const right = sample(step);
+        for (const component of ['x', 'y', 'z'] as const) {
+          const leftSlope = (centre[component] - left[component]) / step;
+          const rightSlope = (right[component] - centre[component]) / step;
+          expect(Math.abs(rightSlope - leftSlope)).toBeLessThan(0.05);
+        }
+      }
+    }
+  });
+  it('keeps the volumetric ink interpretation curved and consistent across quality tiers', () => {
+    const envelopes = TIERS.map((tier) => {
+      const geometry = createConvergenceGeometry(100, 'membrane', CONVERGENCE_TIERS[tier].segments.membrane, 'relief');
+      const size = geometry.boundingBox!.getSize(new Vector3());
+      geometry.dispose();
+      return size;
+    });
+    expect(envelopes[0]!.z).toBeGreaterThan(35);
+    for (const size of envelopes) {
+      expect(Math.abs(size.z - envelopes[0]!.z) / envelopes[0]!.z).toBeLessThan(0.02);
+      expect(size.z / size.x).toBeLessThan(0.2);
+    }
+  });
+  it('uses a broad asymmetric fold instead of a repeating diagonal crease', () => {
+    const samples = Array.from({ length: 81 }, (_, index) =>
+      sampleConvergencePoint(100, 'membrane', -1 + (index / 80) * 2, 0.42).z,
+    );
+    const secondDifferences = samples.slice(1, -1).map((value, index) =>
+      samples[index]! - value * 2 + samples[index + 2]!,
+    );
+    const signChanges = secondDifferences.slice(1).filter((value, index) =>
+      Math.sign(value) !== Math.sign(secondDifferences[index]!),
+    ).length;
+
+    expect(Math.max(...samples) - Math.min(...samples)).toBeGreaterThan(8);
+    expect(signChanges).toBeLessThanOrEqual(5);
+  });
+
   it('creates a genuinely curved membrane instead of a displaced flat plane', () => {
     const geometry = createConvergenceGeometry(100, 'membrane', CONVERGENCE_TIERS.ultra.segments.membrane);
     geometry.computeBoundingBox();
@@ -14,8 +60,11 @@ describe('createConvergenceGeometry', () => {
 
     expect(size.x).toBeGreaterThan(390);
     expect(size.y).toBeGreaterThan(180);
-    expect(size.z).toBeGreaterThan(42);
-    expect(size.z / size.x).toBeLessThan(0.15);
+    // An oblique camera turns a tall arch into a mountain ridge. The ink
+    // membrane needs enough relief for parallax, but must remain a sheet.
+    expect(size.z).toBeGreaterThan(12);
+    expect(size.z).toBeLessThan(26);
+    expect(size.z / size.x).toBeLessThan(0.07);
     const position = geometry.attributes.position!;
     let centreHeight = Number.NEGATIVE_INFINITY;
     for (let index = 0; index < position.count; index += 1) {
@@ -23,7 +72,7 @@ describe('createConvergenceGeometry', () => {
         centreHeight = Math.max(centreHeight, position.getZ(index));
       }
     }
-    expect(centreHeight).toBeLessThan(20);
+    expect(centreHeight).toBeLessThan(8);
 
     geometry.dispose();
   });
@@ -65,7 +114,8 @@ describe('createConvergenceGeometry', () => {
 
     // The bounding envelope includes the authored S-curve. It must remain
     // unmistakably directional without forcing the centreline back into a rail.
-    expect(size.x / size.y).toBeGreaterThan(5.2);
+    expect(size.x / size.y).toBeGreaterThan(3.7);
+    expect(size.x / size.y).toBeLessThan(5.0);
     expect(centreHalfWidth).toBeGreaterThan(tipHalfWidth * 1.8);
     geometry.dispose();
   });

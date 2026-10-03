@@ -48,7 +48,8 @@ const MAX_EYE = 820;
  * ground of the frame is water, the far ground is the basin, and the veil's height is
  * chosen to separate from both.
  */
-const BACKSTEP = 0.52;
+const BACKSTEP = 0.08;
+const SIDE_STEP = 0.75;
 
 /**
  * Where along the principal course the camera turns off, as a fraction of its arc length
@@ -57,7 +58,7 @@ const BACKSTEP = 0.52;
  * Near the mouth, so the camera stands at the head of the confluence with the course it
  * came down laid out ahead of it rather than behind.
  */
-const STAND_AT = 0.46;
+const STAND_AT = 0.10;
 
 /**
  * How much of the way from the camera's own station toward the basin the view aims.
@@ -75,7 +76,7 @@ const STAND_AT = 0.46;
  * the foreground. The tighter idle eye means this no longer has to pull back toward the camera
  * merely to fill empty ground.
  */
-const AIM_TOWARD_BASIN = 0.74;
+const AIM_TOWARD_BASIN = 0.90;
 
 export type HeroVistaOptions = {
   /** `0`..`1`. Above the resting value the eye lifts a little, for hover response. */
@@ -112,9 +113,9 @@ export function heroVista(
    * than as an aerial photograph.
    */
   const position: Vector3 = [
-    stand.point[0] - stand.forward[0] * lifted * BACKSTEP,
+    stand.point[0] - stand.forward[0] * lifted * BACKSTEP - stand.forward[1] * lifted * SIDE_STEP,
     lifted,
-    stand.point[1] - stand.forward[1] * lifted * BACKSTEP,
+    stand.point[1] - stand.forward[1] * lifted * BACKSTEP + stand.forward[0] * lifted * SIDE_STEP,
   ];
   const lookTarget: Vector3 = [
     stand.point[0] + (basin.centre[0] - stand.point[0]) * AIM_TOWARD_BASIN,
@@ -152,6 +153,21 @@ export function heroVista(
     lightDirection: KEY_LIGHT,
     fogResponse: 0.6,
     typography: { anchor: 'bottom-left', titleScale: 0.34, reveal: 1 },
+  };
+}
+
+/** Lower the view across pigment folds without introducing another camera writer. */
+export function frameInkRelief<T extends CameraPose>(pose: T): T {
+  const target = pose.lookTarget;
+  return {
+    ...pose,
+    position: [
+      target[0] + (pose.position[0] - target[0]) * 1.65,
+      // Smooth clearance floor: no derivative kink when scroll approaches the surface.
+      Math.hypot(125, pose.position[1] * 0.67),
+      target[2] + (pose.position[2] - target[2]) * 1.65,
+    ],
+    lookTarget: [target[0], target[1] + 24, target[2]],
   };
 }
 
@@ -194,7 +210,7 @@ function principalCourse(
  * different *place* for every world even when `t` was the same — and the camera's place
  * is what the whole frame is composed against.
  */
-function atArc(
+export function atArc(
   spine: readonly Vector2[],
   t: number,
 ): { point: Vector2; forward: Vector2 } {
@@ -202,38 +218,85 @@ function atArc(
     return { point: spine[0] ?? [0, 0], forward: [1, 0] };
   }
 
-  let total = 0;
+  const arcLengths = [0];
   for (let index = 1; index < spine.length; index += 1) {
-    total += Math.hypot(
-      spine[index]![0] - spine[index - 1]![0],
-      spine[index]![1] - spine[index - 1]![1],
-    );
+    const previous = spine[index - 1]!;
+    const current = spine[index]!;
+    const segment = Math.hypot(current[0] - previous[0], current[1] - previous[1]);
+    arcLengths.push(arcLengths[index - 1]! + segment);
   }
+  const total = arcLengths[arcLengths.length - 1]!;
   if (total < 1e-6) return { point: spine[0]!, forward: [1, 0] };
 
   const target = Math.min(1, Math.max(0, t)) * total;
-  let travelled = 0;
+  let segmentIndex = spine.length - 2;
   for (let index = 1; index < spine.length; index += 1) {
-    const a = spine[index - 1]!;
-    const b = spine[index]!;
-    const segment = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (travelled + segment < target) {
-      travelled += segment;
-      continue;
+    if (target <= arcLengths[index]!) {
+      segmentIndex = index - 1;
+      break;
     }
-    const local = segment < 1e-6 ? 0 : (target - travelled) / segment;
-    return {
-      point: [a[0] + (b[0] - a[0]) * local, a[1] + (b[1] - a[1]) * local],
-      forward: segment < 1e-6 ? [1, 0] : [(b[0] - a[0]) / segment, (b[1] - a[1]) / segment],
-    };
   }
 
-  const last = spine[spine.length - 1]!;
-  const previous = spine[spine.length - 2]!;
-  const segment = Math.hypot(last[0] - previous[0], last[1] - previous[1]) || 1;
+  const start = spine[segmentIndex]!;
+  const end = spine[segmentIndex + 1]!;
+  const segmentStart = arcLengths[segmentIndex]!;
+  const segment = arcLengths[segmentIndex + 1]! - segmentStart;
+  if (segment < 1e-6) {
+    const fallback = segmentIndex > 0 ? spine[segmentIndex]! : spine[segmentIndex + 1]!;
+    return { point: fallback, forward: [1, 0] };
+  }
+
+  const local = Math.min(1, Math.max(0, (target - segmentStart) / segment));
+  const tangentAt = (index: number): Vector2 => {
+    const point = spine[index]!;
+    if (index <= 0) {
+      const next = spine[1]!;
+      const length = arcLengths[1]! - arcLengths[0]! || 1;
+      return [(next[0] - point[0]) / length, (next[1] - point[1]) / length];
+    }
+    if (index >= spine.length - 1) {
+      const previous = spine[index - 1]!;
+      const length = arcLengths[index]! - arcLengths[index - 1]! || 1;
+      return [(point[0] - previous[0]) / length, (point[1] - previous[1]) / length];
+    }
+    const previous = spine[index - 1]!;
+    const next = spine[index + 1]!;
+    const length = arcLengths[index + 1]! - arcLengths[index - 1]! || 1;
+    return [(next[0] - previous[0]) / length, (next[1] - previous[1]) / length];
+  };
+  const startTangent = tangentAt(segmentIndex);
+  const endTangent = tangentAt(segmentIndex + 1);
+  const scaledStartTangent: Vector2 = [startTangent[0] * segment, startTangent[1] * segment];
+  const scaledEndTangent: Vector2 = [endTangent[0] * segment, endTangent[1] * segment];
+  const localSquared = local * local;
+  const localCubed = localSquared * local;
+  const h00 = 2 * localCubed - 3 * localSquared + 1;
+  const h10 = localCubed - 2 * localSquared + local;
+  const h01 = -2 * localCubed + 3 * localSquared;
+  const h11 = localCubed - localSquared;
+  const point: Vector2 = [
+    h00 * start[0] + h10 * scaledStartTangent[0] + h01 * end[0] + h11 * scaledEndTangent[0],
+    h00 * start[1] + h10 * scaledStartTangent[1] + h01 * end[1] + h11 * scaledEndTangent[1],
+  ];
+
+  const derivative: Vector2 = [
+    (6 * localSquared - 6 * local) * start[0] +
+      (3 * localSquared - 4 * local + 1) * scaledStartTangent[0] +
+      (-6 * localSquared + 6 * local) * end[0] +
+      (3 * localSquared - 2 * local) * scaledEndTangent[0],
+    (6 * localSquared - 6 * local) * start[1] +
+      (3 * localSquared - 4 * local + 1) * scaledStartTangent[1] +
+      (-6 * localSquared + 6 * local) * end[1] +
+      (3 * localSquared - 2 * local) * scaledEndTangent[1],
+  ];
+  const derivativeLength = Math.hypot(derivative[0], derivative[1]);
+  const fallbackLength = Math.hypot(end[0] - start[0], end[1] - start[1]) || 1;
   return {
-    point: last,
-    forward: [(last[0] - previous[0]) / segment, (last[1] - previous[1]) / segment],
+    point,
+    forward:
+      derivativeLength < 1e-6
+        ? [(end[0] - start[0]) / fallbackLength, (end[1] - start[1]) / fallbackLength]
+        : [derivative[0] / derivativeLength, derivative[1] / derivativeLength],
   };
 }
 
@@ -285,12 +348,12 @@ export type ScrollStation = {
 export const SCROLL_STATIONS: readonly ScrollStation[] = [
   // The resting shot, reproduced exactly. The authority easing means the scroll takes over
   // from this pose, so the two being equal is what makes the hand-over invisible.
-  { at: 0, arc: 1 - STAND_AT, eye: 1, backstep: BACKSTEP, aim: AIM_TOWARD_BASIN, lateral: 0 },
+  { at: 0, arc: 1 - STAND_AT, eye: 1, backstep: BACKSTEP, aim: AIM_TOWARD_BASIN, lateral: SIDE_STEP },
   // The descent. Lower, closer to the mouth, and aiming further ahead now that the near
   // ground is worth looking at.
-  { at: 0.48, arc: 0.56, eye: 0.74, backstep: 0.88, aim: 0.52, lateral: 0.16 },
+  { at: 0.48, arc: 0.91, eye: 0.74, backstep: 0.28, aim: 0.82, lateral: 0.50 },
   // The decomposition. Low and close; the flow is seen almost along its length.
-  { at: 0.78, arc: 0.82, eye: 0.46, backstep: 0.98, aim: 0.78, lateral: 0.30 },
+  { at: 0.78, arc: 0.94, eye: 0.46, backstep: 0.65, aim: 0.95, lateral: 0.30 },
   // The reveal. Standing at the confluence, looking at the basin itself.
   { at: 1, arc: 0.97, eye: 0.33, backstep: 1.08, aim: 1, lateral: 0.34 },
 ];
@@ -357,9 +420,9 @@ function revealStation(
 
   return {
     at: 1,
-    arc: 0.84,
+    arc: 0.97,
     eye: eye / baseEye,
-    backstep: 0.94,
+    backstep: 0.64,
     aim: 0.86,
     lateral: 0.44,
   };

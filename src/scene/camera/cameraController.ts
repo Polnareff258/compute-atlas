@@ -168,6 +168,20 @@ function lerp3(from: Vector3Tuple, to: Vector3Tuple, t: number): Vector3Tuple {
   return [lerp(from[0], to[0], t), lerp(from[1], to[1], t), lerp(from[2], to[2], t)];
 }
 
+function dampPose(
+  current: PoseState,
+  target: PoseState,
+  damping: number,
+  deltaSeconds: number,
+): PoseState {
+  const alpha = 1 - Math.exp(-damping * deltaSeconds);
+  return {
+    position: lerp3(current.position, target.position, alpha),
+    lookTarget: lerp3(current.lookTarget, target.lookTarget, alpha),
+    fov: lerp(current.fov, target.fov, alpha),
+  };
+}
+
 function distanceBetween(a: Vector3Tuple, b: Vector3Tuple): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
@@ -373,6 +387,7 @@ const DEFAULT_POINTER_DAMPING = 7;
  * the page.
  */
 const SCROLL_AUTHORITY_DAMPING = 6.5;
+const SCROLL_POSE_DAMPING = 8;
 const REDUCED_MOTION_AMPLITUDE_SCALE = 0.42;
 
 export class CameraController {
@@ -412,6 +427,7 @@ export class CameraController {
    * a scroll that arrives in a single wheel event does not snatch the camera.
    */
   private scrollPose: PoseState | null = null;
+  private scrollPoseTarget: PoseState | null = null;
   private scrollAuthority = 0;
   private scrollAuthorityTarget = 0;
 
@@ -549,7 +565,7 @@ export class CameraController {
    * enough that the transition out of the resting shot is a settle rather than a cut.
    */
   public setScrollTrack(pose: CameraPose | null, authority: number): void {
-    this.scrollPose = pose === null ? null : poseState(pose);
+    this.scrollPoseTarget = pose === null ? null : poseState(pose);
     this.scrollAuthorityTarget = pose === null ? 0 : clamp(authority, 0, 1);
   }
 
@@ -576,12 +592,29 @@ export class CameraController {
 
     // The scroll's authority, damped. A rate rather than a duration because the scroll is
     // continuous input: there is no moment at which the move "begins" to time from.
-    this.scrollAuthority = approach(
-      this.scrollAuthority,
-      this.scrollAuthorityTarget,
-      SCROLL_AUTHORITY_DAMPING,
-      safeDelta,
-    );
+    const wasScrollInactive = this.scrollAuthority <= 1e-6;
+    this.scrollAuthority = this.reducedMotion
+      ? this.scrollAuthorityTarget
+      : approach(
+          this.scrollAuthority,
+          this.scrollAuthorityTarget,
+          SCROLL_AUTHORITY_DAMPING,
+          safeDelta,
+        );
+
+    // Keep the scroll target separate from the pose currently being drawn. A wheel event
+    // can replace the target by hundreds of world units in one frame, but the camera must
+    // consume that intent at the same stable rate regardless of frame cadence. Withdrawal
+    // deliberately leaves the current scroll pose in place while authority fades, so the
+    // hand-off back to the authored shot has no discontinuity.
+    if (this.scrollPoseTarget !== null) {
+      if (this.scrollPose === null || wasScrollInactive) {
+        this.scrollPose = this.pose;
+      }
+      this.scrollPose = this.reducedMotion
+        ? this.scrollPoseTarget
+        : dampPose(this.scrollPose, this.scrollPoseTarget, SCROLL_POSE_DAMPING, safeDelta);
+    }
 
     this.elapsed = Math.min(this.duration, this.elapsed + safeDelta);
     const t = this.duration === 0 ? 1 : ease(this.easingName, this.elapsed / this.duration);

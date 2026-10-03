@@ -26,6 +26,8 @@ export type ConvergenceLayer = {
   readonly height: number;
   readonly phase: number;
   readonly gain: number;
+  /** Warm advected route light: one carrier and one quieter echo, never every plane. */
+  readonly currentGain: number;
   readonly displacement: number;
   readonly rotation: number;
   readonly tilt: number;
@@ -66,6 +68,7 @@ export const CONVERGENCE_LAYERS: readonly ConvergenceLayer[] = [
     height: 8,
     phase: 0.8,
     gain: 0.92,
+    currentGain: 1,
     displacement: 12,
     rotation: -0.31,
     tilt: 0.12,
@@ -80,6 +83,7 @@ export const CONVERGENCE_LAYERS: readonly ConvergenceLayer[] = [
     height: 18,
     phase: 3.1,
     gain: 0.68,
+    currentGain: 0,
     displacement: 15,
     rotation: 0.22,
     tilt: -0.11,
@@ -93,11 +97,12 @@ export const CONVERGENCE_LAYERS: readonly ConvergenceLayer[] = [
     role: 'primary',
     height: 16,
     phase: 4.4,
-    gain: 0.74,
+    gain: 0.66,
+    currentGain: 0.36,
     displacement: 8,
     rotation: -0.12,
     tilt: 0.04,
-    scale: [1.18, 0.33, 1],
+    scale: [0.88, 0.72, 1],
     offset: [-10, -8],
     renderOrder: 7,
   },
@@ -107,11 +112,12 @@ export const CONVERGENCE_LAYERS: readonly ConvergenceLayer[] = [
     role: 'secondary',
     height: 20,
     phase: 6.2,
-    gain: 0.46,
+    gain: 0.38,
+    currentGain: 0,
     displacement: 12,
     rotation: 0.21,
     tilt: -0.05,
-    scale: [0.92, 0.20, 1],
+    scale: [0.72, 0.58, 1],
     offset: [18, 6],
     renderOrder: 8,
   },
@@ -121,11 +127,12 @@ export const CONVERGENCE_LAYERS: readonly ConvergenceLayer[] = [
     role: 'secondary',
     height: 24,
     phase: 8.1,
-    gain: 0.34,
+    gain: 0.27,
+    currentGain: 0,
     displacement: 6,
     rotation: -0.27,
     tilt: 0.08,
-    scale: [0.70, 0.12, 1],
+    scale: [0.58, 0.46, 1],
     offset: [-24, 14],
     renderOrder: 9,
   },
@@ -136,6 +143,7 @@ export const CONVERGENCE_LAYERS: readonly ConvergenceLayer[] = [
     height: 36,
     phase: 7.6,
     gain: 0.40,
+    currentGain: 0,
     displacement: 18,
     rotation: -0.11,
     tilt: -0.14,

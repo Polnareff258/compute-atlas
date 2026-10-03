@@ -11,6 +11,7 @@ import {
 } from '../ink/convergenceProfile';
 import type { QualityProfile } from '../../renderer/types';
 import type { WatershedDescriptor } from '../watershed/watershedDescriptor';
+import type { InkField } from '../ink/inkField';
 
 export type ConvergenceViewProps = {
   readonly descriptor: WatershedDescriptor;
@@ -25,25 +26,37 @@ export type ConvergenceViewProps = {
    * is still the profile's, and is identical at all four.
    */
   readonly quality: QualityProfile;
+  readonly visualMode?: 'relief' | 'ink';
+  readonly ink?: InkField;
 };
 
 export function ConvergenceView({
   descriptor,
   uniforms,
   quality,
+  visualMode = 'relief',
+  ink,
 }: ConvergenceViewProps) {
   const radius = descriptor.basin.radius;
   const tier = CONVERGENCE_TIERS[quality];
-  const layers = useMemo(() => resolveConvergenceLayers(quality), [quality]);
+  const layers = useMemo(() => resolveConvergenceLayers(quality).map((layer) =>
+    visualMode === 'relief' ? {
+      ...layer,
+      // Raised ink is a soft overlapping wash, not six tilted architectural plates.
+      tilt: layer.tilt * 0.35,
+      scale: [layer.scale[0], layer.scale[1] * 1.35, layer.scale[2]] as const,
+      gain: layer.gain * (layer.kind === 'filament' ? 0.65 : 0.85),
+    } : layer,
+  ), [quality, visualMode]);
   const geometries = useMemo(
     () => ({
-      membrane: createConvergenceGeometry(radius, 'membrane', tier.segments.membrane),
-      filament: createConvergenceGeometry(radius, 'filament', tier.segments.filament),
+      membrane: createConvergenceGeometry(radius, 'membrane', tier.segments.membrane, visualMode),
+      filament: createConvergenceGeometry(radius, 'filament', tier.segments.filament, visualMode),
     }),
     // `tier` is a member of the frozen table, so its identity is stable per
     // quality and keying on it is keying on the tier rather than on an object
     // rebuilt every render.
-    [radius, tier],
+    [radius, tier, visualMode],
   );
   const materials = useMemo(
     () =>
@@ -52,19 +65,27 @@ export function ConvergenceView({
           kind: layer.kind,
           phase: layer.phase,
           gain: layer.gain,
+          currentGain: layer.currentGain,
           displacement: layer.displacement,
+          visualMode,
+          ...(ink ? { ink } : {}),
         }),
       ),
-    [uniforms, layers],
+    [uniforms, layers, visualMode, ink],
   );
 
   useEffect(
     () => () => {
       geometries.membrane.dispose();
       geometries.filament.dispose();
+    },
+    [geometries],
+  );
+  useEffect(
+    () => () => {
       for (const material of materials) material.dispose();
     },
-    [geometries, materials],
+    [materials],
   );
 
   return (

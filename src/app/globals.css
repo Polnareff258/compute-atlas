@@ -159,6 +159,39 @@ input {
   line-height: 1.45;
 }
 
+.visual-mode-toggle {
+  position: absolute;
+  z-index: 3;
+  top: clamp(2.4rem, 5vh, 4.8rem);
+  right: clamp(2rem, 4.2vw, 5rem);
+  display: inline-flex;
+  gap: 0.15rem;
+  pointer-events: auto;
+  border: 1px solid rgba(214, 225, 220, 0.18);
+  padding: 0.18rem;
+  background: rgba(8, 10, 13, 0.32);
+}
+
+.visual-mode-toggle button {
+  border: 0;
+  padding: 0.38rem 0.6rem;
+  background: transparent;
+  color: rgba(166, 179, 184, 0.6);
+  cursor: pointer;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.visual-mode-toggle button:hover,
+.visual-mode-toggle button:focus-visible,
+.visual-mode-toggle button[aria-pressed='true'] {
+  background: rgba(184, 208, 200, 0.12);
+  color: rgba(229, 232, 232, 0.92);
+  outline: none;
+}
+
 /* A caption for the composition, not a panel beside it. */
 .renderer-status {
   bottom: 1.7rem;
@@ -196,6 +229,11 @@ input {
     left: 1.25rem;
     top: 1.25rem;
     max-width: 70vw;
+  }
+
+  .visual-mode-toggle {
+    top: 1.25rem;
+    right: 1.25rem;
   }
 
   .renderer-status {

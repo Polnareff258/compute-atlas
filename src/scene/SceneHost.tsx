@@ -21,7 +21,7 @@ import { GRAPH_MANIFEST } from '../graph/graphManifest';
 import { deriveGraphProminence } from '../graph/layout';
 import type { QualityProfile, RendererBackend } from '../renderer/types';
 import { createCameraController, sequenceKey } from './camera/cameraController';
-import { heroVista, resolveScrollPose } from './camera/heroShot';
+import { frameInkRelief, heroVista, resolveScrollPose } from './camera/heroShot';
 import { createFieldUniforms } from './field/fieldUniforms';
 import { createSkyBackground, installSkyBackground } from './materials/skyBackground';
 import { deriveFieldState } from './field/deriveFieldState';
@@ -36,6 +36,7 @@ import type { InkTargetFormat } from '../renderer/capability';
 import { RiverView } from './views/RiverView';
 import { TerrainView } from './views/TerrainView';
 import { ConvergenceView } from './views/ConvergenceView';
+import type { VisualMode } from './visualMode';
 import {
   createWatershedDescriptor,
   DOMAIN_IDS,
@@ -74,6 +75,7 @@ export type SceneHostProps = {
    */
   readonly inkTargetFormat?: InkTargetFormat;
   readonly reducedMotion?: boolean;
+  readonly visualMode?: VisualMode;
   readonly onTelemetry?: (snapshot: RendererTelemetrySnapshot) => void;
   readonly onQualityChange?: (profile: QualityProfile) => void;
   /**
@@ -314,6 +316,7 @@ export function SceneHost({
   backend,
   inkTargetFormat = 'rgba16f',
   reducedMotion = false,
+  visualMode = 'relief',
   onTelemetry,
   onQualityChange,
   onCommandBusReady,
@@ -610,10 +613,16 @@ export function SceneHost({
      */
     return {
       ...planned,
-      idleVista: heroVista(descriptor, aspect, courses),
-      hoverReveal: heroVista(descriptor, aspect, courses, { lift: 1 }),
+      idleVista:
+        visualMode === 'relief'
+          ? frameInkRelief(heroVista(descriptor, aspect, courses))
+          : heroVista(descriptor, aspect, courses),
+      hoverReveal:
+        visualMode === 'relief'
+          ? frameInkRelief(heroVista(descriptor, aspect, courses, { lift: 1 }))
+          : heroVista(descriptor, aspect, courses, { lift: 1 }),
     };
-  }, [descriptor, aspect, activeDomainId, courses]);
+  }, [descriptor, aspect, activeDomainId, courses, visualMode]);
 
   /**
    * Which shot the camera is in, and the last sequence asked for.
@@ -871,7 +880,7 @@ export function SceneHost({
       entered: enteredRef.current,
       previous: intentRef.current,
     });
-    const key = sequenceKey(intent, activeDomainId ?? undefined);
+    const key = `${visualMode}:${sequenceKey(intent, activeDomainId ?? undefined)}`;
     if (key !== sequenceKeyRef.current) {
       intentRef.current = intent;
       sequenceKeyRef.current = key;
@@ -898,8 +907,9 @@ export function SceneHost({
       choreography.layers.sharpness,
       choreography.layers.granules,
     );
+    const scrollPose = resolveScrollPose(descriptor, aspect, courses, choreography.progress);
     cameraController.setScrollTrack(
-      resolveScrollPose(descriptor, aspect, courses, choreography.progress),
+      visualMode === 'relief' ? frameInkRelief(scrollPose) : scrollPose,
       choreography.cameraAuthority,
     );
     writeScrollStyle(choreography);
@@ -1038,11 +1048,14 @@ export function SceneHost({
         uniforms={uniforms}
         ink={ink}
         detail={settings.terrainDetail}
+        visualMode={visualMode}
       />
       <ConvergenceView
         descriptor={descriptor}
         uniforms={uniforms}
         quality={quality}
+        visualMode={visualMode}
+        ink={ink}
       />
     </>
   );

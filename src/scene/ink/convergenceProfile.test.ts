@@ -7,15 +7,26 @@ import {
 } from './convergenceProfile';
 
 describe('CONVERGENCE_LAYERS', () => {
+  it('gives the moving warm current one structural host and a quieter tissue echo', () => {
+    const carrying = CONVERGENCE_LAYERS.filter((layer) => layer.currentGain > 0);
+    expect(carrying.map((layer) => layer.id)).toEqual([
+      'rear-membrane',
+      'signal-tissue-a',
+    ]);
+    expect(carrying[0]!.currentGain).toBeGreaterThan(carrying[1]!.currentGain);
+    expect(carrying[1]!.currentGain).toBeLessThan(0.5);
+  });
+
   it('builds a membrane volume around a smaller internal signal tissue', () => {
     const membranes = CONVERGENCE_LAYERS.filter((layer) => layer.kind === 'membrane');
     const filaments = CONVERGENCE_LAYERS.filter((layer) => layer.kind === 'filament');
 
     expect(membranes).toHaveLength(3);
     expect(filaments).toHaveLength(3);
-    expect(Math.max(...filaments.map((layer) => layer.scale[1]))).toBeLessThan(
-      Math.min(...membranes.map((layer) => layer.scale[1])) * 0.7,
-    );
+    expect(
+      filaments.every((layer) => layer.scale[0] / layer.scale[1] < 1.6),
+    ).toBe(true);
+    expect(Math.min(...filaments.map((layer) => layer.scale[1]))).toBeGreaterThan(0.4);
     expect(filaments.every((layer) => layer.gain > 0 && layer.gain < 1)).toBe(true);
     expect(Math.max(...membranes.map((layer) => layer.displacement))).toBeLessThanOrEqual(18);
     expect(new Set(filaments.map((layer) => layer.scale[1])).size).toBe(3);

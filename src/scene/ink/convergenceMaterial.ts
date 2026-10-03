@@ -5,21 +5,28 @@ import {
   mx_fractal_noise_float,
   normalView,
   positionLocal,
+  positionWorld,
   positionViewDirection,
   smoothstep,
+  texture,
   uv,
   vec2,
   vec3,
 } from 'three/tsl';
 
 import type { FieldUniforms } from '../field/fieldUniforms';
+import type { InkField } from './inkField';
+import { GILDED_CURRENT_PROFILE, INK_MARBLING_PROFILE } from './inkVisualProfile';
 import type { ConvergenceLayerKind } from './convergenceProfile';
 
 export type ConvergenceMaterialOptions = {
   readonly kind: ConvergenceLayerKind;
   readonly phase: number;
   readonly gain: number;
+  readonly currentGain: number;
   readonly displacement: number;
+  readonly visualMode?: 'relief' | 'ink';
+  readonly ink?: InkField;
 };
 
 /**
@@ -34,6 +41,7 @@ export function createConvergenceMaterial(
   options: ConvergenceMaterialOptions,
 ) {
   const u = uniforms.uniforms;
+  const relief = options.visualMode === 'relief';
   const material = new MeshBasicNodeMaterial();
   material.name = `convergence-${options.kind}`;
   material.transparent = true;
@@ -42,6 +50,13 @@ export function createConvergenceMaterial(
   material.side = DoubleSide;
 
   const coord = uv().sub(vec2(0.5, 0.5));
+  // Couple raised pigment to the existing world simulation, never a second brush.
+  const livePressure = options.ink
+    ? texture(options.ink.sampleTexture, vec2(
+      positionWorld.x.sub(options.ink.extent.minX).div(options.ink.extent.maxX - options.ink.extent.minX),
+      positionWorld.z.sub(options.ink.extent.minZ).div(options.ink.extent.maxZ - options.ink.extent.minZ),
+    )).w.clamp(0, 1)
+    : float(0);
   const interaction = u.uHover.mul(0.52).add(u.uFocus.mul(0.88)).clamp(0, 1);
   const scrollDetail = u.uScrollLayers.y.mul(0.62).add(u.uScrollLayers.w.mul(0.38));
   const slowBend = coord.x
@@ -49,7 +64,7 @@ export function createConvergenceMaterial(
     .add(options.phase)
     .add(u.uFlowPhase.mul(0.028))
     .sin()
-    .mul(0.11);
+    .mul(0.16);
 
   const fold = mx_fractal_noise_float(
     vec3(
@@ -79,19 +94,43 @@ export function createConvergenceMaterial(
 
   const signedCross = coord.y.add(slowBend).add(fold.sub(0.5).mul(0.20));
   const cross = signedCross.abs();
-  const longitudinalAxis = coord.x.add(
-    coord.y.mul(options.kind === 'filament' ? 0.16 : 0.08),
-  );
+  const longitudinalAxis = coord.x
+    .add(coord.y.mul(options.kind === 'filament' ? 0.13 : 0.08))
+    .add(fold.sub(0.5).mul(options.kind === 'filament' ? 0.15 : 0.09))
+    .add(fineFold.sub(0.5).mul(0.045));
+  const geometryFeather = smoothstep(float(0.5), float(0.425), coord.x.abs())
+    // Both axes must disappear before the mesh boundary. A cross-section
+    // reaching the edge otherwise reads as the cut end of a plastic sheet.
+    .mul(smoothstep(float(0.5), float(relief ? 0.30 : 0.425), coord.y.abs()));
   const longitudinal = smoothstep(
-    float(options.kind === 'filament' ? 0.46 : 0.52),
-    float(options.kind === 'filament' ? 0.25 : 0.30),
-    longitudinalAxis.abs(),
-  );
-  const tornEdge = smoothstep(float(0.31), float(0.07), cross)
+    float(options.kind === 'filament' ? -0.57 : -0.61),
+    float(options.kind === 'filament' ? -0.31 : -0.34),
+    longitudinalAxis,
+  ).mul(
+    smoothstep(
+      float(options.kind === 'filament' ? 0.54 : 0.60),
+      float(options.kind === 'filament' ? 0.27 : 0.32),
+      longitudinalAxis,
+    ),
+  ).mul(geometryFeather);
+  const tornEdge = smoothstep(float(relief ? 0.38 : 0.31), float(0.07), cross)
     .mul(longitudinal)
     .mul(smoothstep(float(0.34), float(0.58), fold).mul(0.72).add(0.28));
   const innerFold = smoothstep(float(0.22), float(0.025), cross)
     .mul(longitudinal.pow(0.72));
+  const marblingPhase = coord.x
+    .mul(INK_MARBLING_PROFILE.alongFrequency)
+    .add(coord.y.mul(INK_MARBLING_PROFILE.acrossFrequency))
+    .add(fold.sub(0.5).mul(INK_MARBLING_PROFILE.foldWarp))
+    .add(fineFold.sub(0.5).mul(INK_MARBLING_PROFILE.fineWarp))
+    .sub(u.uFlowPhase.mul(INK_MARBLING_PROFILE.driftRate));
+  const marbling = smoothstep(
+    float(INK_MARBLING_PROFILE.onset),
+    float(INK_MARBLING_PROFILE.full),
+    marblingPhase.sin().mul(0.5).add(0.5),
+  )
+    .mul(innerFold.pow(0.72))
+    .mul(fineFold.mul(0.35).add(0.65));
   const interference = smoothstep(float(0.46), float(0.84), fold)
     .mul(tornEdge)
     .mul(innerFold.mul(0.4).add(0.6));
@@ -121,37 +160,68 @@ export function createConvergenceMaterial(
   const packet = smoothstep(float(0.86), float(0.985), streamPulse)
     .mul(smoothstep(float(0.62), float(0.91), fineFold))
     .mul(innerFold.pow(1.9));
-  const activeAccent = mix(u.uFlow, u.uRegionAccent, interaction.mul(0.78));
+  const activeAccent = mix(relief ? u.uFlow : u.uSpectral, u.uRegionAccent, interaction.mul(0.78));
+  const currentPhase = coord.x
+    .mul(GILDED_CURRENT_PROFILE.frequency)
+    .add(fold.mul(GILDED_CURRENT_PROFILE.seedInfluence))
+    .sub(u.uFlowPhase.mul(GILDED_CURRENT_PROFILE.rate));
+  const currentCrest = smoothstep(
+    float(GILDED_CURRENT_PROFILE.crestStart),
+    float(GILDED_CURRENT_PROFILE.crestEnd),
+    currentPhase.sin().mul(0.5).add(0.5),
+  );
+  const currentBank = signedCross.sub(0.105).add(fineFold.sub(0.5).mul(0.045));
+  const currentThread = smoothstep(float(0.017), float(0.0035), currentBank.abs())
+    .mul(longitudinal)
+    .mul(fold.mul(0.38).add(0.62));
+  const currentAura = smoothstep(float(0.115), float(0.018), currentBank.abs())
+    .mul(longitudinal)
+    .mul(0.08);
+  const currentAccent = currentThread
+    .mul(currentCrest.mul(0.52).add(0.48))
+    .add(currentAura)
+    .mul(relief ? options.currentGain * 0.035 : options.currentGain);
 
   if (options.kind === 'filament') {
     material.blending = AdditiveBlending;
-    const parallelStroke = smoothstep(
-      float(0.034),
-      float(0.006),
-      signedCross.sub(0.092).abs(),
+    const strokeDrift = fineFold
+      .sub(0.5)
+      .mul(0.17)
+      .add(
+        coord.x
+          .mul(7.2)
+          .add(options.phase)
+          .sub(u.uFlowPhase.mul(0.045))
+          .sin()
+          .mul(0.028),
+      );
+    const calligraphicStroke = smoothstep(
+      float(0.105),
+      float(0.012),
+      signedCross.sub(strokeDrift).abs(),
     )
       .mul(longitudinal.pow(0.82))
-      .mul(smoothstep(float(0.28), float(0.72), fineFold).mul(0.76).add(0.24));
-    const hairline = smoothstep(
-      float(0.016),
-      float(0.0035),
-      signedCross.add(0.052).abs(),
+      .mul(smoothstep(float(0.24), float(0.78), fineFold).mul(0.78).add(0.22));
+    const brokenGlint = smoothstep(
+      float(0.030),
+      float(0.0045),
+      signedCross.sub(strokeDrift.mul(0.46)).abs(),
     )
-      .mul(longitudinal.pow(1.18))
-      .mul(smoothstep(float(0.48), float(0.82), fold));
+      .mul(longitudinal.pow(1.16))
+      .mul(smoothstep(float(0.67), float(0.91), fold));
     const filamentBody = innerFold
       .pow(1.55)
       .mul(smoothstep(float(0.28), float(0.72), fineFold).mul(0.58).add(0.42))
-      .add(parallelStroke.mul(fineFold.mul(0.34).add(0.66)))
-      .add(hairline.mul(0.42))
+      .add(calligraphicStroke.mul(fineFold.mul(0.34).add(0.66)))
+      .add(brokenGlint.mul(0.28))
       .clamp(0, 1);
     const filamentColour = mix(
       mix(u.uDeep, u.uCobalt, fineFold.mul(0.38)),
       activeAccent,
       streamRidge
         .mul(0.68)
-        .add(parallelStroke.mul(0.32))
-        .add(hairline.mul(0.18))
+        .add(calligraphicStroke.mul(0.28))
+        .add(brokenGlint.mul(0.14))
         .add(interaction.mul(0.18))
         .min(1),
     );
@@ -161,22 +231,22 @@ export function createConvergenceMaterial(
       mix(u.uPalePink, u.uBone, interaction.mul(0.28)),
       packet.mul(0.38),
     )
-      // A single lavender hairline gives the cyan tissue a chromatic counterpoint.
-      // It follows the rarer broken edge only, so colour hierarchy is carried by
-      // line hierarchy rather than washing the whole sheet purple.
-      .add(mix(u.uSpectral, u.uPalePink, float(0.28)).mul(hairline).mul(0.16))
+      .add(mix(u.uSpectral, u.uPalePink, float(0.28)).mul(brokenGlint).mul(0.13))
+      .add(u.uRiverGold.mul(calligraphicStroke).mul(options.currentGain * (relief ? 0.015 : 0.55)))
       .mul(options.gain)
       .mul(1.72);
     material.opacityNode = filamentBody
       .mul(0.045)
-      .add(parallelStroke.mul(0.12))
-      .add(hairline.mul(0.055))
+      .add(calligraphicStroke.mul(0.10))
+      .add(brokenGlint.mul(0.045))
       .add(streamRidge.mul(0.26))
       .add(packet.mul(0.34))
+      .add(calligraphicStroke.mul(options.currentGain * 0.10))
       .mul(interaction.mul(0.62).add(0.72))
       .mul(scrollDetail.mul(0.24).add(0.82))
       .mul(options.gain)
-      .clamp(0, 0.38);
+      .mul(relief ? 0.25 : 1)
+      .clamp(0, 0.29);
     material.positionNode = positionLocal.add(
       vec3(
         0,
@@ -193,9 +263,9 @@ export function createConvergenceMaterial(
   }
 
   const membraneColour = mix(
-    mix(u.uDeep, u.uCobalt, fold.mul(0.64)),
-    mix(activeAccent, u.uPalePink, fold.mul(0.32)),
-    interference.mul(0.62).add(fresnel.mul(0.38)).min(1),
+    mix(u.uDeep, relief ? u.uCobalt : u.uGreyViolet, fold.mul(0.34)),
+    mix(activeAccent, u.uPalePink, fold.mul(0.22)),
+    interference.mul(0.44).add(fresnel.mul(0.20)).min(1),
   );
   const thinFilm = smoothstep(
     float(0.58),
@@ -214,7 +284,7 @@ export function createConvergenceMaterial(
   const surfacedColour = mix(
     membraneColour,
     mix(activeAccent, u.uRegionAmbient, fineFold.mul(0.24)),
-    thinFilm.mul(0.58).add(streamRidge.mul(0.12)).min(1),
+    thinFilm.mul(0.36).add(streamRidge.mul(0.10)).min(1),
   );
   /*
    * Warm interference is a response, not a second base colour. Keeping half-strength pink
@@ -223,20 +293,30 @@ export function createConvergenceMaterial(
    */
   const warmResponse = interaction.mul(0.42).add(0.08);
   const chromaticSurface = mix(surfacedColour, u.uPalePink, warmFilm.mul(warmResponse));
-  material.colorNode = mix(chromaticSurface, u.uBone, computationHotspot.mul(0.56))
+  const currentWashedSurface = mix(
+    chromaticSurface,
+    mix(relief ? u.uDeep : u.uGreyViolet, u.uCobalt, fineFold.mul(0.28)),
+    marbling.mul(relief ? 0.35 : 0.68),
+  );
+  const pigmentSurface = mix(currentWashedSurface, mix(u.uSpectral, u.uFlow, fold), livePressure.mul(0.32));
+  material.colorNode = mix(pigmentSurface, u.uBone, computationHotspot.mul(relief ? 0.18 : 0.56))
     .add(activeAccent.mul(edgeEnergy))
+    .add(u.uRiverGold.mul(currentAccent).mul(0.68))
     .mul(options.gain)
-    .mul(1.72);
+    .mul(relief ? 2.15 : 1.72);
   material.opacityNode = interference
     .mul(fold.mul(0.12).add(0.065))
-    .add(tornEdge.mul(0.045))
+    .add(tornEdge.mul(relief ? 0.09 : 0.045))
     .add(fresnel.mul(tornEdge).mul(0.10))
     .add(computationHotspot.mul(0.18))
     .add(thinFilm.mul(0.06))
     .add(edgeEnergy.mul(0.16))
     .add(streamRidge.mul(interaction.mul(0.045).add(0.025)))
+    .add(marbling.mul(INK_MARBLING_PROFILE.opacityGain))
+    .add(currentAccent.mul(0.14))
     .mul(options.gain)
-    .clamp(0, 0.34);
+    .mul(relief ? 0.58 : 1)
+    .clamp(0, 0.56);
   material.positionNode = positionLocal.add(
     vec3(
       0,
@@ -249,6 +329,7 @@ export function createConvergenceMaterial(
             .mul(scrollDetail.mul(0.16).add(0.94)),
         )
         .add(innerFold.mul(options.displacement * 0.42))
+        .add(livePressure.mul(relief ? 9 : 3))
         .mul(tornEdge),
     ),
   );

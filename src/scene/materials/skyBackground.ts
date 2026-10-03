@@ -94,6 +94,20 @@ const HAZE = new Color(WATERSHED_PALETTE.petroleum);
 const ZENITH = new Color(WATERSHED_PALETTE.ink);
 const DEEP = new Color(WATERSHED_PALETTE.midnight);
 const SPECTRAL = new Color(WATERSHED_PALETTE.spectral);
+const SUBMERGED_MINERAL = new Color('#5b5662');
+
+export const SUBMERGED_AIR_PROFILE = {
+  onset: 0.05,
+  full: 0.72,
+  baseMix: 0.15,
+  variation: 0.04,
+} as const;
+
+export function sampleSubmergedAirMix(elevation: number, band: number): number {
+  const p = SUBMERGED_AIR_PROFILE;
+  const t = Math.min(1, Math.max(0, (-elevation - p.onset) / (p.full - p.onset)));
+  return t * t * (3 - 2 * t) * (p.baseMix + Math.min(1, Math.max(0, band)) * p.variation);
+}
 
 /**
  * The glow the haze drifts toward on one side of the world.
@@ -202,7 +216,54 @@ export function createSkyBackground(uniforms: FieldUniforms): SkyBackground {
   // of this; what shows is the world's last edge, and it has to be darker than the
   // ground above it or the frame grows a shelf along its own horizon.
   const below = smoothstep(float(0), float(DEEP_REACH), elevation.negate());
-  const colour = mix(haze, uniform(DEEP), below);
+  const deepAir = mix(haze, uniform(DEEP), below);
+
+  /*
+   * Two very broad submerged ink blooms.
+   *
+   * The surface deliberately leaves negative space, but a perfectly uniform lower
+   * hemisphere made that space read as an unrendered canvas. These are not stars,
+   * dust or an independent nebula: two azimuth/elevation waves, several hundred
+   * screen pixels wide, tint the existing deep air by only a few percent. Their
+   * slow opposing drift keeps the periphery spatial without competing with the
+   * river's much faster directional motion.
+   */
+  const submergedBand = sin(
+    direction.x
+      .mul(3.1)
+      .add(direction.z.mul(1.7))
+      .add(direction.y.mul(2.3))
+      .add(u.uTime.mul(0.018)),
+  )
+    .mul(0.5)
+    .add(0.5);
+  const crossBand = sin(
+    direction.x
+      .mul(-1.8)
+      .add(direction.z.mul(2.6))
+      .sub(direction.y.mul(1.4))
+      .sub(u.uTime.mul(0.013)),
+  )
+    .mul(0.5)
+    .add(0.5);
+  const mineralPresence = smoothstep(
+    float(SUBMERGED_AIR_PROFILE.onset),
+    float(SUBMERGED_AIR_PROFILE.full),
+    elevation.negate(),
+  ).mul(submergedBand.mul(SUBMERGED_AIR_PROFILE.variation).add(SUBMERGED_AIR_PROFILE.baseMix));
+  const washedAir = mix(deepAir, uniform(SUBMERGED_MINERAL), mineralPresence);
+  const submergedInk = smoothstep(
+    float(0.56),
+    float(0.88),
+    submergedBand.mul(0.68).add(crossBand.mul(0.32)),
+  )
+    .mul(smoothstep(float(0.02), float(0.72), elevation.negate()))
+    .mul(0.11);
+  const colour = mix(
+    washedAir,
+    mix(uniform(DEEP), uniform(HAZE_WARM), float(0.16)),
+    submergedInk,
+  );
 
   // Alpha 1, so the sky fills the canvas opaquely: this is the page's background
   // now, and the DOM backdrop behind the canvas is for the entry page alone.

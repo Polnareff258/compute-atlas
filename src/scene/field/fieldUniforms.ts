@@ -119,6 +119,7 @@ export function createFieldUniforms() {
   const uBone = uniform(new Color(WATERSHED_PALETTE.bone));
   const uGreyViolet = uniform(new Color(WATERSHED_PALETTE.greyViolet));
   const uPalePink = uniform(new Color(WATERSHED_PALETTE.palePink));
+  const uRiverGold = uniform(new Color(WATERSHED_PALETTE.riverGold));
   /*
    * `uMidnight` and `uCobalt` are the same two palette entries `uMass` and `uRim`
    * already carry. They are declared again under their own names rather than reusing
@@ -218,6 +219,7 @@ uScrollLayers: uniform(new Vector4(0.85, 0.45, 1, 0)),
     uBone,
     uGreyViolet,
     uPalePink,
+    uRiverGold,
     uMidnight,
     uCobalt,
 

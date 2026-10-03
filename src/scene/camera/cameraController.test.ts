@@ -313,4 +313,65 @@ describe('CameraController', () => {
       expect(Number.isFinite(value), JSON.stringify(resolved)).toBe(true);
     }
   });
+
+  it('does not teleport when a stable scroll authority receives a new pose target', () => {
+    const controller = createCameraController();
+    controller.snapTo(pose(0, 0));
+    controller.setScrollTrack(pose(-100, 0), 1);
+    run(controller, 2);
+
+    const beforeTargetChange = controller.getResolvedPose().positionZ;
+    controller.setScrollTrack(pose(-500, 0), 1);
+
+    expect(controller.getResolvedPose().positionZ).toBeCloseTo(beforeTargetChange, 8);
+  });
+
+  it('moves the scroll pose toward a changed target with stable frame damping', () => {
+    const controller = createCameraController();
+    controller.snapTo(pose(0, 0));
+    controller.setScrollTrack(pose(-100, 0), 1);
+    run(controller, 2);
+
+    controller.setScrollTrack(pose(-400, 0), 1);
+    const samples: number[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      controller.update(1 / 60);
+      samples.push(controller.getResolvedPose().positionZ);
+    }
+
+    expect(samples[0]).toBeGreaterThan(-400 + 1);
+    for (let index = 1; index < samples.length; index += 1) {
+      expect(samples[index]!).toBeLessThanOrEqual(samples[index - 1]!);
+    }
+
+    run(controller, 3);
+    expect(controller.getResolvedPose().positionZ).toBeCloseTo(-400, 1);
+  });
+
+  it('keeps the current scroll framing continuous when scroll authority is withdrawn', () => {
+    const controller = createCameraController();
+    controller.snapTo(pose(0, 0));
+    controller.setScrollTrack(pose(-240, 0), 1);
+    run(controller, 2);
+
+    const beforeWithdrawal = controller.getResolvedPose().positionZ;
+    controller.setScrollTrack(null, 0);
+
+    expect(controller.getResolvedPose().positionZ).toBeCloseTo(beforeWithdrawal, 8);
+
+    controller.update(1 / 60);
+    const afterOneFrame = controller.getResolvedPose().positionZ;
+    expect(afterOneFrame).toBeGreaterThan(beforeWithdrawal);
+    expect(afterOneFrame).toBeLessThan(0);
+  });
+
+  it('lands the scroll target directly when reduced motion is enabled', () => {
+    const controller = createCameraController({ reducedMotion: true });
+    controller.snapTo(pose(0, 0));
+    controller.setScrollTrack(pose(-180, 0), 1);
+
+    controller.update(1 / 60);
+
+    expect(controller.getResolvedPose().positionZ).toBe(-180);
+  });
 });

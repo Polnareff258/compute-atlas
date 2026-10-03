@@ -1,7 +1,7 @@
 'use client';
 
 import { events, createRoot, type ReconcilerRoot } from '@react-three/fiber';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { createBootCoordinator } from '../boot/bootCoordinator';
 import { BootExperience } from '../boot/BootExperience';
@@ -27,6 +27,12 @@ import {
   CAMERA_NEAR,
 } from '../scene/camera/cameraController';
 import { SceneHost } from '../scene/SceneHost';
+import {
+  DEFAULT_VISUAL_MODE,
+  readVisualMode,
+  replaceVisualModeInSearch,
+  type VisualMode,
+} from '../scene/visualMode';
 import type { QualityProfile } from './types';
 import type { RendererTelemetrySnapshot } from '../telemetry/rendererTelemetry';
 import { RendererStatus } from '../ui/RendererStatus';
@@ -52,6 +58,31 @@ const INITIAL_RUNTIME_STATE: RendererRuntimeState = {
   startedAt: null,
 };
 
+const VISUAL_MODE_CHANGE_EVENT = 'polnareff:visual-mode-change';
+
+function subscribeVisualMode(onChange: () => void): () => void {
+  if (typeof window === 'undefined') {
+    return () => undefined;
+  }
+
+  window.addEventListener('popstate', onChange);
+  window.addEventListener(VISUAL_MODE_CHANGE_EVENT, onChange);
+  return () => {
+    window.removeEventListener('popstate', onChange);
+    window.removeEventListener(VISUAL_MODE_CHANGE_EVENT, onChange);
+  };
+}
+
+function getVisualModeSnapshot(): VisualMode {
+  return typeof window === 'undefined'
+    ? DEFAULT_VISUAL_MODE
+    : readVisualMode(window.location.search);
+}
+
+function getVisualModeServerSnapshot(): VisualMode {
+  return DEFAULT_VISUAL_MODE;
+}
+
 export function RendererHost() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const coordinatorRef = useRef<ReturnType<typeof createBootCoordinator> | null>(
@@ -73,6 +104,14 @@ export function RendererHost() {
   // Read by the once-created `renderScene` closure, so it is synced in an effect
   // rather than written during render.
   const prefersReducedMotionRef = useRef(prefersReducedMotion);
+  const visualMode = useSyncExternalStore(
+    subscribeVisualMode,
+    getVisualModeSnapshot,
+    getVisualModeServerSnapshot,
+  );
+  // Like reduced motion, the mode is read by the once-created render closure. Updating
+  // this ref in an effect keeps switching from rebuilding the runtime or its root.
+  const visualModeRef = useRef<VisualMode>(DEFAULT_VISUAL_MODE);
   const renderSceneRef = useRef<(() => void) | null>(null);
   const handleTelemetry = useCallback((snapshot: RendererTelemetrySnapshot) => {
     latestTelemetryRef.current = snapshot;
@@ -91,6 +130,20 @@ export function RendererHost() {
   const [bootState, setBootState] = useState<BootState>(() =>
     createInitialBootState(),
   );
+
+  const handleVisualModeChange = useCallback((nextMode: VisualMode) => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const nextSearch = replaceVisualModeInSearch(window.location.search, nextMode);
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${window.location.pathname}${nextSearch}${window.location.hash}`,
+    );
+    window.dispatchEvent(new Event(VISUAL_MODE_CHANGE_EVENT));
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -126,6 +179,7 @@ export function RendererHost() {
           quality={nextState.quality}
           backend={nextState.backend}
           reducedMotion={prefersReducedMotionRef.current}
+          visualMode={visualModeRef.current}
           /*
            * The render target the ink field may allocate, decided from the
            * capability probe rather than from the backend's name. WebGPU always
@@ -385,6 +439,13 @@ export function RendererHost() {
     renderSceneRef.current?.();
   }, [prefersReducedMotion]);
 
+  // A visual mode change is a semantic scene input. Update the ref first so the
+  // already-created root rerenders with the current mode, without replaying boot.
+  useEffect(() => {
+    visualModeRef.current = visualMode;
+    renderSceneRef.current?.();
+  }, [visualMode]);
+
   return (
     <section className="renderer-host" aria-label="Graphics runtime">
       <canvas ref={canvasRef} className="renderer-host__canvas" aria-hidden="true" />
@@ -407,6 +468,22 @@ export function RendererHost() {
         }}
       />
       <SystemMasthead />
+      <div className="visual-mode-toggle" role="group" aria-label="视觉模式">
+        <button
+          type="button"
+          aria-pressed={visualMode === 'relief'}
+          onClick={() => handleVisualModeChange('relief')}
+        >
+          山水
+        </button>
+        <button
+          type="button"
+          aria-pressed={visualMode === 'ink'}
+          onClick={() => handleVisualModeChange('ink')}
+        >
+          河流
+        </button>
+      </div>
       <RendererStatus state={runtimeState} />
       <BootExperience
         state={bootState}
