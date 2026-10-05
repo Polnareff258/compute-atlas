@@ -4,8 +4,8 @@ import type { ReactNode } from 'react';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'POLNAREFF SYSTEM',
-  description: 'Interactive Personal Computing Environment',
+  title: 'AFTERFORM | 形态之后',
+  description: 'A visual exploration of matter, motion and transformation. 形态，正在发生。',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
